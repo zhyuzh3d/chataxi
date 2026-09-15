@@ -1,0 +1,111 @@
+(function (app) {
+  "use strict";
+  var u = app.utils, ui = app.components, store = app.data.store;
+  var tabNames = { interface: "界面", conversation: "对话", compression: "压缩", about: "关于" };
+
+  function items(values, systemAvailable) { return values.map(function (item) { var system = (item.family || item.type) === "system"; return { id: item.id, name: item.name + (system && systemAvailable === false ? " · 当前不可用" : ""), disabled: system && systemAvailable === false }; }); }
+  async function systemTtsAvailable() {
+    if (!(await app.platform.hermit.awaitReady(1200))) return false;
+    try { return Boolean((await app.platform.hermit.api().tts.availability()).operational); } catch (_) { return false; }
+  }
+  function toggle(name, label, text, checked) {
+    return '<label class="switch-row"><span><strong>' + label + '</strong><small>' + text + '</small></span><input name="' + name + '" type="checkbox"' + (checked ? ' checked' : '') + '></label>';
+  }
+  function range(name, label, value, min, max, step, suffix) {
+    return '<label class="field range-field"><span>' + label + '<output data-output="' + name + '">' + u.escapeHtml(value) + suffix + '</output></span><input name="' + name + '" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + u.escapeHtml(value) + '"></label>';
+  }
+
+  async function clearSelectedData(form) {
+    var selected = ["conversations", "roles", "models", "profile"].filter(function (name) { return u.checked(form, name); });
+    if (!selected.length) throw new Error("请至少选择一类要清除的数据");
+    if (selected.indexOf("conversations") >= 0) {
+      var conversations = await store.list("conversations");
+      for (var conversationIndex = 0; conversationIndex < conversations.length; conversationIndex += 1) await store.deleteConversation(conversations[conversationIndex].id);
+    }
+    if (selected.indexOf("roles") >= 0) {
+      var roles = await store.list("roles"), roleMedia = [];
+      for (var roleIndex = 0; roleIndex < roles.length; roleIndex += 1) { if (roles[roleIndex].avatarMediaId) roleMedia.push(roles[roleIndex].avatarMediaId); await store.remove("roles", roles[roleIndex].id); }
+      await store.releaseMedia(roleMedia);
+    }
+    if (selected.indexOf("models") >= 0) {
+      for (var collectionIndex = 0; collectionIndex < 3; collectionIndex += 1) {
+        var collection = ["llm-profiles", "tts-profiles", "asr-profiles"][collectionIndex], profiles = await store.list(collection);
+        for (var profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) if ((profiles[profileIndex].family || profiles[profileIndex].type) !== "system") await store.remove(collection, profiles[profileIndex].id);
+      }
+      var currentSettings = await store.get("meta", "settings"); currentSettings.defaultTtsProfileId = "system-tts"; currentSettings.defaultAsrProfileId = "system-asr"; await store.put("meta", "settings", currentSettings);
+    }
+    if (selected.indexOf("profile") >= 0) {
+      var currentProfile = await store.get("meta", "user-profile"), profileMedia = currentProfile && currentProfile.avatarMediaId ? [currentProfile.avatarMediaId] : [];
+      await store.put("meta", "user-profile", { name: "我", introduction: "", avatarMediaId: "", createdAt: currentProfile && currentProfile.createdAt || Date.now(), updatedAt: Date.now() });
+      await store.releaseMedia(profileMedia);
+    }
+    return selected;
+  }
+
+  function openClearData() {
+    var form = ui.openModal({ title: "清除本机数据", submitText: "清除所选数据", danger: true, html: '<div class="form-grid"><p class="helper">所选数据会从当前 chataxi 实例永久删除，无法撤销。未选择的分类保持不变。</p>' +
+      toggle("conversations", "全部对话数据", "删除全部对话、消息、摘要、草稿和对应附件", true) +
+      toggle("roles", "全部角色数据", "删除角色档案、模型选择、发音设置和角色头像", true) +
+      toggle("models", "全部模型配置", "删除第三方对话、朗读和语音输入服务及密钥；保留 Android 系统服务", true) +
+      toggle("profile", "我的个人设定", "清除名称、头像和自我介绍，恢复默认名称“我”", true) + '</div>', onSubmit: clearSelectedData,
+      onSuccess: async function () { ui.toast("所选本机数据已清除"); app.state.settingsTab = "about"; await render(); }
+    });
+    return form;
+  }
+
+  async function render() {
+    var tab = tabNames[app.state.settingsTab] ? app.state.settingsTab : "interface";
+    var settings = await store.get("meta", "settings");
+    var tts = (await store.list("tts-profiles")).filter(function (item) { return item.enabled !== false; });
+    var asr = (await store.list("asr-profiles")).filter(function (item) { return item.enabled !== false; });
+    var runtimeCapabilities = await Promise.all([systemTtsAvailable(), app.services.asr.systemCapability(false)]);
+    var info = await app.platform.hermit.info(), appInfo = await app.platform.hermit.appInfo();
+    if (app.state.route !== "settings") return;
+    ui.pageHeader("设置", tabNames[tab]);
+    var main = document.getElementById("mainContent"); main.className = "main";
+    var modeText = ({ live: "线上实时运行", local: "本地运行", browser: "浏览器预览" })[info.runtimeMode] || info.runtimeMode || "未知";
+    var modeValue = info.runtimeMode === "local" && appInfo.liveAvailable ? '<button class="runtime-mode-text" type="button" data-enable-live aria-label="本地运行，连续点击三次切换到线上实时运行">' + modeText + '</button>' : u.escapeHtml(modeText);
+    var tabs = Object.keys(tabNames).map(function (key) { return '<button type="button" role="tab" data-settings-tab="' + key + '" aria-selected="' + (key === tab) + '">' + tabNames[key] + '</button>'; }).join("");
+    main.innerHTML = '<section class="page settings-page"><div class="section-tabs settings-tabs" role="tablist" aria-label="设置分类">' + tabs + '</div><form id="generalForm" class="settings-stack">' +
+      '<section class="card card-body form-grid settings-panel' + (tab === "interface" ? '' : ' is-hidden') + '" data-settings-panel="interface"><h2 class="section-title">界面</h2>' +
+      ui.picker("theme", "界面主题", "") + ui.picker("imageDetail", "发送图片细节", "") + '<label class="field"><span>默认语言</span><input name="language" maxlength="30" value="' + u.escapeHtml(settings.language || "zh-CN") + '"></label></section>' +
+      '<section class="card card-body form-grid settings-panel' + (tab === "conversation" ? '' : ' is-hidden') + '" data-settings-panel="conversation"><h2 class="section-title">对话</h2>' +
+      toggle("autoSpeak", "自动朗读新回复", "群聊完成后朗读最后一位角色的回复", settings.autoSpeak) + toggle("enterToSend", "按 Enter 发送", "关闭时 Enter 换行；Ctrl / ⌘ + Enter 始终发送", Boolean(settings.enterToSend)) +
+      ui.picker("defaultTtsProfileId", "默认朗读服务", "", "角色选择“跟随通用设置”时使用") + ui.picker("defaultAsrProfileId", "默认语音输入", "", "新对话默认使用；可在对话管理中覆盖") + '</section>' +
+      '<section class="card card-body form-grid settings-panel' + (tab === "compression" ? '' : ' is-hidden') + '" data-settings-panel="compression"><div><h2 class="section-title">上下文自动压缩</h2><p class="helper section-helper">每位角色用自己的模型压缩更早历史。最近 N 条完整消息由每个对话单独设置。</p></div>' +
+      toggle("autoCompress", "自动压缩历史", "超过阈值后，在下一次生成回复前执行", settings.autoCompress) + range("compressionThresholdChars", "触发字数", Number(settings.compressionThresholdChars || 32000), 4000, 100000, 2000, " 字") + range("compressionTargetChars", "压缩目标", Number(settings.compressionTargetChars || 2400), 400, 8000, 200, " 字") +
+      '<label class="field"><span>压缩提示词</span><textarea class="prompt-editor" name="compressionPrompt" maxlength="8000">' + u.escapeHtml(settings.compressionPrompt || "") + '</textarea><small>压缩内容可以在具体对话中手工修订；已经压缩的原消息不再允许编辑。</small></label></section>' +
+      '<div class="settings-save' + (tab === "about" ? ' is-hidden' : '') + '" data-settings-save><button class="button primary full" type="submit">保存设置</button><p class="save-status" id="settingsSaveStatus" role="status"></p></div></form>' +
+      '<section class="settings-panel about-panel' + (tab === "about" ? '' : ' is-hidden') + '" data-settings-panel="about"><div class="about-hero"><img class="about-mark" src="./app/assets/icon.webp" alt=""><div><h2>chataxi <span class="badge">v' + u.escapeHtml(app.version) + '</span></h2><p>想聊就聊，自由自在</p></div></div><p class="about-copy">chataxi 是运行在 HermitApp 中的个人 AI 对话应用。你可以连接自己的模型服务，创建独立角色，并进行单聊或多人对话。</p><dl class="facts"><div><dt>作者</dt><dd>zhyuzh3d</dd></div><div><dt>数据保存</dt><dd>' + (store.backend() === "hermit" ? "Hermit 应用数据" : "当前浏览器") + '</dd></div><div><dt>运行方式</dt><dd>' + modeValue + '</dd></div><div><dt>Hermit Bridge</dt><dd>' + (app.platform.hermit.available() ? "已就绪" : "未连接") + '</dd></div></dl>' + (info.runtimeMode === "live" && appInfo.localAvailable ? '<button class="button secondary full runtime-switch" type="button" data-enable-local>' + ui.icon("gear") + '改为本地运行</button>' : '') + '<p class="helper">角色、对话和服务配置保存在当前设备。清除应用数据会删除本机记录；页面代码在请求模型服务时可以读取保存在当前 happ 数据空间中的密钥。</p><button class="button danger data-clear-button" type="button" data-clear-data>' + ui.icon("trash") + '清除数据</button></section></section>';
+
+    var form = document.getElementById("generalForm");
+    function selectTab(selected) { app.state.settingsTab = selected; main.querySelectorAll("[data-settings-tab]").forEach(function (item) { item.setAttribute("aria-selected", String(item.dataset.settingsTab === selected)); }); main.querySelectorAll("[data-settings-panel]").forEach(function (panel) { panel.classList.toggle("is-hidden", panel.dataset.settingsPanel !== selected); }); form.querySelector("[data-settings-save]").classList.toggle("is-hidden", selected === "about"); document.getElementById("pageSubtitle").textContent = tabNames[selected]; }
+    main.querySelectorAll("[data-settings-tab]").forEach(function (button) { button.addEventListener("click", function () { selectTab(button.dataset.settingsTab); }); });
+    ui.bindPicker(form, "defaultTtsProfileId", items(tts, runtimeCapabilities[0]), settings.defaultTtsProfileId);
+    ui.bindPicker(form, "defaultAsrProfileId", items(asr, runtimeCapabilities[1].available), settings.defaultAsrProfileId);
+    ui.bindPicker(form, "theme", [{ id: "system", name: "跟随系统" }, { id: "light", name: "浅色" }, { id: "dark", name: "深色" }], settings.theme || "system");
+    ui.bindPicker(form, "imageDetail", [{ id: "auto", name: "自动" }, { id: "low", name: "低细节" }, { id: "high", name: "高细节" }], settings.imageDetail || "auto");
+    form.querySelectorAll('input[type="range"]').forEach(function (slider) { slider.addEventListener("input", function () { var output = form.querySelector('[data-output="' + slider.name + '"]'); output.textContent = slider.value + " 字"; markDirty(); }); });
+    function markDirty() { document.getElementById("settingsSaveStatus").textContent = "有未保存的更改"; }
+    form.addEventListener("input", markDirty);
+    form.addEventListener("submit", ui.action(async function (event) {
+      event.preventDefault(); var button = form.querySelector('[type="submit"]'); if (button.disabled) return; button.disabled = true;
+      try {
+        var next = await store.get("meta", "settings");
+        ["autoSpeak", "enterToSend", "autoCompress"].forEach(function (key) { next[key] = u.checked(form, key); });
+        ["defaultTtsProfileId", "defaultAsrProfileId", "theme", "imageDetail", "language", "compressionPrompt"].forEach(function (key) { next[key] = u.formValue(form, key); });
+        ["compressionThresholdChars", "compressionTargetChars"].forEach(function (key) { next[key] = Number(u.formValue(form, key)); });
+        if (!next.compressionPrompt) throw new Error("请填写压缩提示词");
+        await store.put("meta", "settings", next); app.applyTheme(next.theme); document.getElementById("settingsSaveStatus").textContent = "设置已保存"; ui.toast("设置已保存");
+      } finally { button.disabled = false; }
+    }));
+    var liveButton = main.querySelector("[data-enable-live]"), tapCount = 0, tapTimer = 0;
+    if (liveButton) liveButton.addEventListener("click", ui.action(async function () { clearTimeout(tapTimer); tapCount += 1; tapTimer = setTimeout(function () { tapCount = 0; }, 1400); if (tapCount < 3) return; tapCount = 0; clearTimeout(tapTimer); liveButton.disabled = true; await app.platform.hermit.setRuntimeMode("live"); }));
+    var localButton = main.querySelector("[data-enable-local]");
+    if (localButton) localButton.addEventListener("click", ui.action(async function () { localButton.disabled = true; await app.platform.hermit.setRuntimeMode("local"); }));
+    main.querySelector("[data-clear-data]").addEventListener("click", openClearData);
+  }
+
+  app.features = app.features || {};
+  app.features.settings = { render: render };
+})(window.chataxi);

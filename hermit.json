@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "happId": "io.github.zhyuzh3d.chataxi",
+  "name": "chataxi",
+  "version": {
+    "code": 61,
+    "name": "0.6.1"
+  },
+  "entry": "index.html",
+  "routing": "hash",
+  "icon": "app/assets/icon.webp",
+  "liveUrl": "http://192.168.124.161:4180/",
+  "updateUrl": "http://192.168.124.161:4180/hermit-install.json",
+  "display": {
+    "orientation": "portrait",
+    "keyboard": "resize"
+  }
+}

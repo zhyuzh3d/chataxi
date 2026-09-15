@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffd52f">
+  <title>chataxi</title>
+  <link rel="icon" type="image/webp" href="./app/assets/icon.webp">
+  <link rel="stylesheet" href="/__hermit/icons/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="./styles/tokens.css">
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/components.css">
+  <link rel="stylesheet" href="./styles/app.css">
+  <script src="./app/core/namespace.js" defer></script>
+  <script src="./app/core/utils.js" defer></script>
+  <script src="./app/core/events.js" defer></script>
+  <script src="./app/platform/hermit.js" defer></script>
+  <script src="./app/platform/network.js" defer></script>
+  <script src="./app/data/store.js" defer></script>
+  <script src="./app/data/media.js" defer></script>
+  <script src="./app/services/catalog.js" defer></script>
+  <script src="./app/services/model-registry.js" defer></script>
+  <script src="./app/services/aws-sigv4.js" defer></script>
+  <script src="./app/services/model-services.js" defer></script>
+  <script src="./app/services/providers.js" defer></script>
+  <script src="./app/services/middleware.js" defer></script>
+  <script src="./app/services/media-prep.js" defer></script>
+  <script src="./app/services/context.js" defer></script>
+  <script src="./app/services/llm.js" defer></script>
+  <script src="./app/services/images.js" defer></script>
+  <script src="./app/services/profiles.js" defer></script>
+  <script src="./app/features/chat-session.js" defer></script>
+  <script src="./app/services/tts.js" defer></script>
+  <script src="./app/services/asr.js" defer></script>
+  <script src="./app/components/ui.js" defer></script>
+  <script src="./app/features/models.js" defer></script>
+  <script src="./app/features/model-single-editor.js" defer></script>
+  <script src="./app/features/settings.js" defer></script>
+  <script src="./app/features/roles.js" defer></script>
+  <script src="./app/features/me.js" defer></script>
+  <script src="./app/features/conversations.js" defer></script>
+  <script src="./app/features/chat.js" defer></script>
+  <script src="./app/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <header class="topbar">
+      <button class="icon-button topbar-back is-hidden" id="backButton" type="button" aria-label="返回">
+        <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+      </button>
+      <div class="brand" id="brandBlock">
+        <span class="brand-mark" aria-hidden="true"><img src="./app/assets/icon.webp" alt=""></span>
+        <div class="brand-copy">
+          <strong id="pageTitle">chataxi</strong>
+          <span id="pageSubtitle">想聊就聊，自由自在</span>
+        </div>
+      </div>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </header>
+
+    <main class="main" id="mainContent" tabindex="-1">
+      <div class="boot-state" id="bootState" role="status">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>正在准备 chataxi…</p>
+      </div>
+    </main>
+
+    <nav class="bottom-nav" id="bottomNav" aria-label="主导航">
+      <div class="nav-brand" aria-hidden="true"><i class="fa-solid fa-comment-dots"></i>chataxi</div>
+      <button type="button" data-route="conversations" aria-current="page">
+        <i class="fa-solid fa-comments" aria-hidden="true"></i><span>对话</span>
+      </button>
+      <button type="button" data-route="roles">
+        <i class="fa-solid fa-user-group" aria-hidden="true"></i><span>角色</span>
+      </button>
+      <button type="button" data-route="models">
+        <i class="fa-solid fa-cubes" aria-hidden="true"></i><span>模型</span>
+      </button>
+      <button type="button" data-route="me">
+        <i class="fa-solid fa-user" aria-hidden="true"></i><span>我的</span>
+      </button>
+      <button type="button" data-route="settings">
+        <i class="fa-solid fa-sliders" aria-hidden="true"></i><span>设置</span>
+      </button>
+    </nav>
+  </div>
+
+  <div class="modal-root" id="modalRoot"></div>
+  <div class="toast-root" id="toastRoot" aria-live="polite" aria-atomic="true"></div>
+  <input id="imagePicker" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+  <input id="videoPicker" class="visually-hidden" type="file" accept="video/mp4,video/webm,video/quicktime">
+  <input id="audioPicker" class="visually-hidden" type="file" accept="audio/*" capture="microphone">
+</body>
+</html>
