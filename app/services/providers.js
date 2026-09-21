@@ -37,6 +37,30 @@
     return text;
   }
 
+  function systemLabel(message) {
+    if (message.systemType === "scene" || message.speakerKind === "scene") return "场景设定";
+    if (message.systemType === "summary" || message.speakerKind === "summary") return "历史概要";
+    return "系统消息";
+  }
+
+  function mapSystemMessages(profile, role, messages) {
+    var system = [], regular = [];
+    (messages || []).forEach(function (message) {
+      if (message.role === "system") system.push("[" + systemLabel(message) + "]\n" + String(message.text || ""));
+      else regular.push(message);
+    });
+    var persistent = String(role && role.systemPrompt || "").trim();
+    var mode = profile.systemRoleMode || profile.resolvedCapabilities && profile.resolvedCapabilities.systemRoleMode || "native";
+    if (mode === "tagged-user") {
+      var blocks = [];
+      if (persistent) blocks.push("[角色与用户设定]\n" + persistent);
+      blocks = blocks.concat(system);
+      if (blocks.length) regular.unshift({ role: "user", roleName: "", speakerKind: "system-role-fallback", text: blocks.join("\n\n"), images: [], videos: [] });
+      return { role: Object.assign({}, role, { systemPrompt: "" }), messages: regular, mode: mode };
+    }
+    return { role: Object.assign({}, role, { systemPrompt: [persistent].concat(system).filter(Boolean).join("\n\n") }), messages: regular, mode: "native" };
+  }
+
   function imageParts(message) { return message.images || []; }
   function videoParts(message) { return message.videos || []; }
 
@@ -201,6 +225,8 @@
   }
 
   function build(profile, role, messages, options) {
+    var mapped = mapSystemMessages(profile, role || {}, messages || []);
+    role = mapped.role; messages = mapped.messages;
     var body, streaming = Boolean(options && options.stream);
     if (profile.apiStyle === "openai-responses") {
       body = { model: profile.model, input: responseInput(messages, profile), stream: streaming, store: false };
@@ -411,6 +437,7 @@
     parse: parse,
     parseStreamEvent: parseStreamEvent,
     headers: headers,
-    endpoint: endpoint
+    endpoint: endpoint,
+    mapSystemMessages: mapSystemMessages
   };
 })(window.chataxi);

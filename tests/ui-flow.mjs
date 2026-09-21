@@ -29,7 +29,7 @@ app.platform.hermit.info = async () => ({ runtimeMode: 'browser', bridgeMode: 'n
 app.services.tts.stop = async () => {};
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(fn, description) { for (let i = 0; i < 250; i++) { if (fn()) return; await tick(); } throw Error(description + '\n' + document.body.textContent.slice(-1500)); }
-function field(name, value) { const node = document.querySelector('#modalForm [name="' + name + '"]'); assert.ok(node, name); if (node.type === 'checkbox') node.checked = value; else node.value = value; return node; }
+function field(name, value) { const node = document.querySelector('#modalForm [name="' + name + '"]'); assert.ok(node, name); if (arguments.length > 1) { if (node.type === 'checkbox') node.checked = value; else node.value = value; } return node; }
 function submit() { document.querySelector('#modalForm').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); }
 function click(selector) { const node = document.querySelector(selector); assert.ok(node, selector); node.click(); }
 function type(selector, text) { const node = document.querySelector(selector); node.value = text; node.dispatchEvent(new window.Event('input', { bubbles: true })); }
@@ -70,6 +70,31 @@ click('[data-test-model]'); await until(() => /连接成功/.test(document.query
 field('enabled', true); submit();
 await until(() => document.querySelector('#modalForm [name="systemPrompt"]'), 'guided role form');
 assert.ok(document.querySelector('#avatarPreview .fa-user'), 'unnamed role uses the user icon fallback');
+assert.equal(document.querySelector('[data-role-avatar-name]').textContent, '未命名');
+assert.equal(document.querySelector('.avatar-copy > small').textContent, '点击头像更换');
+type('#modalForm [name="name"]', '临时角色'); assert.equal(document.querySelector('[data-role-avatar-name]').textContent, '临时角色');
+type('#modalForm [name="name"]', ''); assert.equal(document.querySelector('[data-role-avatar-name]').textContent, '未命名');
+assert.ok(document.querySelector('[data-open-role-templates]'), 'new role editor exposes the template gallery');
+assert.equal(document.querySelector('[data-open-role-templates] span').textContent, '使用模版');
+click('[data-open-role-templates]'); await until(() => document.querySelector('.role-template-grid'), 'role template gallery');
+assert.equal(document.querySelector('.role-template-help').textContent, '点击角色卡片直接应用');
+assert.deepEqual(Array.from(document.querySelectorAll('[data-template-tab]')).map(button => button.textContent), ['全部', '男性', '女性', '其他']);
+assert.equal(document.querySelectorAll('[data-role-template]').length, 27);
+assert.equal(document.querySelectorAll('[data-role-template]:not(.is-hidden)').length, 27);
+assert.deepEqual(Array.from(document.querySelectorAll('[data-role-template]:not(.is-hidden)')).map(button => button.dataset.templateCategory), Array(9).fill(['male', 'female', 'other']).flat());
+click('[data-template-tab="male"]');
+assert.equal(document.querySelectorAll('[data-role-template]:not(.is-hidden)').length, 9);
+assert.ok(Array.from(document.querySelectorAll('[data-role-template]:not(.is-hidden)')).every(button => button.dataset.templateCategory === 'male'));
+click('[data-template-tab="female"]');
+assert.equal(document.querySelectorAll('[data-role-template]:not(.is-hidden)').length, 9);
+assert.match(document.querySelector('[data-role-template="lin-xiaoyu"]').textContent, /陈佳宁[\s\S]*动画专业大一学生、校园社团分镜师[\s\S]*18岁[\s\S]*女/);
+click('[data-template-tab="other"]');
+assert.equal(document.querySelectorAll('[data-role-template]:not(.is-hidden)').length, 9);
+assert.ok(Array.from(document.querySelectorAll('[data-role-template]:not(.is-hidden)')).every(button => button.dataset.templateCategory === 'other'));
+assert.match(document.querySelector('[data-role-template="pao-rong"]').textContent, /泡绒[\s\S]*卡通幻想生物·未寄信邮差[\s\S]*其他/);
+assert.doesNotMatch(document.querySelector('[data-role-template="pao-rong"]').textContent, /岁/);
+click('[data-template-tab="all"]'); assert.equal(document.querySelectorAll('[data-role-template]:not(.is-hidden)').length, 27);
+app.components.closeSubsheet();
 field('name', '测试搭档'); field('systemPrompt', '你是测试搭档，清晰回答问题。'); submit();
 await until(() => document.querySelector('#selectionSummary'), 'guided conversation form');
 assert.equal(document.querySelector('#modalSubmit').disabled, false);
@@ -82,6 +107,68 @@ const id = conversations[0].id;
 assert.equal((await app.data.store.list('roles'))[0].name, '测试搭档');
 console.log('passed: model service → role → conversation onboarding');
 
+await app.navigate('roles');
+const originalTemplateAvatarBlob = app.features.roles.templateAvatarBlob;
+const originalMediaPut = app.data.media.put;
+const originalMediaRemove = app.data.media.remove;
+let removedTemplateAvatar = '';
+app.features.roles.templateAvatarBlob = async () => new Blob(['avatar'], { type: 'image/jpeg' });
+app.data.media.put = async () => ({ id: 'template-avatar-fixture' });
+app.data.media.remove = async mediaId => { removedTemplateAvatar = mediaId; };
+click('[data-add-role]'); await until(() => document.querySelector('[data-open-role-templates]'), 'new role template trigger');
+const templateModelBefore = field('llmProfileId').value;
+click('[data-open-role-templates]'); await until(() => document.querySelector('[data-role-template="lin-xiaoyu"]'), 'template gallery selection'); click('[data-template-tab="female"]');
+click('[data-role-template="lin-xiaoyu"]'); await until(() => field('name').value === '陈佳宁', 'template applied');
+assert.equal(document.querySelector('[data-role-avatar-name]').textContent, '陈佳宁');
+assert.equal(field('systemPrompt').value, app.data.roleTemplates.items.find(item => item.id === 'lin-xiaoyu').systemPrompt);
+assert.equal(field('llmProfileId').value, templateModelBefore, 'template must not replace the selected model');
+assert.match(document.querySelector('#avatarPreview img').getAttribute('src'), /lin-xiaoyu\.webp$/);
+app.components.closeModal(); await until(() => removedTemplateAvatar === 'template-avatar-fixture', 'cancelled template avatar cleanup');
+app.features.roles.templateAvatarBlob = originalTemplateAvatarBlob;
+app.data.media.put = originalMediaPut;
+app.data.media.remove = originalMediaRemove;
+assert.equal((await app.data.store.list('roles')).length, 1, 'previewing a template must not create a role');
+await app.openChat(id);
+console.log('passed: schema 2 role template gallery applies profile fields and cleans up cancelled avatar');
+
+click('#chatMenuButton'); await until(() => document.querySelector('[data-chat-menu="scene"]'), 'opening scene menu');
+assert.deepEqual(Array.from(document.querySelectorAll('[data-chat-menu]')).slice(0, 3).map(button => button.dataset.chatMenu), ['edit', 'identity', 'scene']);
+let generatedSceneRequest;
+app.services.llm.generateScene = async (moderator, participants, conversation, userProfile, modes, guidance) => {
+  generatedSceneRequest = { moderator, participants, conversation, userProfile, modes, guidance };
+  return { text: '深夜，雨中的旧车站只剩最后一盏灯。远处传来列车缓慢靠站的声音。' };
+};
+click('[data-chat-menu="scene"]'); await until(() => document.querySelector('#modalForm [name="openingScene"]'), 'opening scene editor');
+assert.ok(document.querySelector('.modal-sheet.scene-settings-sheet'), 'scene settings uses the fixed-height sheet');
+assert.deepEqual(Array.from(document.querySelectorAll('[data-scene-tab]')).map(button => button.textContent), ['手工设定', '自动生成']);
+assert.equal(document.querySelector('.scene-settings-content > .helper'), null, 'legacy scene explanation is removed');
+click('[data-scene-tab="auto"]');
+assert.ok(document.querySelector('[data-scene-panel="auto"]:not(.is-hidden)'));
+assert.deepEqual(Array.from(document.querySelectorAll('[data-scene-mode]')).map(button => button.textContent), ['闲聊', '思辨', '学习', '工作', '倾诉']);
+assert.match(fs.readFileSync(root + 'styles/app.css', 'utf8'), /\.scene-mode-chip \+ \.scene-mode-chip \{ margin-left: 8px; \}/);
+assert.equal(document.querySelector('[name="sceneGenerationPrompt"]').getAttribute('placeholder'), '补充关键词');
+assert.equal(document.querySelector('[name="sceneGenerationPrompt"]').tagName, 'INPUT');
+assert.equal(document.querySelector('[data-generate-scene] span').textContent, '生成');
+click('[data-scene-mode="思辨"]'); click('[data-scene-mode="学习"]');
+assert.equal(document.querySelector('[data-scene-mode="思辨"]').getAttribute('aria-pressed'), 'false');
+assert.equal(document.querySelectorAll('[data-scene-mode][aria-pressed="true"]').length, 1);
+field('sceneGenerationPrompt', '围绕一张旧车票展开'); click('[data-generate-scene]');
+await until(() => /远处传来列车/.test(field('openingScene').value), 'generated opening scene fills the editor');
+assert.equal(generatedSceneRequest.moderator.name, '测试搭档'); assert.equal(generatedSceneRequest.participants.length, 1);
+assert.deepEqual(Array.from(generatedSceneRequest.modes), ['学习']); assert.equal(generatedSceneRequest.guidance, '围绕一张旧车票展开');
+assert.match(document.querySelector('[data-scene-generation-status]').textContent, /可继续编辑后保存/);
+submit();
+await until(() => document.querySelector('.message-row.system'), 'opening scene materialized');
+let sceneMessages = await app.data.store.messages(id);
+assert.equal(sceneMessages.length, 1); assert.equal(sceneMessages[0].kind, 'system'); assert.equal(sceneMessages[0].systemType, 'scene');
+assert.match(sceneMessages[0].text, /远处传来列车/);
+assert.equal(document.querySelector('.message-row.system .message-name').textContent, '系统');
+assert.equal(document.querySelector('.message-row.system .message-avatar-trigger'), null); assert.equal(document.querySelector('.message-row.system [data-regenerate-message]'), null);
+click('.message-row.system [aria-label="编辑这条消息"]'); await until(() => document.querySelector('#modalForm [name="text"]'), 'ordinary scene message edit');
+field('text', '深夜，雨中的旧车站只剩一盏灯。'); submit(); await until(() => !document.querySelector('#modalForm'), 'scene message edit saved');
+sceneMessages = await app.data.store.messages(id); assert.equal(sceneMessages.length, 1); assert.equal(sceneMessages[0].text, '深夜，雨中的旧车站只剩一盏灯。');
+console.log('passed: opening scene materializes once as an editable system message');
+
 type('#messageInput', '离开后保留这份草稿');
 await app.navigate('conversations');
 assert.match(document.querySelector('.draft-preview').textContent, /保留这份草稿/);
@@ -92,7 +179,7 @@ app.services.llm.complete = async () => { calls++; return { text: '<script>unsaf
 click('#sendButton');
 await until(() => calls === 1 && !app.features.chatSession.active(id), 'send completes');
 await tick(); await tick();
-assert.equal((await app.data.store.messages(id)).length, 2);
+assert.equal((await app.data.store.messages(id)).length, 3);
 assert.equal(document.querySelector('#messageInput').value, '');
 assert.equal(document.querySelector('#messageListInner script'), null);
 assert.match(document.querySelector('#messageListInner').textContent, /<script>unsafe\(\)<\/script>/);
@@ -119,7 +206,7 @@ assert.equal(retry.disabled, false, 'retry must be enabled after leaving busy st
 assert.equal(document.querySelector('.message-row'), unchangedMessage, 'unchanged message nodes are reused');
 app.services.llm.complete = async () => ({ text: '重试恢复', images: [] }); retry.click();
 await until(() => document.querySelector('#messageListInner').textContent.includes('重试恢复') && !app.features.chatSession.active(id), 'retry recovered');
-assert.equal((await app.data.store.messages(id)).length, 4);
+assert.equal((await app.data.store.messages(id)).length, 5);
 let entered, late;
 const requestStarted = new Promise(resolve => { entered = resolve; });
 app.services.llm.complete = async () => { entered(); return new Promise(resolve => { late = resolve; }); };
@@ -140,6 +227,7 @@ click('.subsheet [data-choice="dark"]'); await tick(); assert.equal(general.quer
 general.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
 await until(() => document.documentElement.getAttribute('data-theme') === 'dark', 'theme saved');
 await app.navigate('roles'); click('[data-edit-role]'); await until(() => document.querySelector('#modalForm [name="systemPrompt"]'), 'role editor');
+assert.equal(document.querySelector('[data-open-role-templates]'), null, 'existing role editor must not expose the template gallery');
 assert.ok(document.querySelector('button.avatar-picker[data-choose-avatar]')); assert.equal(document.querySelector('.avatar-editor').textContent.includes('选择本地图片'), false);
 assert.match(fs.readFileSync(root + 'app/components/ui.js', 'utf8'), /data-crop-stage/); assert.doesNotMatch(fs.readFileSync(root + 'app/components/ui.js', 'utf8'), /name="crop[XY]"/);
 assert.ok(document.querySelector('#temperatureField').classList.contains('is-hidden'), 'unsupported temperature is hidden');
@@ -200,7 +288,7 @@ const secretProfile = await app.data.store.get('llm-profiles', 'xai-empty');
 secretProfile.apiKey = 'demoCredentialAlphaOmega';
 secretProfile.customHeaders = JSON.stringify({ Authorization: 'Bearer demoHeaderAlphaOmega', 'X-Client-Key': 'demoClientAlphaOmega' });
 await app.data.store.put('llm-profiles', secretProfile.id, secretProfile); await app.features.models.renderServices('llm');
-let copiedSecret = ''; app.platform.hermit.copyText = async value => { copiedSecret = value; };
+let clipboardSecret = ''; app.platform.hermit.readClipboardText = async () => clipboardSecret;
 click('[data-edit-service="xai-empty"]'); await until(() => document.querySelector('#modalForm [name="apiKey"]'), 'edit model');
 assert.equal(document.querySelector('[name="apiKey"]').type, 'password'); assert.equal(document.querySelector('[name="apiKey"]').value, 'demoCredentialAlphaOmega');
 assert.equal(document.querySelectorAll('.secret-editor [name="apiKey"]').length, 1); assert.equal(document.querySelector('[name="clear_apiKey"]'), null);
@@ -208,8 +296,11 @@ assert.equal(document.querySelector('.secret-mask').textContent, 'demo•••�
 assert.equal(document.querySelector('[name="customHeaders"]').type, 'password'); assert.equal(document.querySelector('[name="customHeaders"]').value, secretProfile.customHeaders);
 assert.equal(document.body.textContent.includes('demoCredentialAlphaOmega'), false, 'saved API key must not be rendered as visible text');
 assert.equal(document.body.textContent.includes('demoHeaderAlphaOmega'), false, 'saved Header secret must not be rendered as visible text');
-click('[data-copy-key]'); await until(() => copiedSecret === 'demoCredentialAlphaOmega', 'copy saved API key');
-click('[data-copy-headers]'); await until(() => copiedSecret === secretProfile.customHeaders, 'copy saved Header credentials');
+const apiKeyVisibility = document.querySelector('.secret-editor [name="apiKey"] ~ [data-toggle-secret]');
+click('.secret-editor [name="apiKey"] ~ [data-toggle-secret]'); assert.equal(document.querySelector('[name="apiKey"]').type, 'text'); assert.ok(apiKeyVisibility.querySelector('.fa-eye-slash'));
+click('.secret-editor [name="apiKey"] ~ [data-toggle-secret]'); assert.equal(document.querySelector('[name="apiKey"]').type, 'password'); assert.ok(apiKeyVisibility.querySelector('.fa-eye'));
+clipboardSecret = 'demoCredentialAlphaOmega'; click('[data-paste-key]'); await until(() => document.querySelector('[name="apiKey"]').value === clipboardSecret, 'paste saved API key from clipboard');
+clipboardSecret = secretProfile.customHeaders; click('[data-paste-headers]'); await until(() => document.querySelector('[name="customHeaders"]').value === clipboardSecret, 'paste saved Header credentials from clipboard');
 submit(); await until(() => !document.querySelector('#modalForm'), 'save unchanged masked credentials');
 assert.equal((await app.data.store.get('llm-profiles', 'xai-empty')).apiKey, 'demoCredentialAlphaOmega');
 assert.equal((await app.data.store.get('llm-profiles', 'xai-empty')).customHeaders, secretProfile.customHeaders);
@@ -231,7 +322,7 @@ assert.equal(document.querySelector('.section-tabs i'), null, 'model category ta
 assert.equal(document.querySelector('[data-edit-service="system-asr"]'), null, 'unavailable system ASR must not expose an editor');
 assert.equal(document.querySelector('[data-test-service="system-asr"]'), null, 'unavailable system ASR must not expose a recording test');
 assert.match(document.querySelector('.model-service-card').textContent, /不可用/, 'unavailable system ASR must be labelled clearly');
-console.log('passed: settings/theme, middle-masked credentials with explicit copy, confirmation dismissal and rapid navigation');
+console.log('passed: settings/theme, masked credentials with clipboard paste and explicit reveal, confirmation dismissal and rapid navigation');
 app.components.closeModal();
 
 await app.navigate('me');
@@ -290,6 +381,9 @@ await until(() => hotRole && !app.features.chatSession.active(id), 'next reply u
 assert.equal(hotRole.name, '即时更新搭档'); assert.equal(hotRole.systemPrompt, '这是在对话中保存的新角色设定。');
 click('.message-row.user [data-edit-conversation-profile="user"]'); await until(() => document.querySelector('#modalForm [name="userName"]'), 'user message avatar opens conversation personal settings');
 assert.equal(document.querySelector('#modalTitle').textContent, '本对话个人设定');
+assert.equal(document.querySelector('#conversationAvatarPreview .avatar').dataset.avatarMedia || '', (await app.data.store.get('meta', 'user-profile')).avatarMediaId || '', 'conversation avatar defaults to the global personal avatar');
+assert.equal(field('userName').value, '测试用户', 'conversation identity starts from the global name');
+assert.equal(field('userIntroduction').value, '喜欢直接、清晰的回答。', 'conversation identity starts from the global introduction');
 field('userName', '本对话的我'); field('userIntroduction', '只用于这个对话的介绍。'); submit();
 await until(() => !document.querySelector('#modalForm') && document.querySelector('.message-row.user .message-name').textContent === '本对话的我', 'saved conversation profile refreshes user messages');
 const personalized = await app.data.store.get('conversations', id); assert.equal(personalized.userName, '本对话的我'); assert.equal(personalized.userIntroduction, '只用于这个对话的介绍。');
@@ -297,6 +391,10 @@ let nextUserContext; app.services.llm.complete = async (_role, _history, _task, 
 type('#messageInput', '验证个人设定立即生效'); click('#sendButton');
 await until(() => nextUserContext && !app.features.chatSession.active(id), 'next reply uses the saved conversation profile');
 assert.deepEqual(JSON.parse(JSON.stringify(nextUserContext)), { name: '本对话的我', introduction: '只用于这个对话的介绍。' });
+click('.message-row.user [data-edit-conversation-profile="user"]'); await until(() => document.querySelector('#modalForm [name="userName"]'), 'conversation identity reopens with saved values');
+field('userName', ''); field('userIntroduction', ''); submit();
+await until(() => !document.querySelector('#modalForm') && document.querySelector('.message-row.user .message-name').textContent === '测试用户', 'cleared conversation identity falls back to global profile');
+const clearedPersonalized = await app.data.store.get('conversations', id); assert.equal(clearedPersonalized.userName, ''); assert.equal(clearedPersonalized.userIntroduction, '');
 let releaseRouting, releaseAnswer;
 app.services.llm.selectRole = async (_moderator, candidates) => new Promise(resolve => { releaseRouting = () => resolve(candidates.find(role => role.id === secondRole.id)); });
 app.services.llm.complete = async role => new Promise(resolve => { releaseAnswer = () => resolve({ text: role.name + '自主回答', images: [] }); });

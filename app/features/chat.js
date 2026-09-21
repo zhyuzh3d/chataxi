@@ -36,6 +36,7 @@
     if (view) await close();
     var conversation = await store.get('conversations', id);
     if (!conversation) throw new Error('对话不存在');
+    conversation = (await store.prepareOpeningScene(id)).conversation;
     var roles = await store.list('roles'), profiles = await store.list('llm-profiles');
     var roleMap = {}; roles.forEach(function (role) { roleMap[role.id] = role; });
     var globalUserProfile = await store.get('meta', 'user-profile') || { name: '我', introduction: '', avatarMediaId: '' };
@@ -227,15 +228,15 @@
     if (forceBottom || target.follow) requestAnimationFrame(function () { scrollBottom(target); }); else list.scrollTop = top;
   }
   async function messageElement(message, target, urls, editable) {
-    var user = message.kind === 'user', role = target.roleMap[message.roleId];
-    var row = document.createElement('article'); row.className = 'message-row ' + (user ? 'user' : 'assistant'); row.dataset.messageId = message.id;
-    if (!user) {
+    var system = message.kind === 'system', user = message.kind === 'user', assistant = !system && !user, role = target.roleMap[message.roleId];
+    var row = document.createElement('article'); row.className = 'message-row ' + (system ? 'system' : user ? 'user' : 'assistant'); row.dataset.messageId = message.id;
+    if (assistant) {
       var avatar = await messageAvatar(role || { name: message.roleName || 'AI', avatarMediaId: '' }, 'message-avatar', target, 'role');
       if (target.conversation.kind === 'group' && role && role.id === moderatorRoleId(target.conversation)) avatar.classList.add('moderator-avatar-trigger');
       row.appendChild(avatar);
     }
     var block = document.createElement('div'); block.className = 'message-block';
-    var name = document.createElement('div'); name.className = 'message-name'; name.textContent = user ? target.userProfile.name || '我' : role ? role.name : message.roleName || 'AI'; block.appendChild(name);
+    var name = document.createElement('div'); name.className = 'message-name'; name.textContent = system ? '系统' : user ? target.userProfile.name || '我' : role ? role.name : message.roleName || 'AI'; block.appendChild(name);
     var bubble = document.createElement('div'); bubble.className = 'message-bubble';
     for (var i = 0; i < (message.media || []).length; i += 1) {
       var media = message.media[i], src = '';
@@ -269,13 +270,13 @@
     var meta = document.createElement('div'); meta.className = 'message-meta';
     var time = document.createElement('time'); time.textContent = u.formatTime(message.createdAt); meta.appendChild(time);
     if (message.contextTrimmed) { var note = document.createElement('span'); note.className = 'context-badge'; note.textContent = message.contextCompressed ? '含压缩上下文' : '仅最近 N 条'; note.title = message.contextCompressed ? '这次请求使用了压缩历史和最近完整消息' : '更早消息没有包含在这次请求中'; meta.appendChild(note); }
-    if (!user && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
+    if (assistant && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
     if (message.text) {
       var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'icon-button'; copy.setAttribute('aria-label', '复制这条消息'); copy.innerHTML = ui.icon('copy'); copy.addEventListener('click', ui.action(async function () { await app.platform.hermit.copyText(message.text); ui.toast('已复制'); })); meta.appendChild(copy);
-      if (!user && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id)) return; return app.services.tts.speak(message.text, role); })); meta.appendChild(speak); }
+      if (assistant && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id)) return; return app.services.tts.speak(message.text, role); })); meta.appendChild(speak); }
     }
     if (editable && message.status === 'done') { var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button'; edit.setAttribute('aria-label', '编辑这条消息'); edit.innerHTML = ui.icon('pencil'); edit.addEventListener('click', ui.action(function () { return editMessage(target, message); })); meta.appendChild(edit); }
-    if (!user && editable && message.status === 'done') { var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button'; regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right'); regenerate.addEventListener('click', ui.action(function () { return regenerateMessage(target, message); })); meta.appendChild(regenerate); }
+    if (assistant && editable && message.status === 'done') { var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button'; regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right'); regenerate.addEventListener('click', ui.action(function () { return regenerateMessage(target, message); })); meta.appendChild(regenerate); }
     block.appendChild(meta); row.appendChild(block); if (user) row.appendChild(await messageAvatar(target.userProfile, 'message-avatar user-message-avatar', target, 'user')); return row;
   }
   async function messageAvatar(profile, className, target, owner) {
@@ -439,7 +440,8 @@
     if (index < 0) throw new Error('消息不存在');
     var editable = await app.services.context.editable(messages, target.conversation.id, target.conversation.recentFullMessages || 10);
     if (!editable[original.id]) throw new Error('这条消息已经进入压缩历史，不能再修改');
-    ui.openModal({ title: original.kind === 'user' ? '编辑我的消息' : '编辑角色回复', submitText: '保存', html: '<div class="form-grid"><label class="field"><span>消息内容</span><textarea name="text" maxlength="16000">' + u.escapeHtml(original.text || '') + '</textarea></label><p class="helper">这里只保存消息内容，不会自动重新生成或删除后续消息。角色回复可在保存后使用气泡下方的重新生成按钮。</p></div>', onSubmit: async function (form) {
+    var system = original.kind === 'system';
+    ui.openModal({ title: system ? '编辑场景开场白' : original.kind === 'user' ? '编辑我的消息' : '编辑角色回复', submitText: '保存', html: '<div class="form-grid"><label class="field"><span>消息内容</span><textarea name="text" maxlength="16000">' + u.escapeHtml(original.text || '') + '</textarea></label><p class="helper">这里只保存消息内容，不会自动重新生成或删除后续消息。' + (system ? '这条场景消息仍会按普通历史参与压缩。' : original.kind === 'user' ? '' : '角色回复可在保存后使用气泡下方的重新生成按钮。') + '</p></div>', onSubmit: async function (form) {
       var text = u.formValue(form, 'text');
       if (!text && !(original.media || []).length) throw new Error('消息内容不能为空');
       await applyMessageEdit(target, Object.assign({}, original), text); return true;
@@ -525,12 +527,13 @@
   }
   async function manageChat(target) {
     var summaries = await app.services.context.list(target.conversation.id), conversation = await store.get('conversations', target.conversation.id);
-    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="edit">' + ui.icon('gear') + '<span>基础设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="identity">' + ui.icon('gear') + '<span>个人设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩上下文' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="edit">' + ui.icon('gear') + '<span>基础设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="identity">' + ui.icon('gear') + '<span>个人设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="scene">' + ui.icon('clapperboard') + '<span>场景设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩上下文' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-chat-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.chatMenu; ui.closeModal();
-      if (currentBusy(target) && (command === 'edit' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
+      if (currentBusy(target) && (command === 'edit' || command === 'scene' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
       if (command === 'edit') return app.features.conversations.openEditor(conversation);
       if (command === 'identity') return app.features.conversations.openPersonalProfile(conversation, function (next) { target.conversation = next; target.userProfile = app.services.profiles.userForConversation(next, target.globalUserProfile); target.avatarSources = {}; revoke(target.urls); target.urls = []; target.messageCache = {}; return renderMessages(target, false); });
+      if (command === 'scene') return app.features.conversations.openSceneSettings(conversation, async function (result) { target.conversation = result.conversation || target.conversation; target.messageSnapshot = null; target.messageCache = {}; await renderMessages(target, true); });
       if (command === 'voice') return voiceSettings(target);
       if (command === 'summary') return editSummaries(target);
       if (command === 'export') return app.features.conversations.exportText(conversation.id);

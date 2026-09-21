@@ -29,7 +29,7 @@ function runtime(files = []) {
 async function fixture() {
   const env = runtime(), { app } = env, s = app.data.store;
   await s.init();
-  await s.put('llm-profiles', 'p', { id: 'p', name: '测试服务', model: 'fixture', endpoint: 'https://example.com/v1/responses', enabled: true });
+  await s.put('llm-profiles', 'p', { id: 'p', name: '测试服务', model: 'fixture', endpoint: 'https://example.com/v1/responses', systemRoleMode: 'native', enabled: true });
   for (const id of ['a', 'b']) await s.put('roles', id, { id, name: id.toUpperCase(), llmProfileId: 'p', enabled: true });
   await s.put('conversations', 'c', { id: 'c', title: '回归场景', kind: 'group', roleIds: ['a', 'b'], createdAt: 1, updatedAt: 1 });
   return env;
@@ -64,6 +64,61 @@ function fakeSocket(onSend) {
   };
 }
 
+test('an opening scene materializes exactly once as the first ordinary system message', async () => {
+  const { app } = await fixture(), store = app.data.store;
+  const conversation = await store.get('conversations', 'c'); conversation.openingSceneDraft = '凌晨三点，旧车站停电。'; await store.put('conversations', 'c', conversation);
+  const first = await store.prepareOpeningScene('c'), second = await store.prepareOpeningScene('c');
+  const messages = await store.messages('c'), saved = await store.get('conversations', 'c');
+  assert.equal(first.created, true); assert.equal(second.created, false); assert.equal(messages.length, 1);
+  assert.equal(messages[0].kind, 'system'); assert.equal(messages[0].systemType, 'scene'); assert.equal(messages[0].text, '凌晨三点，旧车站停电。');
+  assert.equal(Object.hasOwn(saved, 'openingSceneDraft'), false);
+});
+
+test('an opening scene is never inserted retroactively after normal history exists', async () => {
+  const { app } = await fixture(), store = app.data.store;
+  await store.putMessage({ id: 'u0', conversationId: 'c', kind: 'user', text: '已经开始', media: [], status: 'done', createdAt: 2 });
+  const conversation = await store.get('conversations', 'c'); conversation.openingSceneDraft = '不应插入'; await store.put('conversations', 'c', conversation);
+  const result = await store.prepareOpeningScene('c');
+  assert.equal(result.created, false); assert.deepEqual(plain((await store.messages('c')).map(message => message.kind)), ['user']);
+  assert.equal(Object.hasOwn(await store.get('conversations', 'c'), 'openingSceneDraft'), false);
+});
+
+test('scene generation uses the moderator model with user, role, mode and guidance context', async () => {
+  const { app } = await fixture(), store = app.data.store;
+  const roleA = await store.get('roles', 'a'), roleB = await store.get('roles', 'b');
+  roleA.systemPrompt = 'A 是严谨的历史研究者。'; roleB.systemPrompt = 'B 是善于倾听的主持人。';
+  await store.put('roles', 'a', roleA); await store.put('roles', 'b', roleB);
+  const conversation = await store.get('conversations', 'c'); conversation.moderatorRoleId = 'b'; await store.put('conversations', 'c', conversation);
+  let captured;
+  app.services.middleware.compileLlm = (profile, role, messages, options) => {
+    captured = { profile: plain(profile), role: plain(role), messages: plain(messages), options: plain(options) };
+    return { url: 'https://example.com/v1/responses', headers: {}, body: { fixture: true } };
+  };
+  app.services.providers.parse = () => ({ text: '雨夜的图书馆即将闭馆，三人围坐在最后一盏阅读灯下。' + '灯'.repeat(210), usage: { output_tokens: 24 }, rawId: 'scene-1' });
+  app.platform.network = { requestJson: async options => { assert.deepEqual(JSON.parse(options.bodyText), { fixture: true }); return { data: {} }; } };
+  const generated = await app.services.llm.generateScene(roleB, [roleB, roleA], conversation, { name: '小舟', introduction: '正在学习城市史。' }, ['学习', '思辨'], '围绕一张旧地图展开', {});
+  assert.match(generated.text, /雨夜的图书馆/);
+  assert.ok(Array.from(generated.text).length <= 200, 'generated scene is hard-limited to 200 characters');
+  assert.equal(captured.profile.allowImageGeneration, false); assert.equal(captured.options.stream, false);
+  assert.equal(captured.profile.maxOutputTokens, 500);
+  assert.match(captured.role.systemPrompt, /对话主持人「B」/);
+  assert.match(captured.role.systemPrompt, /小舟[\s\S]*正在学习城市史/);
+  assert.match(captured.role.systemPrompt, /角色「B」[\s\S]*善于倾听[\s\S]*角色「A」[\s\S]*历史研究者/);
+  assert.match(captured.role.systemPrompt, /100 个汉字左右[\s\S]*不能超过 200 个汉字/);
+  assert.match(captured.messages[0].text, /场景模式：学习[\s\S]*学习目标[\s\S]*具体问题[\s\S]*围绕一张旧地图展开/);
+  assert.doesNotMatch(captured.messages[0].text, /场景模式：思辨/);
+});
+
+test('each scene mode has a focused and materially different planning instruction', async () => {
+  const { app } = await fixture(), instruction = app.services.llm.sceneModeInstruction;
+  assert.match(instruction('工作'), /正式、专业[\s\S]*目标[\s\S]*职责[\s\S]*约束[\s\S]*决策/);
+  assert.match(instruction('学习'), /正式、专注[\s\S]*学科、知识点或技能任务[\s\S]*学习目标[\s\S]*不渲染氛围/);
+  assert.match(instruction('思辨'), /多种立场[\s\S]*关键前提[\s\S]*观点张力[\s\S]*不预设结论/);
+  assert.match(instruction('闲聊'), /日常交流[\s\S]*小事件[\s\S]*氛围细节[\s\S]*故事感/);
+  assert.match(instruction('倾诉'), /共情空间[\s\S]*生活片段[\s\S]*环境与氛围[\s\S]*不要诊断/);
+  assert.notEqual(instruction('工作'), instruction('学习'));
+});
+
 test('group chat responds once per role, in conversation order, with previous answer in context', async () => {
   const { app } = await fixture(), seen = [];
   app.services.llm.complete = async (role, history) => { seen.push({ role: role.id, history: plain(history) }); return result(role.name); };
@@ -88,6 +143,49 @@ test('language model completion emits incremental text before the streamed respo
   const result = await app.services.llm.complete(role, [], task, conversation, [role]);
   assert.deepEqual(updates, ['逐段', '逐段输出']);
   assert.equal(result.text, '逐段输出'); assert.equal(result.streamed, true); assert.equal(result.usage.output_tokens, 2);
+});
+
+test('a retryable native network abort restarts one language-model stream and replaces partial text', async () => {
+  const { app } = await fixture(); let attempts = 0, retries = 0; const updates = [];
+  const role = await app.data.store.get('roles', 'a'), conversation = await app.data.store.get('conversations', 'c');
+  app.platform.network = { requestSse: async options => {
+    attempts++;
+    if (attempts === 1) {
+      await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"几个字"}' });
+      const error = Error('Software caused connection abort'); error.code = 'E_NETWORK'; error.retryable = true; throw error;
+    }
+    await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"完整回复"}' });
+    await options.onEvent({ data: '{"type":"response.completed","response":{"usage":{"output_tokens":4}}}' });
+  } };
+  const task = { cancelled: false, onDelta: update => updates.push(update.text), onStreamRetry: async () => { retries++; updates.push(''); } };
+  const completed = await app.services.llm.complete(role, [], task, conversation, [role]);
+  assert.equal(attempts, 2); assert.equal(retries, 1); assert.deepEqual(updates, ['几个字', '', '完整回复']);
+  assert.equal(completed.text, '完整回复'); assert.equal(task.streamingRetried, true);
+});
+
+test('a retried reply resets its partial bubble and streaming readout before continuing', async () => {
+  const { app } = await fixture(); let attempts = 0, stops = 0; const voices = [];
+  app.state.activeConversationId = 'c';
+  const conversation = await app.data.store.get('conversations', 'c'); conversation.kind = 'single'; conversation.roleIds = ['a']; conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
+  app.services.tts = {
+    createStream: async () => { const owner = { started: false, text: '', append(delta) { this.text += delta; }, async finish(text) { this.finished = text; } }; voices.push(owner); return owner; },
+    stop: async () => { stops++; }, speak: async () => {}
+  };
+  app.platform.network = { requestSse: async options => {
+    attempts++;
+    if (attempts === 1) {
+      await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"残留片段"}' });
+      const error = Error('Software caused connection abort'); error.code = 'E_NETWORK'; error.retryable = true; throw error;
+    }
+    await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"重试后的完整回复"}' });
+    await options.onEvent({ data: '{"type":"response.completed","response":{}}' });
+  } };
+  await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const messages = await app.data.store.messages('c'), answer = messages.find(message => message.kind === 'assistant');
+  assert.equal(attempts, 2); assert.equal(stops, 1); assert.equal(voices.length, 2);
+  assert.equal(voices[0].text, '残留片段'); assert.equal(voices[1].text, '重试后的完整回复');
+  assert.equal(voices[1].finished, '重试后的完整回复'); assert.equal(answer.text, '重试后的完整回复'); assert.equal(answer.status, 'done');
 });
 
 test('an empty group turn can mention one role and carries every participant definition', async () => {
@@ -207,7 +305,7 @@ test('conversation personal settings override global name and introduction indep
   ]);
   const resolved = app.services.profiles.userForConversation(conversation, { name: '测试用户', introduction: '通用用户背景', avatarMediaId: 'global-avatar' });
   assert.deepEqual(plain(resolved), { name: '测试用户', introduction: '本对话专用背景', avatarMediaId: 'conversation-avatar' });
-  const applied = app.services.context.applyToRole({ id: 'a', name: 'A', systemPrompt: '角色设定' }, null, [{ id: 'a', name: 'A', systemPrompt: '角色设定' }], seen[2]);
+  const applied = app.services.context.applyToRole({ id: 'a', name: 'A', systemPrompt: '角色设定' }, [{ id: 'a', name: 'A', systemPrompt: '角色设定' }], seen[2]);
   assert.match(applied.systemPrompt, /名称：「测试用户」/); assert.match(applied.systemPrompt, /本对话专用背景/);
   assert.doesNotMatch(applied.systemPrompt, /通用用户背景/);
 });
@@ -231,7 +329,9 @@ test('group context shares one summary and keeps the timeline latest N across us
   assert.deepEqual(plain(prepared.recent.map(message => message.kind === 'user' ? 'user' : message.roleId)), ['b', 'user', 'b', 'a', 'user']);
   const shared = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, other, messages, settings, {});
   assert.equal(shared.summary.id, 'c'); assert.equal(shared.summary.text, '摘要'); assert.equal(shared.summary.compressedByRoleId, 'a');
-  const merged = app.services.context.applyToRole(current, null, [current, other]);
+  const requestMessages = app.services.context.requestMessages(shared);
+  assert.equal(requestMessages[0].kind, 'system'); assert.equal(requestMessages[0].systemType, 'summary'); assert.equal(requestMessages[0].text, '摘要');
+  const merged = app.services.context.applyToRole(current, [current, other]);
   assert.match(merged.systemPrompt, /A 的设定/); assert.match(merged.systemPrompt, /B 的设定/);
 });
 
@@ -424,6 +524,32 @@ test('automatic readout falls back once when a stream channel fails before retur
   await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
   for (let i = 0; i < 100 && !spoken; i++) await new Promise(resolve => setTimeout(resolve, 1));
   assert.equal(spoken, 1);
+});
+
+test('automatic readout falls back when audio bytes arrived but playback never started', async () => {
+  const { app } = await fixture(); let spoken = 0;
+  app.state.activeConversationId = 'c';
+  app.services.tts = { createStream: async () => ({ started: false, append() {}, finish: async () => { const error = Error('Software caused connection abort'); error.streamReceived = true; throw error; } }), speak: async () => { spoken++; }, stop: async () => {} };
+  app.services.llm.complete = async () => result('仍应自动朗读');
+  const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
+  await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
+  for (let i = 0; i < 100 && !spoken; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(spoken, 1);
+});
+
+test('muting before a reply completes suppresses its automatic full-audio fallback', async () => {
+  const { app } = await fixture(); let muted = false, spoken = 0;
+  app.state.activeConversationId = 'c';
+  app.services.tts = {
+    isMuted: () => muted,
+    createStream: async () => ({ started: false, append() {}, finish: async () => { throw Error('stream unavailable'); } }),
+    speak: async () => { spoken++; }, stop: async () => {}
+  };
+  app.services.llm.complete = async () => { muted = true; return result('静音后收到的回复'); };
+  const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
+  await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(spoken, 0);
 });
 
 test('one failed role keeps the user message and does not prevent the next role', async () => {
@@ -651,6 +777,91 @@ test('an unlocked Web Audio context can autoplay a completed inline TTS response
   assert.equal(app.services.tts.unlockPlayback(), true);
   await app.services.tts.speak('自动朗读', { ttsProfileId: 'eleven', ttsModel: 'eleven_v3', ttsVoice: 'jessica' });
   assert.equal(audibleStarts, 1);
+});
+
+test('backgrounding pauses active Web Audio immediately and foregrounding resumes it', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  await app.data.store.put('tts-profiles', 'external', { id: 'external', family: 'openai-tts', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', enabled: true });
+  let audibleStarts = 0, suspends = 0, resumes = 0;
+  class FakeAudioContext {
+    constructor() { this.state = 'running'; this.destination = {}; }
+    suspend() { suspends++; this.state = 'suspended'; return Promise.resolve(); }
+    resume() { resumes++; this.state = 'running'; return Promise.resolve(); }
+    createBuffer() { return {}; }
+    createBufferSource() { return { buffer: null, connect() {}, start() { if (this.buffer && this.buffer.decoded) audibleStarts++; }, stop() {} }; }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    decodeAudioData(_bytes, done) { const decoded = { decoded: true }; done(decoded); return Promise.resolve(decoded); }
+  }
+  env.context.window.AudioContext = FakeAudioContext;
+  app.platform.network = { request: async () => ({ status: 200, bodyBase64: 'SUQzBAUG', headers: { 'content-type': 'audio/mpeg' } }) };
+  assert.equal(app.services.tts.unlockPlayback(), true);
+  const speaking = app.services.tts.speak('需要跨前后台继续朗读', { ttsProfileId: 'external' });
+  for (let i = 0; i < 100 && !audibleStarts; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(audibleStarts, 1);
+  assert.equal(await app.services.tts.pauseForBackground(), true); assert.equal(suspends, 1);
+  assert.equal(await app.services.tts.resumeAfterBackground(), true); assert.equal(resumes, 1);
+  await app.services.tts.stop(); await speaking;
+});
+
+test('backgrounding stops Android system TTS and foregrounding restarts it automatically', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  const listeners = new Map(); let speaks = 0, stops = 0;
+  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
+  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.hermit.api = () => ({ tts: {
+    voices: async () => ({ languages: ['zh-CN'], voices: [] }),
+    speak: async () => ({ utteranceId: 'utterance-' + (++speaks) }),
+    stop: async () => { stops++; }
+  } });
+  await app.services.tts.speak('系统朗读内容', {}); assert.equal(speaks, 1);
+  assert.equal(await app.services.tts.pauseForBackground(), true); assert.equal(stops, 1); assert.equal(listeners.size, 0);
+  assert.equal(await app.services.tts.resumeAfterBackground(), true);
+  for (let i = 0; i < 100 && speaks < 2; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(speaks, 2);
+  await app.services.tts.stop(); assert.equal(stops, 2);
+});
+
+test('backgrounding preserves prepared native audio and replays it on foreground without regenerating', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  await app.data.store.put('tts-profiles', 'external', { id: 'external', family: 'openai-tts', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', enabled: true });
+  const listeners = new Map(); let requests = 0, plays = 0, stops = 0, deletes = 0;
+  app.platform.network = { request: async () => { requests++; return { status: 200, file: { logicalFileId: 'prepared-audio' }, headers: {} }; } };
+  app.platform.hermit.available = () => true;
+  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.hermit.api = () => ({
+    audio: { play: async () => ({ playbackId: 'playback-' + (++plays) }), stopPlayback: async () => { stops++; } },
+    files: { delete: async () => { deletes++; } }
+  });
+  assert.equal(await app.services.tts.prepare('已生成的朗读', { ttsProfileId: 'external' }, 'message-ready'), true);
+  const firstPlayback = app.services.tts.playReady('message-ready');
+  for (let i = 0; i < 100 && !plays; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(await app.services.tts.pauseForBackground(), true); assert.equal(stops, 1); assert.equal(deletes, 0);
+  assert.equal(await app.services.tts.resumeAfterBackground(), true);
+  for (let i = 0; i < 100 && plays < 2; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(requests, 1); assert.equal(plays, 2);
+  await app.services.tts.stop(); await firstPlayback;
+  assert.equal(stops, 2); assert.equal(deletes, 1);
+});
+
+test('complete TTS falls back after a retryable audio stream aborts before playback starts', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  await app.data.store.put('tts-profiles', 'openai-tts', { id: 'openai-tts', family: 'openai', type: 'openai', apiKey: 'fixture', endpoint: 'https://api.openai.com/v1/audio/speech', models: [{ id: 'tts-1', streaming: true, audioStreaming: true }], modelsDiscovered: true, enabledModelIds: ['tts-1'], voices: [{ id: 'alloy' }], enabled: true });
+  let streamRequests = 0, completeRequests = 0, plays = 0;
+  class FakeAudioContext {
+    constructor() { this.state = 'running'; this.destination = {}; this.currentTime = 0; }
+    resume() { return Promise.resolve(); }
+    createBuffer(_channels, length, sampleRate) { const samples = new Float32Array(length); return { length, sampleRate, getChannelData: () => samples }; }
+    createBufferSource() { return { buffer: null, connect() {}, start() { if (this.buffer && this.buffer.decoded) { plays++; setTimeout(() => this.onended && this.onended(), 0); } }, stop() {} }; }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    decodeAudioData(_bytes, done) { const decoded = { decoded: true }; done(decoded); return Promise.resolve(decoded); }
+  }
+  env.context.window.AudioContext = FakeAudioContext; assert.equal(app.services.tts.unlockPlayback(), true);
+  app.platform.network = {
+    requestByteStream: async options => { streamRequests++; await options.onChunk(new Uint8Array(480)); const error = Error('Software caused connection abort'); error.code = 'E_NETWORK'; error.retryable = true; throw error; },
+    request: async () => { completeRequests++; return { status: 200, bodyBase64: 'SUQzBAUG', headers: { 'content-type': 'audio/mpeg' } }; }
+  };
+  await app.services.tts.speak('自动朗读完整回复', { ttsProfileId: 'openai-tts', ttsModel: 'tts-1', ttsVoice: 'alloy' });
+  assert.equal(streamRequests, 1); assert.equal(completeRequests, 1); assert.equal(plays, 1);
 });
 
 test('streaming TTS starts PCM playback before the HTTP response finishes', async () => {

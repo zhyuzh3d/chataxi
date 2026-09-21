@@ -28,10 +28,11 @@
         if (message.text) content.push({ type: "input_text", text: message.text });
         (message.images || []).forEach(function (image) { content.push({ type: "input_image", source: image }); });
         (message.videos || []).forEach(function (video) { content.push({ type: "input_video", source: video }); });
-        return { role: message.role, speakerKind: message.speakerKind, content: content };
+        return { role: message.role, speakerKind: message.speakerKind, systemType: message.systemType, content: content };
       }),
       generation: generation,
-      stream: !options || options.stream !== false
+      stream: !options || options.stream !== false,
+      systemRoleMode: profile.systemRoleMode || profile.resolvedCapabilities && profile.resolvedCapabilities.systemRoleMode || "native"
     });
   }
   function compileLlm(profile, role, messages, options) {

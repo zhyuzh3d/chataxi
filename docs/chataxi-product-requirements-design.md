@@ -1,9 +1,11 @@
 # chataxi 产品需求与技术设计
 
-版本：0.6.1  
-日期：2026-09-15  
-状态：当前实现合同；已完成 0.6.1 源码、自动流程检查与当前连接设备的稳定 release 部署核验  
-配套记录：[0.5.12 自动选角诊断记录](../plans/chataxi-v0.5.12-routing-records.md)；[0.5.11 自动选角与长对话性能修订](../plans/chataxi-v0.5.11-auto-routing-performance.md)；[0.5.0 模型服务配置与运行机制升级](../plans/chataxi-llm-tts-upgrade-plan-2026-09-14.md)；[供应商接口资料](../plans/chataxi-provider-api-reference-2026-09-14.md)；其余历史修订见 `plans/`。
+版本：0.6.11
+日期：2026-09-17
+状态：当前实现合同；0.6.11 以设备 DEV 目录同步为本轮运行交付
+
+0.6.11 为五类场景模式提供独立策划提示，并使用相邻按钮外边距兼容旧 WebView 的横向间距；0.6.10 的单选、单行关键词、80% Sheet 与 200 字上限继续保留。
+配套记录：[0.6.5 角色模板画廊计划](../plans/chataxi-v0.6.5-role-template-gallery.md)；[0.6.2 场景开场白计划](../plans/chataxi-v0.6.2-conversation-opening-scene.md)；[0.5.12 自动选角诊断记录](../plans/chataxi-v0.5.12-routing-records.md)；[0.5.11 自动选角与长对话性能修订](../plans/chataxi-v0.5.11-auto-routing-performance.md)；[0.5.0 模型服务配置与运行机制升级](../plans/chataxi-llm-tts-upgrade-plan-2026-09-14.md)；[供应商接口资料](../plans/chataxi-provider-api-reference-2026-09-14.md)；其余历史修订见 `plans/`。
 
 ## 1. 产品定位
 
@@ -39,7 +41,7 @@ chataxi 负责对话体验和有限的供应商协议适配，不取代模型网
 
 每个模型卡片只表示一个可调用的具体模型，保存服务商入口、传输协议、模型系列、外部模型 ID、连接状态和验证基线。一个卡片不能保存第二个模型。相同账号的凭据和模型目录单独保存在本机记录中，由多张卡片通过引用复用；“复制添加”复用连接信息并要求重新选择一个模型。角色只引用模型卡片，并独立保存生成或发音参数。
 
-语言模型入口包括 llmserver、OpenAI、DeepSeek、Anthropic Claude、Google Gemini、xAI/Grok、Kimi/Moonshot、GLM/智谱和自定义兼容服务。适配协议为 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini GenerateContent 与 Ollama Chat。官方入口固定协议和端点，聚合入口保持自己的外层协议；模型系列只用于能力匹配，不能把聚合平台内的 Claude 等模型改走官方接口。目录结构化能力优先，精确注册表其次，保守分类规则只推荐用途和系列，不创建多模态或高级参数。名称、端点、协议、模型 ID 和自定义 Header 收入默认折叠的“更多设置”。模型卡不显示温度、输出长度、`top_p`、`top_k`、推理强度、图片生成等角色参数。
+语言模型入口包括 llmserver、OpenAI、DeepSeek、Anthropic Claude、Google Gemini、xAI/Grok、Kimi/Moonshot、GLM/智谱和自定义兼容服务。适配协议为 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions、Gemini GenerateContent 与 Ollama Chat。官方入口固定协议和端点，聚合入口保持自己的外层协议；模型系列只用于能力匹配，不能把聚合平台内的 Claude 等模型改走官方接口。目录结构化能力优先，精确注册表其次，保守分类规则只推荐用途和系列，不创建多模态或高级参数。名称、端点、协议、模型 ID 和自定义 Header 收入默认折叠的“更多设置”。模型卡不显示温度、输出长度、`top_p`、`top_k`、推理强度、图片生成等角色参数。
 
 朗读家族包括 Android 系统朗读、OpenAI TTS、ElevenLabs、豆包语音和自定义 OpenAI 风格 TTS。ElevenLabs 的模型目录与账户音色目录独立读取；密钥缺少 `models_read` 但能够读取音色时，使用包含 Multilingual v2、Flash v2.5 和 Eleven v3 的内置 Text to Speech HTTP 目录并继续执行真实合成测试，不把可用的服务误报为整体失败。服务目录真实返回且声明可做文字转语音的额外模型仍可使用。豆包语音使用最新版 V3 API 的单一 API Key 鉴权，不要求 App ID；所选模型作为资源 ID，内置语音合成 2.0、1.0与声音复刻 2.0、1.0。语音识别家族包括 Android 系统语音识别、OpenAI 语音识别和自定义 multipart 服务。Android 系统语音识别永远保留并作为默认路径，不依赖 GMS、海外账号或运行时模块下载。
 
@@ -63,6 +65,10 @@ Hermit 的系统 TTS 合同提供当前引擎的语言、音色、语速和音�
 
 消息保持用户在右、角色在左，双方头像均为圆形。气泡采用浅黄色主题、常见即时通讯的左右布局和小尖角。显示层把连续空段落收敛为普通换行，使段间距与行间距一致，但不改写持久化文本或模型上下文。模型内容用 `textContent` 渲染，不执行 Markdown HTML。图片最多四张，发送前压缩并受 Hermit 请求体上限约束。文字与附件草稿逐对话保存，离开页面前等待写入完成。
 
+对话管理菜单在“个人设定”下显示“场景设定”。该 Sheet 固定为视口高度的 80%，顶部使用“手工设定、自动生成”两个 Tab。自动生成在闲聊、思辨、学习、工作、倾诉中至多单选一个模式；单行“补充关键词”输入框和“魔法棒＋生成”按钮横向并列、等高显示。主持人角色绑定的语言模型接收本对话有效用户资料、全部参与角色名称与角色提示词，返回约 100 字的纯场景正文并回填到原有开场白文本框；模型提示明确限制 200 字，客户端对异常超长结果再次截断，保证最终内容不超过 200 字。生成不会自动保存或发送，用户仍可编辑并明确保存；生成请求不进入消息历史，也不引入新的场景数据类型。空对话保存非空场景后立即创建且只创建一条 `kind=system/systemType=scene` 的第一条普通历史消息；从列表预先保存时则在首次进入该空对话时创建。对话已有任何消息后不得追溯插入场景。场景消息在界面居中显示，不带头像、朗读或重新生成按钮，但在普通消息可编辑窗口内支持复制与编辑；进入摘要边界后与其他旧消息一样不可直接编辑。
+
+模式提示必须提供实质不同的策划方向：工作模式明确项目或业务问题、目标、职责、信息、进展、约束和决策点；学习模式明确学科或技能任务、学习目标、资料基础与具体问题；思辨模式明确主题、关键前提、现实约束和观点张力，这三类只允许一两句环境交代，不做氛围渲染。闲聊模式使用具体小事件或共同活动承载人物关系与轻松氛围；倾诉模式使用生活片段或情绪触发点建立安全、私密、可共情的表达空间，但不得诊断、说教或替用户下结论。
+
 群聊角色点选区属于输入框组件，使用无背景的 `@` 标识和固定单行角色按钮，不显示“全部”。每个角色按钮显示小圆头像和名称；每轮必须且只能选择一位参与角色，名称最多显示五个字符，超长时显示前四个字符加省略号。角色较多时只有角色条局部横向滚动，页面与 Sheet 仍禁止横向滚动。选择写入对话并在下一轮和重新进入时保持。发送文字只调用被艾特角色；不填写文字和图片时也可发送，系统会保存明确的“@角色 请继续回答”用户消息后调用该角色。
 
 每个对话把参与角色第一次从空选择状态选中的角色保存为主持人，并把主持人固定在参与角色顺序首位；移除主持人后，仍在选择顺序中的第一位自动接任。基础设定中的主持人名字后显示“主持”标记，群聊消息中的主持人头像带细亮黄色圆环，对话卡片和顶部参与者名称也始终先显示主持人。群聊输入区右端提供持久化的魔法棒开关，默认关闭；开启后角色条仍可横向滚动，但暂时禁用手工艾特。每次普通发送先用主持人的模型、全部参与角色设定、当前个人设定、共享概要和全部尚未压缩消息执行一次非流式路由，只接受 `{\"role\":\"完整角色名称\"}` 或唯一精确角色名，再由该角色正式回复。路由输出不保存为消息。路由调用失败、超时或格式无效时，从当前全部可用参与角色随机选择一位继续并显示 Toast；用户主动停止不触发随机回复。
@@ -71,7 +77,7 @@ Hermit 的系统 TTS 合同提供当前引擎的语言、音色、语速和音�
 
 1. 本对话全部参与角色的名称与角色提示词，并标明当前发言角色；
 2. 用户名称与自我介绍；具体对话的名称、介绍分别在非空时覆盖“我的”对应字段，空字段各自回落到全局值，不做内容合并；头像只用于界面显示，不进入模型上下文；
-3. 本对话共享的最近压缩上下文；
+3. 本对话共享的最近压缩上下文，作为合成的 `system` 历史消息；
 4. 摘要覆盖边界之后全部尚未压缩的完整完成消息，其中同时包含用户消息和所有角色回复。N 是每次压缩后必须保留的最近完整消息下限，不是平时截断上下文的上限。
 
 当前角色只执行自己的角色设定，同时理解其他参与者的身份。任何一个角色失败不会删除用户消息或其他已完成回复。停止本轮会跳过未开始角色、把当前回复标记为已停止并忽略迟到结果；已发出的原生网络请求仍可能在供应商侧计费。
@@ -85,6 +91,8 @@ Hermit 的系统 TTS 合同提供当前引擎的语言、音色、语速和音�
 成功后用一条概要记录保存压缩文本、压缩模型角色、实际覆盖到的最后消息 ID 与时间、累计覆盖消息数、保留 N 和更新时间。第二次压缩把上次概要与上次边界之后、本次最近 N 条之前的新消息合并成概要 2，再把覆盖边界前移；原消息继续保存在设备上。请求期间输入区显示“正在压缩历史上下文 · 角色名”。失败时不移动边界，也不删除历史。
 
 每个对话只维护一份共享压缩内容，后续所有参与角色读取同一份摘要。对话菜单可查看并手工修改最近压缩内容。修改只改变后续模型上下文，不伪装为原始历史。
+
+概要不再拼入角色提示词。每轮请求在摘要存在时把它转换为一条 `systemType=summary` 的合成历史消息，再与最近完整消息共同进入统一供应商适配。场景、概要和每轮重建的角色/用户设定在确认支持的模型上进入协议原生 system 通道；无法确认 system 能力时合并为请求开头的一条 user 消息，并分别使用 `[角色与用户设定]`、`[场景设定]`、`[历史概要]` 标记。该降级只发生在请求编译层，不改写或复制持久化消息。
 
 首次生成压缩内容之前，全部状态完成的消息均可编辑，角色回复也提供独立重新生成按钮。生成压缩内容后，已经进入摘要边界的消息不再提供编辑或重新生成入口；可操作范围是摘要边界之后且位于当前对话最近 N 条内的完成消息。编辑操作只保存文字，不触发模型、不删除任何后续消息。用户需要重新生成角色回复时，另行点击该回复下方按钮；只要目标回复后还有任何用户消息或角色回复，就必须先确认删除全部后续消息，再由原角色重新生成当前回复。删除会同时回收无引用媒体并刷新列表摘要。
 
@@ -111,8 +119,8 @@ Android 系统语音识别为默认服务。调用前检查可用性，处理 re
 | `asrProfile` | `id/name/family/type/endpoint/apiKey/models/enabled` |
 | `role` | `id/name/systemPrompt/avatarMediaId/llmProfileId/model/temperature/maxOutputTokens/reasoningEffort/allowImageGeneration/ttsProfileId/ttsModel/ttsVoice/voicePrompt/ttsSpeechRate/ttsPitchRate/ttsLoudnessRate/enabled` |
 | `userProfile` | `name/avatarMediaId/introduction/createdAt/updatedAt` |
-| `conversation` | `id/title/kind/roleIds/moderatorRoleId/activeRoleIds/autoSelectRole/recentFullMessages/userName/userIntroduction/userAvatarMediaId/autoSpeak/ttsMuted/asrProfileId/asrModel/asrLanguage/pinned/lastMessage` |
-| `message` | `id/conversationId/kind/roleId/replyTo/text/media/status/error/createdAt/editedAt/usage/contextTrimmed/streamed/streamFallback` |
+| `conversation` | `id/title/kind/roleIds/moderatorRoleId/activeRoleIds/autoSelectRole/recentFullMessages/openingSceneDraft/userName/userIntroduction/userAvatarMediaId/autoSpeak/ttsMuted/asrProfileId/asrModel/asrLanguage/pinned/lastMessage`；`openingSceneDraft` 仅在尚未落成消息前短暂存在 |
+| `message` | `id/conversationId/kind/systemType/roleId/replyTo/text/media/status/error/createdAt/editedAt/usage/contextTrimmed/streamed/streamFallback` |
 | `summary` | `conversationId/compressedByRoleId/compressedByRoleName/text/throughMessageId/throughMessageCreatedAt/throughCreatedAt/sourceMessageCount/retainedMessageCount/compressionInputCharacters/updatedAt/editedAt` |
 | `draft` | `id/messageId/text/media/updatedAt` |
 | `settings` | `autoSpeak/enterToSend/defaultTtsProfileId/defaultAsrProfileId/language/imageDetail/theme/autoCompress/compressionThresholdChars/compressionTargetChars/compressionPrompt` |
@@ -127,7 +135,7 @@ Android 系统语音识别为默认服务。调用前检查可用性，处理 re
 
 普通模型、TTS 和 ASR 请求通过 `app/platform/network.js`，在 Hermit 环境调用 `hermit.network.request`。语言模型和第三方 TTS 的流式路径使用标准 Fetch 可读流、SSE 或供应商 WebSocket；如果 WebView 缺少可读流或供应商跨域策略拒绝，语言模型改用 Hermit 原生完整响应，TTS 在首个音频分片前失败时改用完整音频响应。只允许 HTTP(S)，WebSocket 地址只从已验证的供应商 HTTP(S) 地址推导；公网密钥服务应使用 HTTPS，HTTP 仅用于用户信任的局域网服务。
 
-内部消息统一为 `role/roleName/text/images`，供应商适配器只转换请求和解析结果，不读取 UI 和持久化。Responses 解析 `response.output_text.delta`，Chat Completions 解析 `choices[].delta.content`，Anthropic 解析 `content_block_delta/text_delta`，Gemini 使用 `streamGenerateContent?alt=sse`。完成内容按节流间隔保存，停止任务会中断读取并保留可重试状态。
+内部消息统一为 `role/systemType/roleName/text/images`，供应商适配器只转换请求和解析结果，不读取 UI 和持久化。Responses 解析 `response.output_text.delta`，Chat Completions 解析 `choices[].delta.content`，Anthropic 解析 `content_block_delta/text_delta`，Gemini 使用 Interactions SSE 或 `streamGenerateContent?alt=sse`。完成内容按节流间隔保存，停止任务会中断读取并保留可重试状态。
 
 请求 JSON 控制在 900 KiB 以内，最长超时 120 秒。普通文本链接和注解不会自动加载为图片。模型输出、供应商错误和用户内容不得写入 `innerHTML`；日志不包含 Authorization、Cookie 或完整密钥。
 
@@ -141,7 +149,7 @@ Android 系统语音识别为默认服务。调用前检查可用性，处理 re
 
 运行包根目录包含 `index.html` 和 schema 2 的 `hermit.json`，`happId` 固定为 `io.github.zhyuzh3d.chataxi`，使用 hash routing。ZIP 是源码归档，不是构建产物，只包含 `index.html`、`hermit.json`、`app/` 和 `styles/`。
 
-自动验收覆盖：脚本语法与资源闭包、无外部运行依赖、四种 LLM 普通及流式请求/解析、增量消息更新、ElevenLabs 模型与分页音色发现、质量元数据分离、Jane/v3 Professional 兼容模式及目录权限回退、豆包 V3 鉴权/请求/SSE 音频合并、横竖图裁切边界、单角色艾特记忆、空消息点名、全部角色提示词、用户资料与逐对话覆盖、逐对话 N、压缩前后操作范围、静音自动朗读、停止与迟到结果、精确重试、长消息分块、媒体回收、ASR multipart、TTS 取消、版本化归档一致性和关键 DOM 用户流程。
+自动验收覆盖：脚本语法与资源闭包、无外部运行依赖、六种 LLM 协议的 system 映射及未知模型 user 兜底、场景消息单次落成与不可追溯插入、system 概要、普通及流式请求/解析、增量消息更新、ElevenLabs 模型与分页音色发现、质量元数据分离、Jane/v3 Professional 兼容模式及目录权限回退、豆包 V3 鉴权/请求/SSE 音频合并、横竖图裁切边界、单角色艾特记忆、空消息点名、全部角色提示词、用户资料与逐对话覆盖、逐对话 N、压缩前后操作范围、静音自动朗读、停止与迟到结果、精确重试、长消息分块、媒体回收、ASR multipart、TTS 取消、版本化归档一致性和关键 DOM 用户流程。
 
 部署、HermitApp 安装和真机视觉验收是独立门槛。0.4.16 源码通过局域网实时服务可访问；自动检查覆盖连续两轮概要合并与边界推进，但不等同于真实长对话模型质量验收。用户将自行验证偶发的艾特角色身份行为；其他真机项目包括五标签与固定底栏、全宽底部 Sheet、用户与角色图库头像选择及拖拽/捏合裁切、消息头像编辑入口与热更新、圆形头像和气泡尖角、无底色 `@` 与带圆形头像的单行角色条、输入工具按钮间距、静音与播放图标状态、角色朗读试听、对话卡片分区操作、软键盘下的输入区、真实模型流式输出及兼容降级、ElevenLabs 两类 WebSocket 与实际账户音色、OpenAI PCM、豆包 SSE、自动朗读和手工重播、约三秒真实音频缓冲与断流继续、长对话压缩提示与手工修订、系统 ASR、系统 TTS、第三方 TTS/ASR 以及图片输入输出。
 

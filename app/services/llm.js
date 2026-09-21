@@ -5,12 +5,14 @@
     var hydrated = [];
     for (var index = 0; index < messages.length; index += 1) {
       var message = messages[index];
+      var system = message.kind === "system" || message.role === "system";
       var assistant = message.kind === "assistant";
       var activeHistory = assistant && (!activeRole || message.roleId === activeRole.id || (!message.roleId && message.roleName === activeRole.name));
       var output = {
-        role: activeHistory ? "assistant" : "user",
+        role: system ? "system" : activeHistory ? "assistant" : "user",
         roleName: activeHistory ? message.roleName || "" : "",
-        speakerKind: assistant ? (activeHistory ? "active-role-history" : "other-role-history") : "user",
+        speakerKind: system ? message.systemType || "system" : assistant ? (activeHistory ? "active-role-history" : "other-role-history") : "user",
+        systemType: system ? message.systemType || "system" : "",
         text: assistant && !activeHistory ? "其他角色「" + (message.roleName || "未命名角色") + "」的历史发言（仅作上下文参考，禁止模仿、代替或续写该角色）：\n" + (message.text || "") : message.text || "",
         images: [],
         videos: []
@@ -91,6 +93,17 @@
     return matches[0];
   }
 
+  function sceneModeInstruction(mode) {
+    var instructions = {
+      "闲聊": "以轻松自然的日常交流为核心，设计一个具体但不夸张的小事件、共同活动或偶遇，让人物关系和性格自然显现。可以适度描写天气、光线、声音等氛围细节，增强故事感，但不要预先替任何人说话或规定谈话结果。",
+      "思辨": "以一个清晰、值得讨论且存在多种立场的主题为核心，交代讨论缘起、关键前提、现实约束或观点张力，并把问题开放给用户。场所与氛围最多用一两句简要交代，不渲染环境，不预设结论，也不要让角色提前发表完整观点。",
+      "学习": "以正式、专注的学习讨论为核心，优先依据用户补充关键词和人物资料确定学科、知识点或技能任务；明确学习目标、已有材料或认知基础，以及当前需要分析、理解或解决的具体问题。环境最多用一两句简述，不写校园生活故事，不渲染氛围，保持严谨、专业、可继续深入提问的语气。",
+      "工作": "以正式、专业的工作讨论为核心，优先依据用户补充关键词和人物资料确定项目、业务问题或专业任务；明确目标、参与者职责、已有信息、进展、约束，以及当前需要讨论或决策的关键事项。环境最多用一两句简述，不写办公室戏剧，不渲染氛围，不使用空泛的会议套话。",
+      "倾诉": "以安全、私密且富有共情空间的交流为核心，通过一个具体的生活片段、情绪触发点或关系处境建立故事感，并适度描写环境与氛围来承托情绪。不要诊断、说教、急于给建议或替用户下结论，要保留用户决定说什么以及如何表达的主动权。"
+    };
+    return instructions[String(mode || "").trim()] || "结合人物关系设计自然、具体且便于继续交流的场景；环境描写保持克制，不替用户或角色预设台词与结论。";
+  }
+
   async function selectRole(moderator, candidateRoles, messages, task, conversation, userProfile) {
     var names = {}, duplicate = "";
     (candidateRoles || []).forEach(function (role) { var name = String(role.name || "").trim(); if (names[name]) duplicate = name; names[name] = true; });
@@ -125,8 +138,7 @@
       "必须且只能输出一行严格 JSON，格式为 {\"role\":\"完整角色名称\"}。role 的值必须逐字等于下面候选角色之一；不要输出 Markdown、解释、标点或其他字段。\n\n" +
       "<candidate_roles>\n" + roleReference + "\n</candidate_roles>\n\n" +
       "<conversation_user>\n名称：「" + userName + "」\n自我介绍：" + (String(user.introduction || "").trim() || "未设置") + "\n</conversation_user>";
-    if (context.summary && context.summary.text) prompt += "\n\n<conversation_summary>\n" + context.summary.text + "\n</conversation_summary>";
-    var hydrated = await hydrateMessages(context.recent, settings, moderator, service, profile, task);
+    var hydrated = await hydrateMessages(app.services.context.requestMessages(context), settings, moderator, service, profile, task);
     if (task && task.cancelled) { var stopped = new Error("本轮已停止"); stopped.cancelled = true; throw stopped; }
     var request = app.services.middleware.compileLlm(profile, Object.assign({}, moderator, { systemPrompt: prompt }), hydrated, { stream: false });
     var bodyText = JSON.stringify(request.body);
@@ -141,10 +153,60 @@
     return parseRoleChoice(parsed.text, candidateRoles);
   }
 
+  async function generateScene(moderator, participantRoles, conversation, userProfile, modes, guidance, task) {
+    if (!moderator || moderator.enabled === false) throw new Error("当前对话的主持人角色不可用，请先检查基础设定");
+    var roles = (participantRoles || []).filter(Boolean);
+    if (!roles.length) throw new Error("当前对话没有可用于生成场景的角色");
+    var service = await app.data.store.get("llm-profiles", moderator.llmProfileId);
+    if (!service || service.enabled === false) throw new Error("主持人绑定的模型服务不存在或已停用");
+    var profile = app.services.modelServices.resolveLlm(service, moderator);
+    if (!profile.model) throw new Error("主持人没有选择具体模型");
+    profile = Object.assign({}, profile, { allowImageGeneration: false, maxOutputTokens: 500, temperature: 0.75 });
+    var roleReference = roles.map(function (role) {
+      return "角色「" + (String(role.name || "未命名角色").trim() || "未命名角色") + "」：\n" + (String(role.systemPrompt || "").trim() || "未设置角色介绍");
+    }).join("\n\n");
+    var user = userProfile || {}, userName = String(user.name || "用户").trim() || "用户";
+    var selectedMode = (modes || []).map(function (mode) { return String(mode || "").trim(); }).filter(Boolean)[0] || "";
+    var extra = String(guidance || "").trim();
+    var systemPrompt = "你是对话主持人「" + (String(moderator.name || "主持人").trim() || "主持人") + "」，现在只负责为这场尚未开始的对话创作一段中文场景开场白。\n" +
+      "开场白会作为消息历史中的第一条系统消息。请结合用户与全部角色资料，交代自然且具体的时间、地点、环境、人物状态或共同处境，并留下便于用户开始说话的空间。\n" +
+      "只输出可直接使用的场景正文，不要写标题、Markdown、分析、说明、对话台词、角色署名或对用户行为的强制安排；不要把角色设定复述成档案。正文控制在 100 个汉字左右，绝对不能超过 200 个汉字。\n\n" +
+      "<conversation>\n标题：" + (String(conversation && conversation.title || "未命名对话").trim() || "未命名对话") + "\n</conversation>\n\n" +
+      "<conversation_user>\n名称：「" + userName + "」\n自我介绍：" + (String(user.introduction || "").trim() || "未设置") + "\n</conversation_user>\n\n" +
+      "<participant_roles>\n" + roleReference + "\n</participant_roles>";
+    var requestText = "请生成场景开场白。\n场景模式：" + (selectedMode || "通用") + "\n模式策划要求：" + sceneModeInstruction(selectedMode) + "\n补充关键词：" + (extra || "无");
+    var request = app.services.middleware.compileLlm(profile, Object.assign({}, moderator, { systemPrompt: systemPrompt }), [{ role: "user", roleName: userName, speakerKind: "user", text: requestText, images: [], videos: [] }], { stream: false });
+    var bodyText = JSON.stringify(request.body);
+    if (new TextEncoder().encode(bodyText).length > 900 * 1024) throw new Error("场景生成请求超过 900 KiB，请精简角色或个人介绍");
+    var response = await app.platform.network.requestJson({
+      url: request.url,
+      method: "POST",
+      headers: request.headers,
+      bodyText: bodyText,
+      contentType: "application/json",
+      timeoutMs: 120000,
+      task: task
+    });
+    var parsed = app.services.providers.parse(profile, response.data), text = String(parsed.text || "").trim();
+    if (!text) throw new Error("主持人模型没有生成可用的场景开场白");
+    var characters = Array.from(text);
+    if (characters.length > 200) {
+      text = characters.slice(0, 200).join("");
+      var boundary = Math.max(text.lastIndexOf("。"), text.lastIndexOf("！"), text.lastIndexOf("？"), text.lastIndexOf("；"));
+      if (boundary >= 80) text = text.slice(0, boundary + 1);
+      text = text.trim();
+    }
+    return { text: text, usage: parsed.usage || null, rawId: parsed.rawId || null, profileName: profile.name || service.name || "" };
+  }
+
   function appendImages(target, additions) {
     (additions || []).forEach(function (item) {
       if (item && item.dataUrl && !target.some(function (existing) { return existing.dataUrl === item.dataUrl; })) target.push(item);
     });
+  }
+
+  function retryableStreamFailure(error) {
+    return Boolean(error && !error.cancelled && !error.speakerMismatch && error.code === "E_NETWORK" && error.retryable === true);
   }
 
   async function stream(profile, request, task, role, participantRoles) {
@@ -191,23 +253,37 @@
       ? await app.services.context.prepare(conversation, compressionRole, messages, settings, task || {}, participantRoles, userProfile)
       : { summary: null, recent: truncate(messages, 10) };
     if (task && task.phase === "compressing") { task.phase = "generating"; task.label = task.generateLabel || "正在等待 " + role.name; app.events.emit("chat:changed", { conversationId: conversation.id, phase: "generating" }); }
-    var selected = context.recent;
+    var selected = app.services.context.requestMessages(context);
     var hydrated = routeTurn(await hydrateMessages(selected, settings, role, service, profile, task), role);
     if (task && task.cancelled) { var stopped = new Error("本轮已停止"); stopped.cancelled = true; throw stopped; }
-    var appliedRole = app.services.context.applyToRole(role, context.summary, participantRoles, userProfile);
+    var appliedRole = app.services.context.applyToRole(role, participantRoles, userProfile);
     var request = app.services.middleware.compileLlm(profile, appliedRole, hydrated, { stream: profile.streaming !== false });
     var bodyText = JSON.stringify(request.body);
     var bodyBytes = new TextEncoder().encode(bodyText).length;
     if (bodyBytes > 900 * 1024) throw new Error("请求内容超过 900 KiB，请减少图片或新建对话");
     var parsed;
     if (request.streaming) {
-      try { parsed = await stream(profile, request, task, role, participantRoles); }
-      catch (error) {
-        if (!error.streamUnavailable) throw error;
-        if (task && task.cancelled) throw error;
-        request = app.services.middleware.compileLlm(profile, appliedRole, hydrated, { stream: false });
-        bodyText = JSON.stringify(request.body);
-        if (task) task.streamingFallback = true;
+      var retryCount = 0;
+      while (!parsed && request.streaming) {
+        try { parsed = await stream(profile, request, task, role, participantRoles); }
+        catch (error) {
+          if (error.streamUnavailable) {
+            if (task && task.cancelled) throw error;
+            request = app.services.middleware.compileLlm(profile, appliedRole, hydrated, { stream: false });
+            bodyText = JSON.stringify(request.body);
+            if (task) task.streamingFallback = true;
+            break;
+          }
+          if (retryCount === 0 && retryableStreamFailure(error) && !(task && task.cancelled)) {
+            retryCount += 1;
+            if (task) {
+              task.streamingRetried = true;
+              if (typeof task.onStreamRetry === "function") await task.onStreamRetry(error);
+            }
+            continue;
+          }
+          throw error;
+        }
       }
     }
     if (!parsed) {
@@ -235,7 +311,7 @@
       policy: "local-text-rebuild"
     });
     parsed.profileName = profile.name;
-    parsed.contextTrimmed = Boolean(context.summary) || selected.length < messages.length || selected.some(function (message) { return message.contextTruncated; });
+    parsed.contextTrimmed = Boolean(context.summary) || context.recent.length < messages.length || selected.some(function (message) { return message.contextTruncated; });
     parsed.contextCompressed = Boolean(context.summary);
     parsed.summaryUpdatedAt = context.summary && context.summary.updatedAt;
     return parsed;
@@ -258,5 +334,5 @@
     return app.services.providers.parse(profile, result.data);
   }
 
-  app.services.llm = { complete: complete, selectRole: selectRole, parseRoleChoice: parseRoleChoice, test: test, truncate: truncate, hydrateMessages: hydrateMessages, removeRoleEcho: removeRoleEcho, partialText: partialText, inspectSpeaker: inspectSpeaker, routeTurn: routeTurn };
+  app.services.llm = { complete: complete, selectRole: selectRole, generateScene: generateScene, sceneModeInstruction: sceneModeInstruction, parseRoleChoice: parseRoleChoice, test: test, truncate: truncate, hydrateMessages: hydrateMessages, removeRoleEcho: removeRoleEcho, partialText: partialText, inspectSpeaker: inspectSpeaker, routeTurn: routeTurn };
 })(window.chataxi);

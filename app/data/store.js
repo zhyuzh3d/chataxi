@@ -365,6 +365,49 @@
     return sortMessages((await list("messages", conversationId + ":")).filter(function (item) { return item.kind === "routing"; }));
   }
 
+  function openingSceneId(conversationId) { return "opening-scene:" + conversationId; }
+
+  async function openingScene(conversationId, history) {
+    var items = history || await messages(conversationId);
+    return items.find(function (item) { return item.kind === "system" && item.systemType === "scene"; }) || null;
+  }
+
+  async function prepareOpeningScene(conversationId) {
+    var conversation = await get("conversations", conversationId);
+    if (!conversation) throw new Error("对话不存在");
+    var history = await messages(conversationId);
+    var existing = await openingScene(conversationId, history);
+    if (existing) {
+      if (Object.prototype.hasOwnProperty.call(conversation, "openingSceneDraft")) {
+        delete conversation.openingSceneDraft;
+        await put("conversations", conversation.id, conversation);
+      }
+      return { conversation: conversation, message: existing, history: history, created: false };
+    }
+    var text = String(conversation.openingSceneDraft || "").trim();
+    if (!text) return { conversation: conversation, message: null, history: history, created: false };
+    if (history.length) {
+      delete conversation.openingSceneDraft;
+      await put("conversations", conversation.id, conversation);
+      return { conversation: conversation, message: null, history: history, created: false };
+    }
+    var message = {
+      id: openingSceneId(conversationId),
+      conversationId: conversationId,
+      kind: "system",
+      systemType: "scene",
+      text: text,
+      media: [],
+      status: "done",
+      createdAt: Number(conversation.createdAt || Date.now())
+    };
+    await putMessage(message);
+    delete conversation.openingSceneDraft;
+    conversation.updatedAt = Date.now();
+    await put("conversations", conversation.id, conversation);
+    return { conversation: conversation, message: message, history: [message], created: true };
+  }
+
   async function removeText(storageId) {
     if (!storageId) return;
     var records = await api().scan("message-text", storageId + ":");
@@ -468,6 +511,8 @@
     list: list,
     messages: messages,
     routingRecords: routingRecords,
+    openingScene: openingScene,
+    prepareOpeningScene: prepareOpeningScene,
     putMessage: putMessage,
     removeMessage: removeMessage,
     deleteMessagesAfter: deleteMessagesAfter,

@@ -3,6 +3,8 @@
   var generation = 0, current = null, ready = {}, muted = false, lastState = { speaking: false };
   var MAX_READY_ITEMS = 8, MAX_READY_PCM_BYTES = 24 * 1024 * 1024;
   var audioContext = null, playbackUnlocked = false;
+  var backgrounded = typeof document !== "undefined" && Boolean(document.hidden);
+  var pausedPlayback = null, backgroundResume = null, lifecycleQueue = Promise.resolve();
 
   function emit(detail) { lastState = Object.assign({}, detail || { speaking: false }, { muted: muted }); app.events.emit("tts:state", lastState); }
   function setMuted(value) {
@@ -398,7 +400,7 @@
       source.start(when);
     }
     function startQueue() {
-      if (owner.cancelled || token !== generation || owner.started && !owner.starved) return;
+      if (backgrounded || owner.cancelled || token !== generation || owner.started && !owner.starved) return;
       owner.started = true; owner.starved = false; emit({ speaking: true, messageId: owner.messageId });
       while (owner.pcmQueue.length) schedule(owner.pcmQueue.shift());
     }
@@ -422,17 +424,18 @@
     }
     function finish() { owner.finished = true; owner.pcmRemainder = null; if (options.autoPlay !== false && !owner.started) startQueue(); maybeDone(); return owner.pcmDone; }
     function resumePcm() { if (!owner.starved || !owner.pcmQueue.length) return false; startQueue(); return true; }
-    owner.pushPcm = push; owner.finishPcm = finish; owner.resume = resumePcm; owner.failPcm = function (error) { settle(error); };
+    owner.pushPcm = push; owner.finishPcm = finish; owner.resume = resumePcm; owner.startPcm = startQueue; owner.failPcm = function (error) { settle(error); };
     return owner;
   }
 
   function playClip(clip, owner, token) {
     return new Promise(async function (resolve, reject) {
-      if (token !== generation || owner.cancelled) { await disposeClip(clip); resolve(); return; }
+      function releaseClip() { return owner.preserveActiveClip ? Promise.resolve() : disposeClip(clip); }
+      if (token !== generation || owner.cancelled) { await releaseClip(); resolve(); return; }
       owner.activeClip = clip; owner.playbackResolve = resolve;
       if (clip.logicalFileId && app.platform.hermit.available()) {
         var finished = false, offs = [];
-        function done(error) { if (finished) return; finished = true; offs.splice(0).forEach(function (off) { off(); }); owner.playbackId = null; owner.activeClip = null; owner.playbackResolve = null; disposeClip(clip).then(function () { error ? reject(error) : resolve(); }); }
+        function done(error) { if (finished) return; finished = true; offs.splice(0).forEach(function (off) { off(); }); owner.playbackId = null; owner.activeClip = null; owner.playbackResolve = null; releaseClip().then(function () { error ? reject(error) : resolve(); }); }
         offs.push(app.platform.hermit.on("audio.playback.done", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(); }));
         offs.push(app.platform.hermit.on("audio.playback.error", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(new Error("音频播放失败")); }));
         try { var playback = await app.platform.hermit.api().audio.play({ logicalFileId: clip.logicalFileId, volume: muted ? 0 : 1 }); if (owner.cancelled || token !== generation) { await app.platform.hermit.api().audio.stopPlayback({ playbackId: playback.playbackId }).catch(function () {}); done(); return; } owner.playbackId = playback.playbackId; }
@@ -443,20 +446,23 @@
         try {
           if (audioContext.state !== "running" && typeof audioContext.resume === "function") await audioContext.resume();
           var decoded = await decodeAudio(clip.blob);
-          if (token !== generation || owner.cancelled) { await disposeClip(clip); resolve(); return; }
+          if (token !== generation || owner.cancelled) { await releaseClip(); resolve(); return; }
           var source = audioContext.createBufferSource(), gain = audioContext.createGain();
           source.buffer = decoded; gain.gain.value = muted ? 0 : 1; source.connect(gain); gain.connect(audioContext.destination);
           owner.audioSource = source; owner.audioGain = gain;
-          source.onended = function () { owner.audioSource = null; owner.audioGain = null; owner.activeClip = null; owner.playbackResolve = null; disposeClip(clip).then(resolve); };
+          source.onended = function () { owner.audioSource = null; owner.audioGain = null; owner.activeClip = null; owner.playbackResolve = null; releaseClip().then(resolve); };
           source.start(0); return;
         } catch (_) { owner.audioSource = null; owner.audioGain = null; }
       }
       if (!clip.url && clip.blob) clip.url = URL.createObjectURL(clip.blob);
       if (!clip.url || typeof Audio !== "function") { await disposeClip(clip); reject(new Error("当前环境不能播放语音")); return; }
       var audio = new Audio(clip.url); audio.muted = muted; owner.audio = audio;
-      audio.onended = function () { owner.audio = null; owner.activeClip = null; owner.playbackResolve = null; disposeClip(clip).then(resolve); };
-      audio.onerror = function () { owner.audio = null; owner.activeClip = null; owner.playbackResolve = null; disposeClip(clip).then(function () { reject(new Error("音频无法播放，请检查服务输出格式")); }); };
-      try { await audio.play(); } catch (error) { owner.audio = null; await disposeClip(clip); reject(/gesture|notallowed/i.test(String(error && (error.message || error))) ? new Error("当前 WebView 阻止了网页音频播放，请触摸页面后重试") : error); }
+      audio.onended = function () { owner.audio = null; owner.activeClip = null; owner.playbackResolve = null; releaseClip().then(resolve); };
+      audio.onerror = function () { owner.audio = null; owner.activeClip = null; owner.playbackResolve = null; releaseClip().then(function () { reject(new Error("音频无法播放，请检查服务输出格式")); }); };
+      try {
+        await audio.play();
+        if (token !== generation || owner.cancelled) { audio.pause(); owner.audio = null; await releaseClip(); resolve(); }
+      } catch (error) { owner.audio = null; await releaseClip(); reject(/gesture|notallowed/i.test(String(error && (error.message || error))) ? new Error("当前 WebView 阻止了网页音频播放，请触摸页面后重试") : error); }
     });
   }
 
@@ -464,6 +470,7 @@
     if (!owner) return;
     owner.cancelled = true;
     if (owner.task) { owner.task.cancelled = true; if (owner.task.controller) owner.task.controller.abort(); }
+    (owner.offs || []).forEach(function (off) { off(); }); owner.offs = [];
     if (owner.audio) { owner.audio.onended = null; owner.audio.onerror = null; owner.audio.pause(); owner.audio = null; }
     if (owner.audioSource) { owner.audioSource.onended = null; try { owner.audioSource.stop(0); } catch (_) {} owner.audioSource = null; }
     while (owner.pcmSources && owner.pcmSources.length) { var source = owner.pcmSources.shift(); source.onended = null; try { source.stop(0); } catch (_) {} }
@@ -475,16 +482,17 @@
     owner.audioGain = null;
     if (owner.playbackId && app.platform.hermit.available()) await app.platform.hermit.api().audio.stopPlayback({ playbackId: owner.playbackId }).catch(function () {});
     owner.playbackId = null;
-    if (owner.activeClip) await disposeClip(owner.activeClip); owner.activeClip = null;
+    if (owner.activeClip && !owner.preserveActiveClip) await disposeClip(owner.activeClip); owner.activeClip = null;
     if (owner.playbackResolve) owner.playbackResolve(); owner.playbackResolve = null;
     while (owner.clips && owner.clips.length) await disposeClip(owner.clips.shift());
-    (owner.offs || []).forEach(function (off) { off(); }); owner.offs = [];
     if (owner.utteranceId && app.platform.hermit.available()) await app.platform.hermit.api().tts.stop().catch(function () {});
   }
 
-  async function stop() {
+  async function stop(options) {
+    options = options || {};
     generation += 1;
     var owner = current; current = null;
+    if (!options.background) { pausedPlayback = null; backgroundResume = null; }
     await stopOwner(owner);
     emit({ speaking: false });
   }
@@ -508,8 +516,12 @@
 
   async function speak(text, role) {
     var clean = cleanText(text); if (!clean) return;
+    if (backgrounded) {
+      await stop(); backgroundResume = { kind: "speak", text: clean, role: role };
+      emit({ speaking: false, suspended: true }); return;
+    }
     await stop();
-    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [] }; current = owner;
+    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], resumeRequest: { kind: "speak", text: clean, role: role } }; current = owner;
     var resolved = await profileFor(role);
     if (token !== generation) return;
     emit({ speaking: true });
@@ -522,8 +534,9 @@
           await streamPcm(clean, resolved.profile, owner.task, function (bytes, sampleRate) { owner.streamReceived = true; owner.pushPcm(bytes, sampleRate); });
           await owner.finishPcm(); if (token === generation) await stop(); return;
         } catch (streamError) {
-          if (!streamError.streamUnavailable || owner.streamReceived) throw streamError;
-          await stopOwner(owner); token = ++generation; owner = { cancelled: false, task: { cancelled: false }, clips: [] }; current = owner; emit({ speaking: true });
+          var recoverable = streamError.streamUnavailable || streamError.code === "E_NETWORK" && streamError.retryable === true;
+          if (!recoverable || owner.started) throw streamError;
+          await stopOwner(owner); token = ++generation; owner = { cancelled: false, task: { cancelled: false }, clips: [], resumeRequest: { kind: "speak", text: clean, role: role } }; current = owner; emit({ speaking: true });
         }
       }
       var clip = await synthesize(clean, resolved.profile, owner.task, false); if (!clip || token !== generation) return;
@@ -561,9 +574,10 @@
 
   async function playReady(messageId) {
     var item = ready[messageId]; if (!item) return false;
+    if (backgrounded) { backgroundResume = { kind: "ready", messageId: messageId }; emit({ speaking: false, suspended: true, messageId: messageId }); return true; }
     if (item.clip) delete ready[messageId];
     await stop();
-    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [] }; current = owner; emit({ speaking: true, messageId: messageId });
+    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], messageId: messageId, resumeRequest: { kind: "ready", messageId: messageId, item: item } }; current = owner; emit({ speaking: true, messageId: messageId });
     try {
       if (item.pcmChunks && item.pcmChunks.length) {
         owner.messageId = messageId; attachPcmPlayer(owner, token, { autoPlay: true, minBufferSeconds: 0, cache: false });
@@ -784,11 +798,61 @@
   function hasReady(messageId) { return Boolean(ready[messageId]); }
   function canResume(messageId) { return Boolean(current && current.messageId === messageId && current.starved && (current.clips && current.clips.length || current.pcmQueue && current.pcmQueue.length)); }
 
+  async function pauseForBackground() {
+    backgrounded = true;
+    if (muted || pausedPlayback || backgroundResume) return false;
+    var owner = current; if (!owner) return false;
+    if (owner.audio) {
+      owner.audio.pause(); pausedPlayback = { owner: owner, kind: "audio" };
+      emit({ speaking: false, suspended: true, messageId: owner.messageId }); return true;
+    }
+    if (owner.audioGain && audioContext && typeof audioContext.suspend === "function") {
+      await audioContext.suspend();
+      if (current !== owner) return false;
+      pausedPlayback = { owner: owner, kind: "context" };
+      emit({ speaking: false, suspended: true, messageId: owner.messageId }); return true;
+    }
+    if (!owner.resumeRequest) return false;
+    var request = owner.resumeRequest;
+    if (request.kind === "ready" && request.item && request.item.clip && owner.activeClip === request.item.clip) owner.preserveActiveClip = true;
+    await stop({ background: true });
+    if (request.kind === "ready" && request.item) ready[request.messageId] = request.item;
+    backgroundResume = request;
+    emit({ speaking: false, suspended: true, messageId: request.messageId }); return true;
+  }
+
+  async function resumeAfterBackground() {
+    backgrounded = false;
+    var paused = pausedPlayback; pausedPlayback = null;
+    if (paused && current === paused.owner) {
+      if (paused.kind === "audio") await paused.owner.audio.play();
+      else if (audioContext && typeof audioContext.resume === "function") await audioContext.resume();
+      if (!paused.owner.started && paused.owner.startPcm && paused.owner.pcmQueue && paused.owner.pcmQueue.length) paused.owner.startPcm();
+      if (paused.owner.audio || paused.owner.audioSource || paused.owner.started && !paused.owner.starved) emit({ speaking: true, messageId: paused.owner.messageId });
+      return true;
+    }
+    if (audioContext && playbackUnlocked && audioContext.state === "suspended" && typeof audioContext.resume === "function") await audioContext.resume();
+    var request = backgroundResume; backgroundResume = null;
+    if (!request || muted) return false;
+    var restarted = request.kind === "ready" ? playReady(request.messageId) : speak(request.text, request.role);
+    restarted.catch(function (error) { app.events.emit("tts:error", { message: "继续朗读失败：" + app.utils.cleanError(error) }); });
+    return true;
+  }
+
+  function queueLifecycle(hidden) {
+    lifecycleQueue = lifecycleQueue.catch(function () {}).then(function () { return hidden ? pauseForBackground() : resumeAfterBackground(); }).catch(function (error) {
+      app.events.emit("tts:error", { message: "朗读前后台切换失败：" + app.utils.cleanError(error) });
+    });
+  }
+
   if (typeof window.addEventListener === "function") {
     window.addEventListener("pointerdown", unlockPlayback, true);
     window.addEventListener("touchstart", unlockPlayback, true);
     window.addEventListener("keydown", unlockPlayback, true);
+    window.addEventListener("pagehide", function () { queueLifecycle(true); });
+    window.addEventListener("pageshow", function () { queueLifecycle(false); });
   }
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", function () { queueLifecycle(Boolean(document.hidden)); });
 
-  app.services.tts = { speak: speak, stop: stop, headers: headers, requestBody: requestBody, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); } };
+  app.services.tts = { speak: speak, stop: stop, headers: headers, requestBody: requestBody, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); }, pauseForBackground: pauseForBackground, resumeAfterBackground: resumeAfterBackground };
 })(window.chataxi);

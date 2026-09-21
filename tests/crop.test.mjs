@@ -13,6 +13,33 @@ for (const relative of ["app/core/namespace.js", "app/core/utils.js", "app/compo
 }
 const geometry = window.chataxi.components.cropGeometry;
 
+test("Hermit avatar picker passes its object URL directly to the cropper and defers cleanup", async () => {
+  let deletedId = "";
+  window.chataxi.platform = { hermit: { available: () => true, api: () => ({ files: {
+    pickImage: async () => ({ cancelled: false, logicalFileId: "picked-avatar", url: "https://local.hermit/files/picked-avatar", name: "portrait.jpg", mime: "image/jpeg" }),
+    delete: async ({ logicalFileId }) => { deletedId = logicalFileId; return { deleted: true }; }
+  } }) } };
+  const picked = await window.chataxi.components.pickLocalImage();
+  assert.equal(picked.url, "https://local.hermit/files/picked-avatar");
+  assert.equal(picked.type, "image/jpeg");
+  assert.equal(picked.name, "portrait.jpg");
+  assert.equal(deletedId, "", "the source must remain available while the cropper decodes it");
+  await picked.release();
+  assert.equal(deletedId, "picked-avatar");
+  await picked.release();
+  assert.equal(deletedId, "picked-avatar", "cleanup must be idempotent");
+});
+
+test("cropper releases a managed Hermit file when image decoding fails", async () => {
+  let releases = 0;
+  context.Image = class { set src(_) { this.onerror(); } };
+  await assert.rejects(window.chataxi.components.cropAvatar({
+    url: "/__hermit/files/broken-avatar", type: "image/jpeg", size: 128,
+    release: async () => { releases += 1; }
+  }, async () => {}), /头像图片无法读取/);
+  assert.equal(releases, 1);
+});
+
 test("avatar crop always covers the square and stays inside landscape images", () => {
   const value = geometry(1600, 900, 320, 0.2, 99999, -99999);
   assert.equal(value.zoom, 1);

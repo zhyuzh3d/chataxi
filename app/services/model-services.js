@@ -200,6 +200,7 @@
       streaming: info.streaming !== false
     });
     resolved.resolvedCapabilities = app.services.modelRegistry.resolvedCapabilities("llm", resolved, info);
+    resolved.systemRoleMode = resolved.resolvedCapabilities.systemRoleMode;
     return resolved;
   }
 

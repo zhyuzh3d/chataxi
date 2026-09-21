@@ -80,9 +80,19 @@
       if (!copied) throw new Error("当前环境无法复制，请长按文字手动复制");
     }
   }
+  async function readClipboardText() {
+    var api = current();
+    if (api && api.clipboard && api.clipboard.read) {
+      var result = await api.clipboard.read();
+      return typeof result === "string" ? result : String(result && result.text || "");
+    }
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.readText();
+    throw new Error("当前环境无法读取剪贴板，请直接粘贴到输入框");
+  }
   app.platform = app.platform || {};
   app.platform.hermit = {
     copyText: copyText,
+    readClipboardText: readClipboardText,
     awaitReady: awaitReady,
     available: function () { return Boolean(current()); },
     api: current,

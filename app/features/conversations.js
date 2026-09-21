@@ -162,16 +162,16 @@
   async function exportText(id) {
     var conversation = await store.get("conversations", id), messages = await store.messages(id);
     var globalProfile = await store.get("meta", "user-profile"), userProfile = app.services.profiles.userForConversation(conversation, globalProfile);
-    var text = conversation.title + "\n\n" + messages.map(function (message) { return (message.kind === "user" ? userProfile.name : message.roleName || "AI") + " · " + new Date(message.createdAt).toLocaleString("zh-CN") + "\n" + (message.text || "") + ((message.media || []).length ? "\n[" + message.media.length + " 张图片，未包含在文字导出中]" : "") + (message.status !== "done" ? "\n[" + (message.error || "未完成") + "]" : ""); }).join("\n\n");
+    var text = conversation.title + "\n\n" + messages.map(function (message) { return (message.kind === "system" ? "系统" : message.kind === "user" ? userProfile.name : message.roleName || "AI") + " · " + new Date(message.createdAt).toLocaleString("zh-CN") + "\n" + (message.text || "") + ((message.media || []).length ? "\n[" + message.media.length + " 张图片，未包含在文字导出中]" : "") + (message.status !== "done" ? "\n[" + (message.error || "未完成") + "]" : ""); }).join("\n\n");
     ui.openModal({ title: "导出对话文字", submitText: "复制全部文字", html: '<p class="helper">包含本对话的文字与图片数量，不包含连接、密钥和图片文件。</p><label class="field"><span>对话文字</span><textarea class="export-text" readonly>' + u.escapeHtml(text) + '</textarea></label>', onSubmit: async function () { await app.platform.hermit.copyText(text); ui.toast("已复制"); } });
   }
 
   async function openPersonalProfile(conversation, onSaved) {
     conversation = await store.get("conversations", conversation.id); if (!conversation) throw new Error("对话不存在");
     var globalProfile = await store.get("meta", "user-profile") || { name: "我", introduction: "", avatarMediaId: "" };
-    var effective = app.services.profiles.userForConversation(conversation, globalProfile);
-    var html = '<div class="form-grid conversation-profile-editor"><p class="helper">这里只保存本对话的个人设定。每个空字段分别跟随“我的”，不会把两段内容拼接。</p><div class="avatar-editor"><button class="avatar-picker round" type="button" data-choose-conversation-avatar aria-label="从图库选择本对话头像"><span id="conversationAvatarPreview">' + ui.avatar(effective.name, "", "large user-profile-avatar", "", effective.avatarMediaId) + '</span><span class="avatar-edit-badge" aria-hidden="true">' + ui.icon("camera") + '</span></button><div class="avatar-copy"><strong>本对话头像 <em>选填</em></strong><small>' + (conversation.userAvatarMediaId ? '当前使用本对话头像' : '当前跟随“我的”头像') + '</small><div class="avatar-actions">' + (conversation.userAvatarMediaId ? '<button class="button ghost" type="button" data-follow-user-avatar>跟随“我的”头像</button>' : '') + '</div></div></div><label class="field"><span>本对话名称 <em>选填</em></span><input name="userName" maxlength="40" value="' + u.escapeHtml(conversation.userName || "") + '" placeholder="留空则使用“我的”：' + u.escapeHtml(globalProfile.name || "我") + '"><small>发送给模型和消息气泡显示时，优先使用本字段。</small></label><label class="field"><span>本对话自我介绍 <em>选填</em></span><textarea class="prompt-editor" name="userIntroduction" maxlength="8000" placeholder="留空则使用“我的”页面中的自我介绍">' + u.escapeHtml(conversation.userIntroduction || "") + '</textarea><small>发送给模型时，优先使用本字段；留空只回落到通用介绍。</small></label><div class="identity-preview"><strong>“我的”个人设定</strong><p>名称：' + u.escapeHtml(globalProfile.name || "我") + '</p><p>介绍：' + u.escapeHtml(globalProfile.introduction || "尚未设置") + '</p></div></div>';
-    var stagedBlob = null, stagedDataUrl = "", followGlobalAvatar = false;
+    var effective = app.services.profiles.userForConversation(conversation, globalProfile), conversationName = String(conversation.userName || "").trim() || String(globalProfile.name || "").trim(), conversationIntroduction = String(conversation.userIntroduction || "").trim() || String(globalProfile.introduction || "").trim();
+    var html = '<div class="form-grid conversation-profile-editor"><p class="helper">这里只保存本对话的个人设定。每个空字段分别跟随“我的”，不会把两段内容拼接。</p><div class="avatar-editor"><button class="avatar-picker round" type="button" data-choose-conversation-avatar aria-label="从图库选择本对话头像"><span id="conversationAvatarPreview">' + ui.avatar(effective.name, "", "large user-profile-avatar", "", effective.avatarMediaId) + '</span><span class="avatar-edit-badge" aria-hidden="true">' + ui.icon("camera") + '</span></button><div class="avatar-copy"><strong>本对话头像 <em>选填</em></strong><small>' + (conversation.userAvatarMediaId ? '当前使用本对话头像' : '当前跟随“我的”头像') + '</small><div class="avatar-actions">' + (conversation.userAvatarMediaId ? '<button class="button ghost" type="button" data-follow-user-avatar>跟随“我的”头像</button>' : '') + '</div></div></div><label class="field"><span>本对话名称 <em>选填</em></span><input name="userName" maxlength="40" value="' + u.escapeHtml(conversationName) + '" placeholder="留空则使用“我的”：' + u.escapeHtml(globalProfile.name || "我") + '"><small>发送给模型和消息气泡显示时，优先使用本字段。</small></label><label class="field"><span>本对话自我介绍 <em>选填</em></span><textarea class="prompt-editor" name="userIntroduction" maxlength="8000" placeholder="留空则使用“我的”页面中的自我介绍">' + u.escapeHtml(conversationIntroduction) + '</textarea><small>发送给模型时，优先使用本字段；留空只回落到通用介绍。</small></label><div class="identity-preview"><strong>“我的”个人设定</strong><p>名称：' + u.escapeHtml(globalProfile.name || "我") + '</p><p>介绍：' + u.escapeHtml(globalProfile.introduction || "尚未设置") + '</p></div></div>';
+    var stagedBlob = null, stagedDataUrl = "", followGlobalAvatar = !conversation.userAvatarMediaId;
     var form = ui.openModal({ title: "本对话个人设定", submitText: "保存个人设定", html: html, onSubmit: async function (target) {
       var next = await store.get("conversations", conversation.id); if (!next) throw new Error("对话不存在");
       var oldAvatarMediaId = String(next.userAvatarMediaId || ""), created = null;
@@ -209,16 +209,89 @@
     return form;
   }
 
+  async function openSceneSettings(conversation, onSaved) {
+    conversation = await store.get("conversations", conversation.id); if (!conversation) throw new Error("对话不存在");
+    var history = await store.messages(conversation.id), scene = await store.openingScene(conversation.id, history), lockedReason = "";
+    if (scene) {
+      var editable = await app.services.context.editable(history, conversation.id, conversation.recentFullMessages || 10);
+      if (!editable[scene.id]) lockedReason = "这条场景开场白已经进入压缩历史，和其他旧消息一样不能直接修改；如需调整延续上下文，请编辑“压缩上下文”。";
+    } else if (history.length) lockedReason = "这个对话已经开始，不能再追溯插入第一条场景开场白。";
+    var value = scene ? scene.text || "" : conversation.openingSceneDraft || "";
+    var allRoles = await store.list("roles"), roleMap = {};
+    allRoles.forEach(function (role) { roleMap[role.id] = role; });
+    var participants = conversation.roleIds.map(function (roleId) { return roleMap[roleId]; }).filter(Boolean);
+    var moderatorId = conversation.moderatorRoleId && conversation.roleIds.indexOf(conversation.moderatorRoleId) >= 0 ? conversation.moderatorRoleId : conversation.roleIds[0];
+    var moderator = roleMap[moderatorId], sceneModes = ["闲聊", "思辨", "学习", "工作", "倾诉"], generationTask = null;
+    var autoPanel = '<section class="scene-auto-panel is-hidden" data-scene-panel="auto" role="tabpanel"><div class="field"><span>场景模式 <em>单选</em></span><div class="scene-mode-tags" role="group" aria-label="选择一个场景模式">' + sceneModes.map(function (mode) { return '<button class="chip scene-mode-chip" type="button" data-scene-mode="' + mode + '" aria-pressed="false">' + mode + '</button>'; }).join('') + '</div></div><div class="scene-generation-row"><input class="scene-generation-prompt" name="sceneGenerationPrompt" maxlength="200" placeholder="补充关键词" aria-label="补充关键词"><button class="button secondary scene-generate-button" type="button" data-generate-scene>' + ui.icon('wand-magic-sparkles') + '<span>生成</span></button></div><p class="scene-generation-status" data-scene-generation-status role="status">由主持人“' + u.escapeHtml(moderator && moderator.name || "未设置") + '”使用当前角色与个人设定生成</p></section>';
+    var html = '<div class="scene-settings-content"><div class="section-tabs scene-setting-tabs" role="tablist" aria-label="开场白设定"><button type="button" role="tab" data-scene-tab="manual" aria-selected="true"><span>手工设定</span></button><button type="button" role="tab" data-scene-tab="auto" aria-selected="false"' + (lockedReason ? ' disabled' : '') + '><span>自动生成</span></button></div>' + autoPanel + '<section data-scene-panel="manual" role="tabpanel"></section><label class="field scene-opening-field"><span>场景开场白 <em>' + (lockedReason ? '' : '选填，可继续编辑') + '</em></span><textarea class="prompt-editor" name="openingScene" maxlength="16000" placeholder="介绍故事背景、当前环境、时间地点或初始状态"' + (lockedReason ? ' readonly' : '') + '>' + u.escapeHtml(value) + '</textarea></label>' + (lockedReason ? '<p class="helper warning-text">' + u.escapeHtml(lockedReason) + '</p>' : '') + '</div>';
+    var form = ui.openModal({ title: "场景设定", submitText: lockedReason ? "完成" : "保存场景设定", cancelText: lockedReason ? null : undefined, html: html, onDismiss: function () {
+      if (generationTask) { generationTask.cancelled = true; if (generationTask.controller) generationTask.controller.abort(); }
+    }, onSubmit: async function (target) {
+      if (lockedReason) return true;
+      var text = u.formValue(target, "openingScene");
+      if (scene) {
+        if (!text) throw new Error("已经发送的场景消息不能为空");
+        scene = Object.assign({}, scene, { text: text, editedAt: Date.now() });
+        await store.putMessage(scene); await app.features.chatSession.refreshPreview(conversation.id);
+        return { conversation: conversation, message: scene, created: false };
+      }
+      var next = await store.get("conversations", conversation.id); if (!next) throw new Error("对话不存在");
+      if (text) next.openingSceneDraft = text; else delete next.openingSceneDraft;
+      next.updatedAt = Date.now(); await store.put("conversations", next.id, next);
+      var prepared = app.state.activeConversationId === next.id && text ? await store.prepareOpeningScene(next.id) : { conversation: next, message: null, created: false };
+      if (prepared.created) await app.features.chatSession.refreshPreview(next.id);
+      return prepared;
+    }, onSuccess: async function (result) {
+      ui.toast(result && result.message ? result.created ? "场景开场白已发送" : "场景开场白已保存" : "场景设定已保存");
+      if (onSaved) await onSaved(result || { conversation: conversation, message: scene, created: false });
+    } });
+    form.closest(".modal-sheet").classList.add("scene-settings-sheet");
+    function selectSceneTab(name) {
+      form.querySelectorAll("[data-scene-tab]").forEach(function (button) { button.setAttribute("aria-selected", String(button.dataset.sceneTab === name)); });
+      form.querySelector('[data-scene-panel="auto"]').classList.toggle("is-hidden", name !== "auto");
+    }
+    form.querySelectorAll("[data-scene-tab]").forEach(function (button) { button.addEventListener("click", function () { if (!button.disabled) selectSceneTab(button.dataset.sceneTab); }); });
+    form.querySelectorAll("[data-scene-mode]").forEach(function (button) { button.addEventListener("click", function () {
+      var selected = button.getAttribute("aria-pressed") === "true";
+      form.querySelectorAll("[data-scene-mode]").forEach(function (item) { item.setAttribute("aria-pressed", "false"); });
+      if (!selected) button.setAttribute("aria-pressed", "true");
+    }); });
+    var generateButton = form.querySelector("[data-generate-scene]");
+    generateButton.addEventListener("click", async function () {
+      if (generationTask) return;
+      var status = form.querySelector("[data-scene-generation-status]"), saveButton = form.querySelector('#modalSubmit'), label = generateButton.querySelector("span");
+      var selectedModes = [];
+      form.querySelectorAll('[data-scene-mode][aria-pressed="true"]').forEach(function (button) { selectedModes.push(button.dataset.sceneMode); });
+      var globalProfile = await store.get("meta", "user-profile") || { name: "我", introduction: "", avatarMediaId: "" };
+      var userProfile = app.services.profiles.userForConversation(conversation, globalProfile);
+      generationTask = { cancelled: false, controller: typeof AbortController === "function" ? new AbortController() : null };
+      generateButton.disabled = true; saveButton.disabled = true; label.textContent = "正在生成…"; status.textContent = "主持人正在结合用户与角色设定构思场景…";
+      try {
+        var result = await app.services.llm.generateScene(moderator, participants, conversation, userProfile, selectedModes, u.formValue(form, "sceneGenerationPrompt"), generationTask);
+        if (!form.isConnected || generationTask.cancelled) return;
+        form.elements.namedItem("openingScene").value = result.text;
+        status.textContent = "已生成，可继续编辑后保存";
+      } catch (error) {
+        if (form.isConnected && !generationTask.cancelled) status.textContent = "生成失败：" + u.cleanError(error);
+      } finally {
+        generationTask = null;
+        if (form.isConnected) { generateButton.disabled = false; saveButton.disabled = false; label.textContent = "生成"; }
+      }
+    });
+    return form;
+  }
+
   async function manage(id) {
     var conversation = await store.get("conversations", id);
     if (!conversation) return;
-    var form = ui.openModal({ title: conversation.title, submitText: "完成", cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-menu="edit">' + ui.icon('gear') + '<span>基础设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="identity">' + ui.icon('gear') + '<span>个人设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item" type="button" data-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item danger-text" type="button" data-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var form = ui.openModal({ title: conversation.title, submitText: "完成", cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-menu="edit">' + ui.icon('gear') + '<span>基础设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="identity">' + ui.icon('gear') + '<span>个人设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="scene">' + ui.icon('clapperboard') + '<span>场景设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item" type="button" data-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item danger-text" type="button" data-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.menu;
-      if (app.features.chatSession.active(id) && (command === "edit" || command === "delete")) { ui.toast("请先停止本轮回复，再修改或删除对话"); return; }
+      if (app.features.chatSession.active(id) && (command === "edit" || command === "scene" || command === "delete")) { ui.toast("请先停止本轮回复，再修改对话"); return; }
       ui.closeModal();
       if (command === 'edit') return openEditor(conversation);
       if (command === 'identity') return openPersonalProfile(conversation, function (next) { conversation = next; });
+      if (command === 'scene') return openSceneSettings(conversation, function (result) { conversation = result.conversation || conversation; });
       if (command === 'export') return exportText(id);
       if (command === 'pin') { conversation.pinned = !conversation.pinned; await store.put("conversations", id, conversation); ui.toast(conversation.pinned ? '对话已置顶' : '已取消置顶'); if (app.state.route === 'conversations') await render(); }
       if (command === 'delete' && await ui.confirm({ title: '删除对话？', message: '“' + conversation.title + '”的消息、草稿和未被其他对话使用的图片将从本机删除，无法撤销。', confirmText: '删除对话', danger: true })) {
@@ -228,5 +301,5 @@
     })); });
   }
   app.features = app.features || {};
-  app.features.conversations = { render: render, openEditor: openEditor, openPersonalProfile: openPersonalProfile, guidedStart: guidedStart, manage: manage, exportText: exportText };
+  app.features.conversations = { render: render, openEditor: openEditor, openPersonalProfile: openPersonalProfile, openSceneSettings: openSceneSettings, guidedStart: guidedStart, manage: manage, exportText: exportText };
 })(window.chataxi);

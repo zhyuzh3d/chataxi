@@ -62,6 +62,56 @@ test("builds Gemini inline image request", () => {
   assert.equal(request.body.contents[0].parts[0].inline_data.mime_type, "image/png");
 });
 
+test("all six language protocols keep scene and summary in their native system channel", () => {
+  const history = [
+    { role: "system", systemType: "scene", text: "夜雨中的旧车站" },
+    { role: "system", systemType: "summary", text: "两人已经交换暗号" },
+    { role: "user", text: "继续" }
+  ];
+  const profiles = [
+    { apiStyle: "openai-responses", endpoint: "https://example.com/v1/responses", model: "r" },
+    { apiStyle: "openai-chat", endpoint: "https://example.com/v1/chat/completions", model: "c" },
+    { apiStyle: "anthropic-messages", endpoint: "https://example.com/v1/messages", model: "a" },
+    { apiStyle: "gemini-interactions", endpoint: "https://example.com/v1/interactions", model: "gi" },
+    { apiStyle: "gemini-generate-content", endpoint: "https://example.com/v1beta/models/{model}:generateContent", model: "gg" },
+    { apiStyle: "ollama-chat", endpoint: "http://127.0.0.1:11434/api/chat", model: "o" }
+  ];
+  const built = profiles.map(profile => providers.build({ ...profile, systemRoleMode: "native", maxOutputTokens: 256, temperature: "" }, role, history));
+  const nativePrompts = [
+    built[0].body.instructions,
+    built[1].body.messages[0].content,
+    built[2].body.system,
+    built[3].body.system_instruction,
+    built[4].body.systemInstruction.parts[0].text,
+    built[5].body.messages[0].content
+  ];
+  nativePrompts.forEach(prompt => {
+    assert.match(prompt, /简洁回答/);
+    assert.match(prompt, /\[场景设定\][\s\S]*旧车站/);
+    assert.match(prompt, /\[历史概要\][\s\S]*交换暗号/);
+  });
+});
+
+test("unknown-model fallback converts persistent and historical system content to one tagged user message", () => {
+  const request = providers.build({ apiStyle: "openai-responses", endpoint: "https://example.com/v1/responses", model: "future-model", systemRoleMode: "tagged-user", maxOutputTokens: 256 }, role, [
+    { role: "system", systemType: "scene", text: "场景正文" },
+    { role: "system", systemType: "summary", text: "概要正文" },
+    { role: "user", text: "用户发言" }
+  ]);
+  assert.equal(request.body.instructions, undefined);
+  assert.equal(request.body.input[0].role, "user");
+  assert.match(request.body.input[0].content, /^\[角色与用户设定\]/);
+  assert.match(request.body.input[0].content, /\[场景设定\][\s\S]*场景正文/);
+  assert.match(request.body.input[0].content, /\[历史概要\][\s\S]*概要正文/);
+  assert.equal(request.body.input[1].content, "用户发言");
+});
+
+test("model registry selects native system handling for mapped families and tagged-user for an unmapped model", () => {
+  assert.equal(registry.resolvedCapabilities("llm", { family: "custom", modelFamilyId: "openai" }, { id: "gpt-5" }).systemRoleMode, "native");
+  assert.equal(registry.resolvedCapabilities("llm", { family: "custom" }, { id: "vendor/future-model" }).systemRoleMode, "tagged-user");
+  assert.equal(registry.resolvedCapabilities("llm", { family: "custom", systemRoleMode: "native" }, { id: "vendor/future-model" }).systemRoleMode, "native");
+});
+
 test("parses all supported text response shapes", () => {
   assert.equal(providers.parse({ apiStyle: "openai-responses" }, { output_text: "R" }).text, "R");
   assert.equal(providers.parse({ apiStyle: "openai-chat" }, { choices: [{ message: { content: "C" } }] }).text, "C");

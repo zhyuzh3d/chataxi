@@ -19,9 +19,8 @@
   function avatar(name, color, className, iconName, mediaId) {
     var cleanName = String(name || "").trim();
     var label = cleanName ? Array.from(cleanName)[0].toUpperCase() : icon("user");
-    color = /^#[0-9a-f]{6}$/i.test(color || "") ? color : "#656c58";
     var media = String(mediaId || "");
-    return '<span class="avatar ' + utils.escapeHtml(className || "") + '" style="background:' + color + '"' + (media ? ' data-avatar-media="' + utils.escapeHtml(media) + '"' : '') + ' aria-hidden="true">' + (cleanName ? utils.escapeHtml(label) : label) + '</span>';
+    return '<span class="avatar ' + utils.escapeHtml(className || "") + '"' + (media ? ' data-avatar-media="' + utils.escapeHtml(media) + '"' : '') + ' aria-hidden="true">' + (cleanName ? utils.escapeHtml(label) : label) + '</span>';
   }
   function roleAvatar(role, className) { return avatar(role && role.name, "", className, "", role && role.avatarMediaId); }
   async function hydrateAvatars(root) {
@@ -37,10 +36,19 @@
   }
   async function pickLocalImage() {
     if (app.platform.hermit.available()) {
-      var picked = await app.platform.hermit.api().files.pickImage({ maxDimension: 2000, maxBytes: 700 * 1024 });
+      var files = app.platform.hermit.api().files;
+      var picked = await files.pickImage({ maxDimension: 2000, maxBytes: 700 * 1024 });
       if (!picked || picked.cancelled) return null;
-      var parts = utils.dataUrlToParts(picked.dataUrl); if (!parts) throw new Error("没有取得可用头像图片");
-      var blob = utils.base64ToBlob(parts.data, parts.mime); blob.name = picked.name || "avatar.jpg"; return blob;
+      if (!picked.url) { if (picked.logicalFileId && files.delete) await files.delete({ logicalFileId: picked.logicalFileId }).catch(function () {}); throw new Error("没有取得可用头像图片"); }
+      var released = false;
+      return {
+        url: picked.url, type: picked.mime || "", size: Number(picked.size || 0), name: picked.name || "avatar.jpg",
+        release: function () {
+          if (released) return Promise.resolve(); released = true;
+          if (!picked.logicalFileId || !files.delete) return Promise.resolve();
+          return files.delete({ logicalFileId: picked.logicalFileId }).catch(function () {});
+        }
+      };
     }
     return new Promise(function (resolve) { var input = document.createElement("input"); input.type = "file"; input.accept = "image/jpeg,image/png,image/webp"; input.addEventListener("change", function () { resolve(input.files && input.files[0] || null); }, { once: true }); input.click(); });
   }
@@ -56,21 +64,37 @@
     var sourceY = Math.max(0, Math.min(height - sourceSize, height / 2 - y / scale - sourceSize / 2));
     return { zoom: safeZoom, x: x, y: y, baseWidth: width * baseScale, baseHeight: height * baseScale, renderedWidth: renderedWidth, renderedHeight: renderedHeight, sourceX: sourceX, sourceY: sourceY, sourceSize: sourceSize };
   }
-  async function cropAvatar(blob, onCropped) {
-    if (!blob || !/^image\/(jpeg|png|webp)$/i.test(blob.type || "")) throw new Error("头像只支持 JPEG、PNG 或 WebP 图片");
-    if (blob.size > 20 * 1024 * 1024) throw new Error("头像原图不能超过 20 MiB");
-    var sourceUrl = URL.createObjectURL(blob), image = await new Promise(function (resolve, reject) { var value = new Image(); value.onload = function () { resolve(value); }; value.onerror = function () { reject(new Error("头像图片无法读取")); }; value.src = sourceUrl; });
-    var released = false, cleanup = []; function release() { if (!released) { released = true; cleanup.forEach(function (fn) { fn(); }); URL.revokeObjectURL(sourceUrl); } }
+  async function cropAvatar(source, onCropped) {
+    var blob = source instanceof Blob ? source : null, mime = blob ? blob.type || "" : source && source.type || "", size = blob ? blob.size : Number(source && source.size || 0);
+    var managedUrl = !blob && source && source.url ? String(source.url) : "", sourceUrl = blob ? URL.createObjectURL(blob) : managedUrl;
+    var released = false, cleanup = [];
+    function release() {
+      if (released) return; released = true; cleanup.forEach(function (fn) { fn(); });
+      if (blob && sourceUrl) URL.revokeObjectURL(sourceUrl);
+      if (!blob && source && typeof source.release === "function") Promise.resolve(source.release()).catch(function () {});
+    }
+    if (!sourceUrl || !/^image\/(jpeg|png|webp)$/i.test(mime)) { release(); throw new Error("头像只支持 JPEG、PNG 或 WebP 图片"); }
+    if (size > 20 * 1024 * 1024) { release(); throw new Error("头像原图不能超过 20 MiB"); }
+    var image;
+    try { image = await new Promise(function (resolve, reject) { var value = new Image(); value.onload = function () { resolve(value); }; value.onerror = function () { reject(new Error("头像图片无法读取")); }; value.src = sourceUrl; }); }
+    catch (error) { release(); throw error; }
     var state = { zoom: 1, x: 0, y: 0 }, pointers = {}, gesture = null;
-    var form = openSubsheet({ title: "调整头像", submitText: "使用头像", html: '<p class="helper crop-help">拖动图片对准蓝色正方形；双指捏合、滚轮或下方按钮可以缩放。</p><div class="crop-stage" data-crop-stage><img id="cropImage" alt="头像裁切预览"><span class="crop-frame" aria-hidden="true"><i class="crop-handle crop-handle-tl"></i><i class="crop-handle crop-handle-tr"></i><i class="crop-handle crop-handle-bl"></i><i class="crop-handle crop-handle-br"></i></span></div><div class="crop-toolbar"><button class="icon-button" type="button" data-crop-zoom="-0.15" aria-label="缩小头像">' + icon("minus") + '</button><output data-crop-output aria-live="polite">100%</output><button class="icon-button" type="button" data-crop-zoom="0.15" aria-label="放大头像">' + icon("plus") + '</button></div>', onDismiss: release, onSubmit: async function () {
+    var form = openSubsheet({ title: "调整头像", submitText: "使用头像", html: '<p class="helper crop-help">拖动图片对准蓝色正方形；双指捏合、滚轮或下方按钮可以缩放。</p><div class="crop-stage" data-crop-stage><canvas id="cropCanvas" aria-label="头像裁切预览"></canvas><span class="crop-frame" aria-hidden="true"><i class="crop-handle crop-handle-tl"></i><i class="crop-handle crop-handle-tr"></i><i class="crop-handle crop-handle-bl"></i><i class="crop-handle crop-handle-br"></i></span></div><div class="crop-toolbar"><button class="icon-button" type="button" data-crop-zoom="-0.15" aria-label="缩小头像">' + icon("minus") + '</button><output data-crop-output aria-live="polite">100%</output><button class="icon-button" type="button" data-crop-zoom="0.15" aria-label="放大头像">' + icon("plus") + '</button></div>', onDismiss: release, onSubmit: async function () {
       var geometry = cropGeometry(image.naturalWidth, image.naturalHeight, stage.getBoundingClientRect().width || 320, state.zoom, state.x, state.y);
       var canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 320;
       canvas.getContext("2d").drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceSize, geometry.sourceSize, 0, 0, 320, 320);
       var output = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/jpeg", 0.88); }); if (!output) throw new Error("头像裁切失败，请换一张图片"); return output;
     }, onSuccess: async function (output) { release(); await onCropped(output); } });
-    var stage = form.querySelector("[data-crop-stage]"), preview = form.querySelector("#cropImage"); preview.src = sourceUrl;
-    function stageSize() { var width = stage.getBoundingClientRect().width; if (!(width > 0)) width = Math.min(420, Math.max(240, (document.documentElement.clientWidth || 364) - 44)); stage.style.height = Math.round(width) + "px"; return width; }
-    function paint() { var geometry = cropGeometry(image.naturalWidth, image.naturalHeight, stageSize(), state.zoom, state.x, state.y); state.zoom = geometry.zoom; state.x = geometry.x; state.y = geometry.y; preview.style.width = geometry.baseWidth + "px"; preview.style.height = geometry.baseHeight + "px"; preview.style.transform = "translate(-50%, -50%) translate(" + state.x + "px, " + state.y + "px) scale(" + state.zoom + ")"; preview.classList.add("is-ready"); form.querySelector("[data-crop-output]").textContent = Math.round(state.zoom * 100) + "%"; }
+    var stage = form.querySelector("[data-crop-stage]"), preview = form.querySelector("#cropCanvas");
+    function stageSize() { var width = stage.getBoundingClientRect().width; return width > 0 ? width : Math.min(420, Math.max(240, (document.documentElement.clientWidth || 364) - 44)); }
+    function paint() {
+      var size = stageSize(), geometry = cropGeometry(image.naturalWidth, image.naturalHeight, size, state.zoom, state.x, state.y), ratio = Math.max(1, Number(window.devicePixelRatio || 1));
+      state.zoom = geometry.zoom; state.x = geometry.x; state.y = geometry.y;
+      preview.width = Math.round(size * ratio); preview.height = Math.round(size * ratio);
+      var context = preview.getContext("2d"); context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, size, size);
+      context.drawImage(image, (size - geometry.renderedWidth) / 2 + state.x, (size - geometry.renderedHeight) / 2 + state.y, geometry.renderedWidth, geometry.renderedHeight);
+      form.querySelector("[data-crop-output]").textContent = Math.round(state.zoom * 100) + "%";
+    }
     function pointerList() { return Object.keys(pointers).map(function (key) { return pointers[key]; }); }
     function startGesture() { var points = pointerList(); if (points.length >= 2) { var left = points[0], right = points[1], dx = right.x - left.x, dy = right.y - left.y; gesture = { type: "pinch", distance: Math.max(1, Math.sqrt(dx * dx + dy * dy)), centerX: (left.x + right.x) / 2, centerY: (left.y + right.y) / 2, zoom: state.zoom, x: state.x, y: state.y }; } else if (points.length === 1) gesture = { type: "drag", pointerId: points[0].id, startX: points[0].x, startY: points[0].y, x: state.x, y: state.y }; else gesture = null; }
     function moveGesture(activeId) { var points = pointerList(); if (gesture && gesture.type === "pinch" && points.length >= 2) { var left = points[0], right = points[1], dx = right.x - left.x, dy = right.y - left.y, centerX = (left.x + right.x) / 2, centerY = (left.y + right.y) / 2; state.zoom = gesture.zoom * Math.sqrt(dx * dx + dy * dy) / gesture.distance; state.x = gesture.x + centerX - gesture.centerX; state.y = gesture.y + centerY - gesture.centerY; paint(); } else if (gesture && gesture.type === "drag" && gesture.pointerId === activeId && pointers[activeId]) { state.x = gesture.x + pointers[activeId].x - gesture.startX; state.y = gesture.y + pointers[activeId].y - gesture.startY; paint(); } }
@@ -92,7 +116,7 @@
     function endPointer(event) { delete pointers[event.pointerId]; startGesture(); }
     stage.addEventListener("wheel", function (event) { event.preventDefault(); state.zoom += event.deltaY < 0 ? 0.12 : -0.12; paint(); }, { passive: false });
     form.querySelectorAll("[data-crop-zoom]").forEach(function (button) { button.addEventListener("click", function () { state.zoom += Number(button.dataset.cropZoom); paint(); }); });
-    var repaint = function () { if (!released && stage.isConnected) paint(); }; window.addEventListener("resize", repaint); cleanup.push(function () { window.removeEventListener("resize", repaint); }); preview.addEventListener("load", repaint, { once: true }); paint(); if (window.requestAnimationFrame) window.requestAnimationFrame(repaint);
+    var repaint = function () { if (!released && stage.isConnected) paint(); }; window.addEventListener("resize", repaint); cleanup.push(function () { window.removeEventListener("resize", repaint); }); paint(); if (window.requestAnimationFrame) window.requestAnimationFrame(repaint);
   }
   function toast(message, duration) {
     var root = document.getElementById("toastRoot");

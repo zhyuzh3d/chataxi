@@ -18,7 +18,7 @@ test("saved credentials keep useful ends while masking the middle", () => {
   assert.equal(utils.maskSecret(""), "");
 });
 
-test("every saved custom header value is masked but remains available to explicit copy logic", () => {
+test("every saved custom header value is masked while preserving its editable value", () => {
   const entries = utils.maskedHeaderEntries(JSON.stringify({ Authorization: "Bearer demoHeaderAlphaOmega", "X-Client": "chataxi" }));
   assert.deepEqual(Array.from(entries, item => item.name), ["Authorization", "X-Client"]);
   assert.equal(entries[0].maskedValue, "Bearer demo••••••mega");

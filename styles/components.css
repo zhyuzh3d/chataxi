@@ -25,6 +25,7 @@
 .picker-button i { flex-shrink: 0; margin-left: var(--space-button-group); color: var(--text-soft); font-size: 12px; }
 .field textarea { min-height: 100px; resize: vertical; }
 .field .prompt-editor { min-height: 154px; }
+.field textarea[name="introduction"], .field textarea[name="userIntroduction"] { min-height: 103px; }
 .field .export-text { min-height: 44vh; }
 .field small, .switch-row small { color: var(--text-soft); font-size: 13px; font-weight: 400; }
 .saved-secret, .saved-header-row { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; padding: 10px 12px; overflow: hidden; border-radius: var(--radius-sm); background: var(--surface-muted); }
@@ -32,12 +33,13 @@
 .secret-mask, .saved-header-row code { display: block; max-width: 100%; overflow-wrap: anywhere; color: var(--text-soft); font: 13px/1.5 ui-monospace, monospace; }
 .saved-headers { display: grid; gap: 8px; min-width: 0; max-width: 100%; }
 .saved-header-row strong { display: block; margin-bottom: 2px; overflow-wrap: anywhere; font-size: 12px; }
-.secret-copy { flex: 0 1 auto; }
-.secret-editor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-button-group); min-width: 0; max-width: 100%; padding: 8px; overflow: hidden; border-radius: var(--radius-sm); background: var(--surface-muted); }
+.secret-paste { flex: 0 1 auto; }
+.secret-editor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; gap: var(--space-button-group); min-width: 0; max-width: 100%; padding: 8px; overflow: hidden; border-radius: var(--radius-sm); background: var(--surface-muted); }
 .field .secret-editor input { min-width: 0; border: 0; background: transparent; color: transparent; caret-color: transparent; font: 13px/1.5 ui-monospace, monospace; }
-.secret-editor .secret-mask { position: absolute; z-index: 1; left: 21px; right: min(104px, 34%); top: 50%; overflow: hidden; transform: translateY(-50%); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-.secret-editor input:focus { color: var(--text); caret-color: var(--text); }
-.secret-editor input:focus + .secret-mask { opacity: 0; }
+.secret-editor .secret-mask { position: absolute; z-index: 1; left: 21px; right: min(154px, 48%); top: 50%; overflow: hidden; transform: translateY(-50%); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.secret-editor.is-revealed input { color: var(--text); caret-color: var(--text); }
+.secret-editor.is-revealed .secret-mask { opacity: 0; }
+.secret-visibility { border-color: var(--border); background: var(--surface); }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; max-width: 100%; min-height: 54px; }
 .switch-row > span { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
 .switch-row strong, .switch-row small { display: block; }
@@ -58,7 +60,7 @@
 .badge { display: inline-flex; align-items: center; width: fit-content; max-width: 45%; padding: 3px 9px; overflow: hidden; border-radius: 7px; background: var(--surface-muted); color: var(--text-soft); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .badge.success { background: var(--success-soft); color: var(--success); }
 .badge.warning { color: var(--danger); background: var(--danger-soft); }
-.avatar { width: 46px; height: 46px; flex: 0 0 46px; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 16px; color: #fff; font-size: 15px; font-weight: 650; }
+.avatar { width: 46px; height: 46px; flex: 0 0 46px; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 16px; background: #656c58; box-shadow: 0 0 0 1px var(--border-strong); color: #fff; font-size: 15px; font-weight: 650; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .avatar.large { width: 58px; height: 58px; flex-basis: 58px; border-radius: 20px; font-size: 18px; }
 .avatar.tiny { width: 24px; height: 24px; flex-basis: 24px; border-radius: 8px; font-size: 10px; }

@@ -16,14 +16,14 @@
   }
   function secretField(service, family) {
     var label = family.auth === "aws-sigv4" ? "Secret Access Key" : family.auth === "azure" ? "Speech Key" : "API Key", value = service.apiKey || "";
-    return '<div class="field"><span data-main-secret-label>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : family.keyOptional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-copy" type="button" data-copy-key aria-label="复制' + label + '">' + ui.icon("copy") + '<span>复制</span></button></div></div>';
+    return '<div class="field"><span data-main-secret-label>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : family.keyOptional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-paste" type="button" data-paste-key aria-label="从剪贴板粘贴' + label + '">' + ui.icon("paste") + '<span>粘贴</span></button><button class="icon-button secret-visibility" type="button" data-toggle-secret aria-label="显示' + label + '" aria-pressed="false">' + ui.icon("eye") + '</button></div></div>';
   }
   function auxiliarySecretField(name, label, value, optional) {
-    return '<div class="field"><span>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : optional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="' + name + '" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value || "") + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-copy" type="button" data-copy-secret="' + name + '" aria-label="复制' + label + '">' + ui.icon("copy") + '<span>复制</span></button></div></div>';
+    return '<div class="field"><span>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : optional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="' + name + '" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value || "") + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-paste" type="button" data-paste-secret="' + name + '" aria-label="从剪贴板粘贴' + label + '">' + ui.icon("paste") + '<span>粘贴</span></button><button class="icon-button secret-visibility" type="button" data-toggle-secret aria-label="显示' + label + '" aria-pressed="false">' + ui.icon("eye") + '</button></div></div>';
   }
   function customHeadersField(service) {
     var value = service.customHeaders || "", masked = u.maskedHeaderEntries(value).map(function (item) { return item.name + ": " + item.maskedValue; }).join("；");
-    return '<div class="field"><span>自定义 Header <em>JSON，选填</em></span><div class="secret-editor"><input name="customHeaders" type="password" autocomplete="off" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="{&quot;X-Client&quot;:&quot;chataxi&quot;}"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(masked || (value ? u.maskSecret(value) : "")) + '</span><button class="button secondary compact secret-copy" type="button" data-copy-headers aria-label="复制自定义 Header">' + ui.icon("copy") + '<span>复制</span></button></div></div>';
+    return '<div class="field"><span>自定义 Header <em>JSON，选填</em></span><div class="secret-editor"><input name="customHeaders" type="password" autocomplete="off" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="{&quot;X-Client&quot;:&quot;chataxi&quot;}"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(masked || (value ? u.maskSecret(value) : "")) + '</span><button class="button secondary compact secret-paste" type="button" data-paste-headers aria-label="从剪贴板粘贴自定义 Header">' + ui.icon("paste") + '<span>粘贴</span></button><button class="icon-button secret-visibility" type="button" data-toggle-secret aria-label="显示自定义 Header" aria-pressed="false">' + ui.icon("eye") + '</button></div></div>';
   }
   function identity(profile) {
     return [profile.family, profile.endpoint, profile.apiStyle, profile.region, profile.workspaceId, profile.resourceEndpoint, profile.apiKey, profile.accessKeyId, profile.sessionToken, profile.customHeaders, profile.externalModelId, profile.modelFamilyId].join("\n");
@@ -190,9 +190,20 @@
     if (familyPicker) form.elements.namedItem("modelFamilyId").addEventListener("change", function () { invalidateTest(); form.querySelector("#connectionStatus").textContent = "模型系列已改变，请重新测试。"; });
     form.querySelector("[data-fetch-models]").addEventListener("click", ui.action(fetchModels));
     form.querySelector("[data-test-model]").addEventListener("click", ui.action(testModel));
-    form.querySelector("[data-copy-key]").addEventListener("click", ui.action(async function () { var key = value("apiKey"); if (!key) throw new Error("没有可复制的 API Key"); await app.platform.hermit.copyText(key); ui.toast("已复制"); }));
-    form.querySelectorAll("[data-copy-secret]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var secret = value(button.dataset.copySecret); if (!secret) throw new Error("没有可复制的值"); await app.platform.hermit.copyText(secret); ui.toast("已复制"); })); });
-    form.querySelector("[data-copy-headers]").addEventListener("click", ui.action(async function () { var headers = value("customHeaders"); if (!headers) throw new Error("没有可复制的自定义 Header"); await app.platform.hermit.copyText(headers); ui.toast("已复制"); }));
+    async function pasteSecret(name, label) {
+      var text = String(await app.platform.hermit.readClipboardText() || "").trim();
+      if (!text) throw new Error("剪贴板里没有可粘贴的" + label);
+      var input = form.elements.namedItem(name); input.value = text; input.dispatchEvent(new Event("input", { bubbles: true })); input.focus(); input.select(); ui.toast(label + "已粘贴");
+    }
+    form.querySelector("[data-paste-key]").addEventListener("click", ui.action(function () { return pasteSecret("apiKey", "API Key"); }));
+    form.querySelectorAll("[data-paste-secret]").forEach(function (button) { button.addEventListener("click", ui.action(function () { return pasteSecret(button.dataset.pasteSecret, "密钥"); })); });
+    form.querySelector("[data-paste-headers]").addEventListener("click", ui.action(function () { return pasteSecret("customHeaders", "自定义 Header"); }));
+    form.querySelectorAll("[data-toggle-secret]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var editor = button.closest(".secret-editor"), input = editor.querySelector("input"), revealed = !editor.classList.contains("is-revealed");
+        editor.classList.toggle("is-revealed", revealed); input.type = revealed ? "text" : "password"; button.setAttribute("aria-pressed", String(revealed)); button.setAttribute("aria-label", (revealed ? "隐藏" : "显示") + (input.name === "customHeaders" ? "自定义 Header" : "密钥")); button.innerHTML = ui.icon(revealed ? "eye-slash" : "eye");
+      });
+    });
     form.querySelectorAll(".secret-editor input").forEach(function (input) {
       input.addEventListener("focus", function () { input.select(); }, { once: true });
       input.addEventListener("paste", function (event) { var pasted = event.clipboardData && event.clipboardData.getData("text"); if (!pasted || !input.value) return; event.preventDefault(); input.value = pasted.trim(); input.dispatchEvent(new Event("input", { bubbles: true })); input.select(); });

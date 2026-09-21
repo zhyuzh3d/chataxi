@@ -104,8 +104,17 @@
     return next;
   }
   function capabilityState(value) { return value === true ? "supported" : value === false ? "unsupported" : "unknown"; }
+  function systemRoleMode(kind, service, model) {
+    if (kind !== "llm") return "native";
+    if (service && (service.systemRoleMode === "native" || service.systemRoleMode === "tagged-user")) return service.systemRoleMode;
+    if (model && model.systemRole === false) return "tagged-user";
+    if (model && model.systemRole === true) return "native";
+    var familyId = service && service.modelFamilyId || suggestFamily("llm", model && model.id, service);
+    return familyId && familyId !== "unknown" ? "native" : "tagged-user";
+  }
   function resolvedCapabilities(kind, service, model) {
     model = model || {};
+    var instructionMode = systemRoleMode(kind, service, model);
     return {
       modelProfileId: service && service.id || "",
       connectionRevision: service && service.connectionRevision || "",
@@ -115,7 +124,8 @@
         videoInput: capabilityState(model.videoInput),
         imageGeneration: capabilityState(model.imageGeneration),
         audioStreaming: capabilityState(model.audioStreaming),
-        textStreaming: capabilityState(model.textStreaming)
+        textStreaming: capabilityState(model.textStreaming),
+        systemRole: model.systemRole === false ? "unsupported" : instructionMode === "native" ? "supported" : "unknown"
       },
       parameters: {
         temperature: model.temperature === true ? "supported" : model.temperature === false ? "unsupported" : "unknown",
@@ -129,6 +139,7 @@
         voices: { source: service && service.voicesDiscovered ? "provider-directory" : "official-registry", status: service && (service.voices || []).length ? "ready" : "unknown", values: service && service.voices || [] }
       },
       transport: transportCodec(kind, service),
+      systemRoleMode: instructionMode,
       evidence: model.capabilityEvidence || null,
       conflicts: []
     };
