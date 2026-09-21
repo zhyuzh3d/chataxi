@@ -1,10 +1,10 @@
 {
   "schema": 2,
-  "happId": "io.github.zhyuzh3d.chataxi",
+  "happId": "com.airen.chataxi",
   "name": "chataxi",
   "version": {
-    "code": 74,
-    "name": "0.6.14"
+    "code": 75,
+    "name": "0.6.15"
   },
   "entry": "index.html",
   "routing": "hash",

@@ -11,7 +11,7 @@ const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const hermit = JSON.parse(fs.readFileSync(path.join(root, "hermit.json"), "utf8"));
 
 assert.equal(hermit.schema, 2);
-assert.equal(hermit.happId, "io.github.zhyuzh3d.chataxi");
+assert.equal(hermit.happId, "com.airen.chataxi", "chataxi ships under the reversed airen.com domain namespace");
 assert.equal(hermit.entry, "index.html");
 assert.equal(hermit.routing, "hash");
 assert.equal(hermit.icon, "app/assets/icon.webp");

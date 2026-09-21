@@ -147,7 +147,7 @@ Android 系统语音识别为默认服务。调用前检查可用性，处理 re
 
 ## 11. 打包、验证与发布边界
 
-运行包根目录包含 `index.html` 和 schema 2 的 `hermit.json`，`happId` 固定为 `io.github.zhyuzh3d.chataxi`，使用 hash routing。ZIP 是源码归档，不是构建产物，只包含 `index.html`、`hermit.json`、`app/` 和 `styles/`。
+运行包根目录包含 `index.html` 和 schema 2 的 `hermit.json`，`happId` 固定为 `com.airen.chataxi`，使用 hash routing。ZIP 是源码归档，不是构建产物，只包含 `index.html`、`hermit.json`、`app/` 和 `styles/`。
 
 自动验收覆盖：脚本语法与资源闭包、无外部运行依赖、六种 LLM 协议的 system 映射及未知模型 user 兜底、场景消息单次落成与不可追溯插入、system 概要、普通及流式请求/解析、增量消息更新、ElevenLabs 模型与分页音色发现、质量元数据分离、Jane/v3 Professional 兼容模式及目录权限回退、豆包 V3 鉴权/请求/SSE 音频合并、横竖图裁切边界、单角色艾特记忆、空消息点名、全部角色提示词、用户资料与逐对话覆盖、逐对话 N、压缩前后操作范围、静音自动朗读、停止与迟到结果、精确重试、长消息分块、媒体回收、ASR multipart、TTS 取消、版本化归档一致性和关键 DOM 用户流程。
 
