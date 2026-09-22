@@ -569,7 +569,7 @@
     var voice = (availableVoices.find(function (item) { return item.id === service.defaultVoiceId; }) || availableVoices[0] || {}).id || service.defaultVoiceId || service.voice || "";
     var profile = app.services.modelServices.resolveTts(service, { ttsModel: model, ttsVoice: voice }, settings);
     if (!profile.model || profile.type !== "system" && !profile.voice && profile.protocol !== "fish-tts") throw new Error("服务缺少可测试的模型或音色");
-    var task = { cancelled: false }, clip = await synthesize("你好", profile, task, false); await disposeClip(clip); return { modelId: model, voiceId: voice };
+    var task = { cancelled: false }, clip = await synthesize(app.i18n.pick("你好", "Hello"), profile, task, false); await disposeClip(clip); return { modelId: model, voiceId: voice };
   }
 
   async function playReady(messageId) {

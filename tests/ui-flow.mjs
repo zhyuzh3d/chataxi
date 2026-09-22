@@ -20,7 +20,7 @@ Object.defineProperty(window.HTMLSelectElement.prototype, 'value', { get() { con
 Object.defineProperty(window.HTMLTextAreaElement.prototype, 'maxLength', { get() { return Number(this.getAttribute('maxlength') || -1); } });
 const location = { hash: '#/conversations' };
 const history = { state: null, replaceState(state, _, hash) { this.state = state; location.hash = hash; }, pushState(state, _, hash) { this.state = state; location.hash = hash; }, back() {} };
-const context = vm.createContext({ window, document, location, history, navigator: {}, localStorage: { get length() { return data.size; }, key(i) { return [...data.keys()][i]; }, getItem(key) { return data.get(key) ?? null; }, setItem(key, value) { data.set(key, value); }, removeItem(key) { data.delete(key); } }, URL, Blob, TextEncoder, Uint8Array, Uint32Array, btoa, atob, console, setTimeout, clearTimeout, AbortController, Event: window.Event, requestAnimationFrame: fn => setTimeout(fn, 0) });
+const context = vm.createContext({ window, document, location, history, navigator: { language: 'zh-CN', languages: ['zh-CN'] }, MutationObserver: window.MutationObserver, localStorage: { get length() { return data.size; }, key(i) { return [...data.keys()][i]; }, getItem(key) { return data.get(key) ?? null; }, setItem(key, value) { data.set(key, value); }, removeItem(key) { data.delete(key); } }, URL, Blob, TextEncoder, Uint8Array, Uint32Array, btoa, atob, console, setTimeout, clearTimeout, AbortController, Event: window.Event, requestAnimationFrame: fn => setTimeout(fn, 0) });
 const scripts = [...fs.readFileSync(root + 'index.html', 'utf8').matchAll(/<script src="\.\/([^\"]+)"/g)].map(match => match[1]);
 for (const script of scripts) vm.runInContext(fs.readFileSync(root + script, 'utf8'), context, { filename: script });
 const app = window.chataxi;
@@ -57,12 +57,18 @@ click('[data-create]');
 await until(() => document.querySelector('#modalForm [name="apiKey"]'), 'guided model service form');
 assert.match(document.querySelector('[data-fetch-models]').textContent, /获取模型列表/);
 assert.match(document.querySelector('[data-test-model]').textContent, /连接并测试/);
-assert.equal(document.querySelector('#modalSubmit').textContent, '保存设置');
+// 目录没获取成功之前，提交按钮就是「获取模型列表」。
+assert.equal(document.querySelector('#modalSubmit').textContent, '获取模型列表');
+assert.equal(document.querySelector('#modalSubmit').dataset.mode, 'fetch');
 app.platform.network.requestJson = async options => options.method === 'GET'
   ? { data: { data: [{ id: 'gpt-4.1', owned_by: 'openai', supported_parameters: ['temperature'] }] } }
   : { data: { output_text: 'OK' } };
-field('apiKey', 'fixture-key'); click('[data-fetch-models]');
-await until(() => /gpt-4\.1/.test(document.querySelector('[data-picker="externalModelId"] [data-picker-label]').textContent), 'guided model discovery');
+field('apiKey', 'fixture-key'); submit();
+await until(() => document.querySelector('#modalSubmit').textContent === '保存设置', 'submit button turns into save after a successful catalog fetch');
+assert.equal(document.querySelector('#modalSubmit').dataset.mode, 'save');
+assert.ok(document.querySelector('#modalForm'), 'fetching the catalog through the submit button keeps the editor open');
+assert.match(document.querySelector('[data-picker="externalModelId"] [data-picker-label]').textContent, /gpt-4\.1/);
+assert.match(document.querySelector('#catalogStatus').textContent, /请选择一个模型。/);
 assert.equal(document.querySelector('.model-toggle'), null, 'one model card does not expose a multi-model switch list');
 click('[data-picker="externalModelId"]'); await until(() => document.querySelector('.subsheet .choice-group-label'), 'grouped model choice sheet');
 assert.match(document.querySelector('.subsheet .choice-group-label').textContent, /推荐用于对话模型/); click('.subsheet [data-choice="gpt-4.1"]'); await tick();
@@ -98,9 +104,23 @@ app.components.closeSubsheet();
 field('name', '测试搭档'); field('systemPrompt', '你是测试搭档，清晰回答问题。'); submit();
 await until(() => document.querySelector('#selectionSummary'), 'guided conversation form');
 assert.equal(document.querySelector('#modalSubmit').disabled, false);
-assert.equal(document.querySelector('[name="kind"]'), null); assert.equal(field('recentFullMessages').getAttribute('min'), '5'); assert.equal(field('recentFullMessages').getAttribute('max'), '50');
+assert.equal(document.querySelector('[name="kind"]'), null); assert.equal(document.querySelector('[name="recentFullMessages"]'), null, 'the per-conversation retained-N slider must be gone');
 submit();
 await until(() => document.querySelector('#messageInput'), 'chat opened');
+// 对话刚开始（还没有消息）时的欢迎面板：角色头像本身就是按钮，点它打开标准角色编辑弹窗。
+assert.ok(document.querySelector('.chat-welcome'), 'an empty conversation shows the welcome panel');
+const welcomeAvatar = document.querySelector('.chat-welcome-avatar');
+assert.ok(welcomeAvatar, 'the welcome avatars are clickable buttons');
+assert.equal(welcomeAvatar.dataset.editWelcomeRole, (await app.data.store.list('roles'))[0].id);
+assert.equal(welcomeAvatar.getAttribute('aria-label'), '编辑角色 测试搭档');
+assert.ok(welcomeAvatar.querySelector('.avatar.large'), 'the welcome avatar keeps its large style inside the button');
+click('.chat-welcome-avatar');
+await until(() => document.querySelector('#modalForm [name="systemPrompt"]'), 'standard role editor from the welcome avatar');
+assert.equal(field('name').value, '测试搭档');
+assert.equal(field('systemPrompt').value, '你是测试搭档，清晰回答问题。');
+app.components.closeModal(true, true); await tick();
+assert.ok(document.querySelector('.chat-welcome-avatar'), 'closing the editor leaves the welcome panel intact');
+console.log('passed: the welcome-panel avatar opens the standard role editor');
 const conversations = await app.data.store.list('conversations');
 assert.equal(conversations.length, 1);
 const id = conversations[0].id;
@@ -116,11 +136,15 @@ app.features.roles.templateAvatarBlob = async () => new Blob(['avatar'], { type:
 app.data.media.put = async () => ({ id: 'template-avatar-fixture' });
 app.data.media.remove = async mediaId => { removedTemplateAvatar = mediaId; };
 click('[data-add-role]'); await until(() => document.querySelector('[data-open-role-templates]'), 'new role template trigger');
+assert.equal(field('behaviorGuidance').getAttribute('rows'), '4', 'behavior guidance is a four-row field');
+assert.equal(field('systemPrompt').getAttribute('rows'), '4', 'identity and personality is a four-row field');
+assert.match(field('behaviorGuidance').value, /我必须根据情景自主对话[\s\S]*我每次回复必须用第一人称[\s\S]*我必须独立思考/, 'a new role starts from the default behavior guidance');
 const templateModelBefore = field('llmProfileId').value;
 click('[data-open-role-templates]'); await until(() => document.querySelector('[data-role-template="lin-xiaoyu"]'), 'template gallery selection'); click('[data-template-tab="female"]');
 click('[data-role-template="lin-xiaoyu"]'); await until(() => field('name').value === '陈佳宁', 'template applied');
 assert.equal(document.querySelector('[data-role-avatar-name]').textContent, '陈佳宁');
 assert.equal(field('systemPrompt').value, app.data.roleTemplates.items.find(item => item.id === 'lin-xiaoyu').systemPrompt);
+assert.equal(field('behaviorGuidance').value, app.data.roleTemplates.items.find(item => item.id === 'lin-xiaoyu').behaviorGuidance, 'a template brings its own behavior guidance');
 assert.equal(field('llmProfileId').value, templateModelBefore, 'template must not replace the selected model');
 assert.match(document.querySelector('#avatarPreview img').getAttribute('src'), /lin-xiaoyu\.webp$/);
 app.components.closeModal(); await until(() => removedTemplateAvatar === 'template-avatar-fixture', 'cancelled template avatar cleanup');
@@ -131,15 +155,21 @@ assert.equal((await app.data.store.list('roles')).length, 1, 'previewing a templ
 await app.openChat(id);
 console.log('passed: schema 2 role template gallery applies profile fields and cleans up cancelled avatar');
 
-click('#chatMenuButton'); await until(() => document.querySelector('[data-chat-menu="scene"]'), 'opening scene menu');
-assert.deepEqual(Array.from(document.querySelectorAll('[data-chat-menu]')).slice(0, 3).map(button => button.dataset.chatMenu), ['edit', 'identity', 'scene']);
+click('#chatMenuButton'); await until(() => document.querySelector('[data-chat-menu="settings"]'), 'merged conversation settings menu');
+assert.deepEqual(Array.from(document.querySelectorAll('[data-chat-menu]')).slice(0, 3).map(button => button.dataset.chatMenu), ['settings', 'voice', 'summary']);
 let generatedSceneRequest;
 app.services.llm.generateScene = async (moderator, participants, conversation, userProfile, modes, guidance) => {
   generatedSceneRequest = { moderator, participants, conversation, userProfile, modes, guidance };
   return { text: '深夜，雨中的旧车站只剩最后一盏灯。远处传来列车缓慢靠站的声音。' };
 };
-click('[data-chat-menu="scene"]'); await until(() => document.querySelector('#modalForm [name="openingScene"]'), 'opening scene editor');
-assert.ok(document.querySelector('.modal-sheet.scene-settings-sheet'), 'scene settings uses the fixed-height sheet');
+click('[data-chat-menu="settings"]'); await until(() => document.querySelector('#modalForm [name="openingScene"]'), 'merged settings sheet');
+assert.equal(document.querySelector('#modalTitle').textContent, '常规设定');
+assert.ok(document.querySelector('.modal-sheet.conversation-settings-sheet'), 'the merged settings use the fixed-height sheet');
+assert.deepEqual(Array.from(document.querySelectorAll('[data-conversation-tab]')).map(button => button.textContent), ['基础设定', '个人设定', '场景设定']);
+assert.deepEqual(Array.from(document.querySelectorAll('[data-conversation-tab]')).map(button => button.getAttribute('aria-selected')), ['true', 'false', 'false']);
+click('[data-conversation-tab="scene"]');
+assert.ok(document.querySelector('[data-conversation-panel="scene"]:not(.is-hidden)'), 'scene settings are a sub-tab of the same modal');
+assert.equal(document.querySelector('[data-conversation-panel="basic"]').className.includes('is-hidden'), true, 'only one settings sub-tab is visible at a time');
 assert.deepEqual(Array.from(document.querySelectorAll('[data-scene-tab]')).map(button => button.textContent), ['手工设定', '自动生成']);
 assert.equal(document.querySelector('.scene-settings-content > .helper'), null, 'legacy scene explanation is removed');
 click('[data-scene-tab="auto"]');
@@ -186,7 +216,7 @@ assert.match(document.querySelector('#messageListInner').textContent, /<script>u
 console.log('passed: draft persistence, message sending, safe model text');
 
 await app.features.conversations.manage(id);
-click('[data-menu="edit"]');
+click('[data-menu="settings"]');
 await until(() => document.querySelector('#selectionSummary'), 'edit conversation');
 field('title', '重新命名的对话'); submit();
 await until(() => document.querySelector('#pageTitle').textContent === '重新命名的对话', 'renamed');
@@ -194,6 +224,33 @@ await app.navigate('conversations');
 type('#listSearch', '不存在的关键词'); assert.match(document.querySelector('#conversationList').textContent, /没有找到/);
 type('#listSearch', '重新命名'); assert.equal(document.querySelectorAll('[data-open]').length, 2); assert.ok(Array.from(document.querySelectorAll('[data-open]')).every(button => button.dataset.open === id));
 console.log('passed: editing conversation and list filtering');
+
+// 基础设定里的角色头像直接打开标准角色编辑弹窗；回来时这一轮所有子 tab 的未保存输入都要还在。
+await app.features.conversations.manage(id);
+click('[data-menu="settings"]'); await until(() => document.querySelector('[data-edit-participant]'), 'merged settings participants');
+field('title', '未保存的标题草稿');
+click('[data-edit-participant]'); await until(() => document.querySelector('#modalForm [name="behaviorGuidance"]'), 'participant avatar opens the standard role editor');
+assert.equal(field('behaviorGuidance').getAttribute('rows'), '4');
+assert.equal(field('systemPrompt').getAttribute('rows'), '4');
+assert.equal(document.querySelector('#modalForm [name="name"]').value, '测试搭档');
+app.components.closeModal();
+await until(() => document.querySelector('#modalForm [name="title"]'), 'merged settings reopened after the role editor');
+assert.equal(field('title').value, '未保存的标题草稿', 'unsubmitted settings survive the role-editor round trip');
+assert.ok(document.querySelector('[data-edit-participant]'), 'the participants list is rebuilt in the reopened settings');
+app.components.closeModal(); await tick();
+assert.equal(document.querySelector('#modalForm'), null, 'cancelling the merged settings leaves nothing behind');
+console.log('passed: participant avatar opens the standard role editor and returns to the merged settings');
+
+// 行为指导不能只存在界面上：它必须随角色一起进入发给模型的上下文。
+const guidanceRole = { id: 'guidance-role', name: '陈佳宁', systemPrompt: '我是陈佳宁，动画专业大一学生。', behaviorGuidance: '我必须自己把对话推下去，注意节奏。\n我每次只用第一人称说很少几句。', llmProfileId: '', model: '' };
+const guidancePeer = { id: 'guidance-peer', name: '泡绒', systemPrompt: '我是泡绒，云端邮差。', behaviorGuidance: '我先把对方没说出口的部分接住。', llmProfileId: '', model: '' };
+// 先取共享拼装函数的结果：applyToRole 会就地改写角色对象，顺序反了会拿到被覆盖后的身份性格。
+assert.equal(app.services.context.roleReference(guidanceRole), '角色「陈佳宁」：\n我是陈佳宁，动画专业大一学生。\n行为指导：\n我必须自己把对话推下去，注意节奏。\n我每次只用第一人称说很少几句。', 'the shared role reference must join identity and guidance');
+assert.doesNotMatch(app.services.context.roleReference({ id: 'x', name: '无指导', systemPrompt: '只有身份。' }), /行为指导/, 'a role without guidance must not gain an empty guidance heading');
+const roleContext = app.services.context.applyToRole(guidanceRole, [guidanceRole, guidancePeer], { name: '测试用户', introduction: '喜欢直接、清晰的回答。' }).systemPrompt;
+assert.match(roleContext, /<active_role>[\s\S]*我是陈佳宁，动画专业大一学生。[\s\S]*<\/active_role>[\s\S]*<behavior_guidance>[\s\S]*我必须自己把对话推下去，注意节奏。\n我每次只用第一人称说很少几句。[\s\S]*<\/behavior_guidance>/, 'the active role behavior guidance must follow its identity block');
+assert.match(roleContext, /<other_roles_reference>[\s\S]*泡绒[\s\S]*我先把对方没说出口的部分接住。/, 'other participants must carry their own behavior guidance');
+console.log('passed: behavior guidance travels with the role into the model context');
 
 await app.openChat(id);
 const unchangedMessage = document.querySelector('.message-row');
@@ -221,7 +278,28 @@ console.log('passed: enabled retry after error, stable message nodes, UI stop wi
 
 await app.navigate('settings');
 const general = document.querySelector('#generalForm'); assert.ok(general);
-assert.equal(general.querySelector('[name="recentFullMessages"]'), null, 'recent N is configured per conversation only');
+assert.equal(general.querySelector('[name="recentFullMessages"]'), null, 'the retained-N count is derived from characters, so no message-count control exists anywhere');
+// 压缩区间只有三个字数滑竿：触发 / 保留 / 目标，条数不再出现。
+const compressionPanel = general.querySelector('[data-settings-panel="compression"]');
+const retainSlider = compressionPanel.querySelector('[name="compressionRetainChars"]');
+assert.ok(retainSlider, 'the retention length slider must exist');
+assert.deepEqual([retainSlider.getAttribute('min'), retainSlider.getAttribute('max'), retainSlider.getAttribute('step'), retainSlider.getAttribute('value')], ['2000', '10000', '1000', '4000']);
+const triggerSlider = compressionPanel.querySelector('[name="compressionThresholdChars"]');
+assert.deepEqual([triggerSlider.getAttribute('min'), triggerSlider.getAttribute('max'), triggerSlider.getAttribute('value')], ['4000', '32000', '10000']);
+assert.doesNotMatch(document.body.textContent, /固定携带最近消息|最近完整消息数量/, 'no message-count copy may survive');
+// 「按 Enter 发送」已取消：Enter 始终换行，Ctrl / ⌘ + Enter 始终发送。
+assert.equal(general.querySelector('[name="enterToSend"]'), null, 'the Enter-to-send toggle must be gone');
+// 分类名从「关于」改为「系统」，顶部第一个元素是「备份软件和数据」。
+click('.settings-tabs [data-settings-tab="system"]');
+const systemPanel = document.querySelector('[data-settings-panel="system"]');
+assert.ok(systemPanel, 'the system panel exists');
+assert.equal(systemPanel.firstElementChild.dataset.backupApp, '', 'the backup button is the first thing in the system panel');
+assert.equal(document.querySelector('.settings-tabs [data-settings-tab="about"]'), null, 'the About tab is now the system tab');
+assert.match(systemPanel.textContent, /备份软件和数据[\s\S]*zhyuzh3d/, 'the app facts stay under the backup button');
+// 测试宿主里没有 HermitApp 桥：点它必须如实报错，而不是静默什么都不做。
+click('[data-backup-app]'); await tick(); await tick(); await tick();
+assert.match(document.querySelector('#toastRoot .toast').textContent, /不在 HermitApp 中/);
+click('.settings-tabs [data-settings-tab="interface"]');
 click('[data-picker="theme"]'); await until(() => document.querySelector('.subsheet [data-choice="dark"]'), 'custom theme sheet');
 click('.subsheet [data-choice="dark"]'); await tick(); assert.equal(general.querySelector('[name="theme"]').value, 'dark');
 general.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
@@ -252,8 +330,30 @@ submit(); await until(() => !document.querySelector('#modalForm'), 'repaired xAI
 assert.equal((await app.data.store.get('llm-profiles', 'xai-empty')).externalModelId, 'grok-fixture');
 assert.equal(xaiDiscoveryRequest.url, 'https://api.x.ai/v1/language-models');
 assert.equal(JSON.parse(xaiTestRequest.bodyText).model, 'grok-fixture');
-assert.match(document.querySelector('[data-test-service="xai-empty"]').textContent, /^连接测试$/);
+assert.match(document.querySelector('[data-test-service="xai-empty"]').textContent, /^测试$/);
+const xaiCard = document.querySelector('[data-test-service="xai-empty"]').closest('.model-service-card');
+const xaiEndpoint = xaiCard.querySelector('.service-endpoint');
+assert.ok(xaiEndpoint, 'the address row is rendered for a configured service');
+assert.equal(xaiEndpoint.querySelector('[data-test-service]'), document.querySelector('[data-test-service="xai-empty"]'), 'the test button sits at the end of the address row');
+assert.deepEqual(Array.from(xaiCard.querySelectorAll('.service-manage > .button')).map(button => [button.textContent, Boolean(button.querySelector('i'))]), [['复制', true], ['编辑', true], ['删除', true]], 'copy, edit and delete share one row and each carries an icon plus a label');
+assert.equal(xaiCard.querySelector('.service-manage .icon-button'), null, 'no icon-only action button is left in the management row');
+const modelsToolbar = document.querySelector('.section-toolbar');
+assert.equal(modelsToolbar.firstElementChild.tagName, 'BUTTON', 'the add button leads the toolbar');
+assert.equal(modelsToolbar.lastElementChild.tagName, 'P', 'the explanatory note sits below the add button');
+assert.match(modelsToolbar.lastElementChild.textContent, /每张卡片对应一个模型/);
 console.log('passed: empty xAI service discovers, enables and tests a language model');
+// 连接测试是可选的：目录获取成功之后可以直接保存，未测试的卡片保存为 unverified。
+await app.data.store.put('llm-profiles', 'xai-untested', { id: 'xai-untested', name: 'xAI / Untested', family: 'xai', apiStyle: 'openai-chat', endpoint: 'https://api.x.ai/v1/chat/completions', apiKey: 'fixture', models: [], enabled: true });
+await app.features.models.renderServices('llm');
+click('[data-edit-service="xai-untested"]'); await until(() => document.querySelector('#modalSubmit'), 'untested model editor');
+assert.equal(document.querySelector('#modalSubmit').dataset.mode, 'fetch');
+click('[data-fetch-models]'); await until(() => /grok-fixture/.test(document.querySelector('[data-picker="externalModelId"] [data-picker-label]').textContent), 'untested catalog loaded');
+assert.equal(document.querySelector('#modalSubmit').textContent, '保存设置');
+submit(); await until(() => !document.querySelector('#modalForm'), 'a fetched catalog saves without a connection test');
+assert.equal(document.querySelector('.error-box'), null);
+assert.equal((await app.data.store.get('llm-profiles', 'xai-untested')).validationState, 'unverified', 'saving without testing records an unverified model');
+assert.equal((await app.data.store.get('llm-profiles', 'xai-untested')).externalModelId, 'grok-fixture');
+console.log('passed: a fetched catalog saves without a connection test');
 let savedElevenLabs;
 app.platform.network.requestJson = async options => options.url.includes('/v1/models')
   ? { data: [{ model_id: 'eleven_multilingual_v2', name: 'Eleven Multilingual v2', can_do_text_to_speech: true }] }
@@ -344,10 +444,14 @@ const savedUserProfile = await app.data.store.get('meta', 'user-profile'); saved
 firstRole.avatarMediaId = 'role-avatar-fixture'; await app.data.store.put('roles', firstRole.id, firstRole);
 const secondRole = { ...firstRole, id: 'second-role', name: '第二个超长角色', avatarMediaId: '' };
 await app.data.store.put('roles', secondRole.id, secondRole);
-const group = await app.data.store.get('conversations', id); group.kind = 'group'; group.roleIds = [firstRole.id, secondRole.id]; group.activeRoleIds = group.roleIds.slice(); group.recentFullMessages = 6; await app.data.store.put('conversations', id, group);
+const group = await app.data.store.get('conversations', id); group.kind = 'group'; group.roleIds = [firstRole.id, secondRole.id]; group.activeRoleIds = group.roleIds.slice(); await app.data.store.put('conversations', id, group);
 await app.navigate('conversations'); assert.match(document.querySelector('.meta').textContent, /群聊\s\|\s测试搭档 · 第二个超长角色/);
+const conversationCard = document.querySelector('.conversation-card');
+assert.ok(conversationCard.querySelector('.conversation-head > .avatar-stack + .list-copy'), 'the head row keeps the avatar and the text column together');
+assert.equal(conversationCard.querySelector('.meta').parentElement.className, 'card-button conversation-open', 'the role-name row spans the whole card body instead of the indented text column');
+assert.equal(conversationCard.querySelector('.list-copy .meta'), null, 'the role-name row must not stay inside the text column');
 assert.equal(document.querySelectorAll('.conversation-action-rail').length, 1); assert.ok(document.querySelector('.conversation-action-open .fa-comment')); assert.ok(document.querySelector('[data-manage] .fa-gear'));
-click('[data-manage]'); await until(() => document.querySelector('[data-menu="edit"]'), 'conversation management sheet'); app.components.closeModal();
+click('[data-manage]'); await until(() => document.querySelector('[data-menu="settings"]'), 'conversation management sheet'); app.components.closeModal();
 click('.conversation-action-open'); await until(() => document.querySelector('#pageTitle').textContent === '重新命名的对话', 'conversation rail open');
 assert.ok(document.querySelector('.composer-recipients')); assert.equal(document.querySelector('.chat-role-strip'), null);
 assert.equal(document.querySelectorAll('.composer-recipients .mention-avatar').length, 2); assert.equal(document.querySelector('[data-all-roles]'), null);
@@ -380,7 +484,8 @@ click('[data-role-toggle="' + firstRole.id + '"]'); type('#messageInput', '验�
 await until(() => hotRole && !app.features.chatSession.active(id), 'next reply uses role saved from the message avatar sheet');
 assert.equal(hotRole.name, '即时更新搭档'); assert.equal(hotRole.systemPrompt, '这是在对话中保存的新角色设定。');
 click('.message-row.user [data-edit-conversation-profile="user"]'); await until(() => document.querySelector('#modalForm [name="userName"]'), 'user message avatar opens conversation personal settings');
-assert.equal(document.querySelector('#modalTitle').textContent, '本对话个人设定');
+assert.equal(document.querySelector('#modalTitle').textContent, '常规设定');
+assert.equal(document.querySelector('[data-conversation-tab="personal"]').getAttribute('aria-selected'), 'true', 'the user avatar opens the profile sub-tab of the merged settings');
 assert.equal(document.querySelector('#conversationAvatarPreview .avatar').dataset.avatarMedia || '', (await app.data.store.get('meta', 'user-profile')).avatarMediaId || '', 'conversation avatar defaults to the global personal avatar');
 assert.equal(field('userName').value, '测试用户', 'conversation identity starts from the global name');
 assert.equal(field('userIntroduction').value, '喜欢直接、清晰的回答。', 'conversation identity starts from the global introduction');
@@ -419,6 +524,42 @@ app.events.emit('tts:state', { speaking: true, muted: true }); assert.ok(documen
 app.events.emit('tts:state', { speaking: false, muted: true }); assert.equal(document.querySelector('#muteTtsButton').classList.contains('voice-active'), false);
 await app.navigate('conversations'); await app.openChat(id); assert.equal(document.querySelector('[data-role-toggle="' + secondRole.id + '"]').getAttribute('aria-pressed'), 'true', 'last automatically selected role is remembered');
 assert.equal(document.querySelector('select, datalist'), null, 'rendered flows do not use native list menus');
+// ── 自动压缩之后的冻结历史：原消息不能再改，只能改「压缩概要」 ──────────────
+const frozenTimeline = await app.data.store.messages(id);
+const boundaryMessage = frozenTimeline[frozenTimeline.length - 21];
+await app.data.store.put('summaries', id, { id, conversationId: id, text: '第一版概要', throughMessageId: boundaryMessage.id, throughMessageCreatedAt: boundaryMessage.createdAt, sourceMessageCount: frozenTimeline.length - 20, retainedMessageCount: 6, compressedByRoleId: secondRole.id, compressedByRoleName: secondRole.name, updatedAt: Date.now() });
+await app.features.chat.renderMessages(); await tick();
+const boundaryRow = document.querySelector('[data-message-id="' + boundaryMessage.id + '"]');
+assert.ok(boundaryRow.classList.contains('is-frozen'), 'messages inside the summary boundary render as frozen history');
+assert.equal(boundaryRow.querySelector('.frozen-badge').textContent, '已压缩');
+assert.equal(boundaryRow.querySelector('.frozen-badge').getAttribute('title'), '这条消息已经压缩进概要，不再按原文参与上下文，也不能单独修改');
+const frozenPencil = boundaryRow.querySelector('[aria-label="编辑这条消息"]');
+assert.ok(frozenPencil.classList.contains('is-disabled'), 'the frozen pencil looks disabled');
+assert.equal(frozenPencil.getAttribute('aria-disabled'), 'true');
+document.querySelectorAll('.message-row.is-frozen [data-regenerate-message]').forEach(button => { assert.ok(button.classList.contains('is-disabled')); assert.equal(button.getAttribute('aria-disabled'), 'true'); });
+frozenPencil.click(); await tick(); await tick();
+assert.equal(document.querySelector('#toastRoot .toast').textContent, '历史已被压缩，请修改压缩概要');
+assert.equal(document.querySelector('#modalForm'), null, 'a frozen pencil never opens the message editor');
+const uncompressedRow = document.querySelector('.message-row:not(.is-frozen)');
+assert.equal(uncompressedRow.querySelector('[aria-label="编辑这条消息"]').getAttribute('aria-disabled'), null, 'messages after the summary boundary stay editable');
+assert.ok(uncompressedRow.querySelector('[data-regenerate-message]') || uncompressedRow.classList.contains('user'), 'assistant replies after the boundary keep their regenerate action');
+// ── 对话菜单里的「压缩概要」必须可编辑、可保存 ────────────────────────────
+click('#chatMenuButton'); await until(() => document.querySelector('[data-chat-menu="summary"]'), 'chat menu exposes the compression summary');
+assert.equal(document.querySelector('[data-chat-menu="summary"]').textContent, '压缩概要 · 已生成');
+click('[data-chat-menu="summary"]'); await until(() => document.querySelector('#modalForm [name="summary0"]'), 'compression summary sheet');
+assert.equal(document.querySelector('#modalTitle').textContent, '编辑压缩概要');
+// 概要正文通常很长：弹窗固定占 80% 高，说明文字之外的高度全给输入框（高度判据在 verify.mjs）。
+assert.ok(document.querySelector('.modal-sheet.summary-sheet'), 'the summary editor uses the fixed-height sheet');
+assert.ok(document.querySelector('#modalForm .summary-edit > .field > .prompt-editor'), 'the summary textarea owns the flexible row of that sheet');
+assert.equal(field('summary0').value, '第一版概要');
+field('summary0', '   '); submit(); await tick(); await tick();
+assert.equal(document.querySelector('.form-error').textContent, '压缩概要不能为空');
+assert.ok(document.querySelector('#modalForm'), 'an empty summary is rejected without closing the sheet');
+field('summary0', '手工修订后的概要'); submit(); await until(() => !document.querySelector('#modalForm'), 'compression summary saves and closes');
+const editedSummary = await app.data.store.get('summaries', id);
+assert.equal(editedSummary.text, '手工修订后的概要'); assert.equal(editedSummary.throughMessageId, boundaryMessage.id); assert.ok(editedSummary.editedAt > 0);
+assert.equal(document.querySelector('#toastRoot .toast').textContent, '压缩概要已更新');
+assert.equal(app.services.context.requestMessages({ summary: editedSummary, recent: [] })[0].text, '手工修订后的概要', 'the edited summary replaces the frozen history in the next request');
 console.log('passed: five tabs, user profile, compact mention, mute state and message regeneration controls');
 console.log('DOM flow checks passed (no layout, browser, device or provider acceptance claimed)');
 process.exit(0);

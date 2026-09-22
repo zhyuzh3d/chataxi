@@ -25,6 +25,8 @@
 .picker-button i { flex-shrink: 0; margin-left: var(--space-button-group); color: var(--text-soft); font-size: 12px; }
 .field textarea { min-height: 100px; resize: vertical; }
 .field .prompt-editor { min-height: 154px; }
+/* 角色编辑器的身份性格与行为指导都是 4 行输入框：高度交给 rows 决定，不再套用 154px。 */
+.field .prompt-editor.role-field { min-height: 0; }
 .field textarea[name="introduction"], .field textarea[name="userIntroduction"] { min-height: 103px; }
 .field .export-text { min-height: 44vh; }
 .field small, .switch-row small { color: var(--text-soft); font-size: 13px; font-weight: 400; }

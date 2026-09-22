@@ -162,7 +162,7 @@
       '<div class="modal-handle" aria-hidden="true"></div><header class="modal-head"><h2 id="modalTitle">' + utils.escapeHtml(options.title) + '</h2><button class="icon-button" type="button" data-close-modal aria-label="关闭">' + icon("xmark") + '</button></header>' +
       '<form id="modalForm"><div class="modal-body">' + options.html + '</div><div class="modal-actions">' +
       (options.cancelText === null ? '' : '<button class="button secondary" type="button" data-close-modal>' + utils.escapeHtml(options.cancelText || "取消") + '</button>') +
-      '<button class="button ' + (options.danger ? 'danger' : 'primary') + '" id="modalSubmit" type="submit">' + utils.escapeHtml(options.submitText || "保存") + '</button></div></form></section></div>';
+      '<button class="button ' + (options.danger ? 'danger' : 'primary') + '" id="modalSubmit" type="submit" data-idle-label="' + utils.escapeHtml(options.submitText || "保存") + '">' + utils.escapeHtml(options.submitText || "保存") + '</button></div></form></section></div>';
     document.body.classList.add("modal-open");
     document.getElementById("appShell").setAttribute("aria-hidden", "true");
     var form = document.getElementById("modalForm");
@@ -187,7 +187,9 @@
       var buttons = root.querySelectorAll(".modal-actions button, [data-close-modal]");
       buttons.forEach(function (button) { button.disabled = true; });
       var submit = form.querySelector('[type="submit"]');
-      var label = submit.textContent; submit.textContent = "正在保存…";
+      // 还原时用未翻译的中文原文（data-idle-label），不能读按钮当前文字：
+      // 英文界面下读到的是译文，写回去会被界面语言层当成原文，此后按钮会一直显示「Saving…」。
+      var label = submit.dataset.idleLabel || submit.textContent; submit.textContent = "正在保存…";
       try {
         var value = await options.onSubmit(form);
         if (value !== false && modal === current) {

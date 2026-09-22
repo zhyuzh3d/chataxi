@@ -124,14 +124,11 @@
     };
     profile = Object.assign({}, profile, { allowImageGeneration: false, maxOutputTokens: 96, temperature: 0 });
     var settings = await app.data.store.get("meta", "settings");
-    var context = await app.services.context.prepare(conversation, moderator, messages, settings, task || {}, candidateRoles, userProfile);
-    if (task && task.phase === "compressing") {
-      task.phase = "routing";
-      task.label = task.generateLabel || "正在请主持人 " + moderator.name + " 选择回复角色";
-      app.events.emit("chat:changed", { conversationId: conversation.id, phase: "routing" });
-    }
+    var context = await app.services.context.prepare(conversation, moderator, messages, settings, candidateRoles, userProfile);
+    // 压缩是后台任务：如果它恰好在本轮启动，本轮状态仍然属于路由，不要被改写。
+    // 候选角色一并带上行为指导：主持人据此判断谁更适合接这一轮。
     var roleReference = candidateRoles.map(function (role) {
-      return "角色「" + role.name + "」：\n" + (String(role.systemPrompt || "").trim() || "未设置角色介绍");
+      return app.services.context.roleReference(role);
     }).join("\n\n");
     var user = userProfile || {}, userName = String(user.name || "用户").trim() || "用户";
     var prompt = "你是群聊主持人「" + moderator.name + "」，本次只负责选择下一位最适合回答的参与角色，不要回答用户的问题。\n" +
@@ -163,7 +160,7 @@
     if (!profile.model) throw new Error("主持人没有选择具体模型");
     profile = Object.assign({}, profile, { allowImageGeneration: false, maxOutputTokens: 500, temperature: 0.75 });
     var roleReference = roles.map(function (role) {
-      return "角色「" + (String(role.name || "未命名角色").trim() || "未命名角色") + "」：\n" + (String(role.systemPrompt || "").trim() || "未设置角色介绍");
+      return app.services.context.roleReference(role);
     }).join("\n\n");
     var user = userProfile || {}, userName = String(user.name || "用户").trim() || "用户";
     var selectedMode = (modes || []).map(function (mode) { return String(mode || "").trim(); }).filter(Boolean)[0] || "";
@@ -248,11 +245,10 @@
     var profile = app.services.modelServices.resolveLlm(service, role);
     if (!profile.model) throw new Error("角色没有选择具体模型");
     var settings = await app.data.store.get("meta", "settings");
-    var compressionRole = participantRoles && participantRoles.length ? participantRoles[0] : role;
+    // 压缩由 context 内部挑选主持人角色并异步执行，这里只需要把全部参与角色交出去。
     var context = conversation
-      ? await app.services.context.prepare(conversation, compressionRole, messages, settings, task || {}, participantRoles, userProfile)
+      ? await app.services.context.prepare(conversation, role, messages, settings, participantRoles, userProfile)
       : { summary: null, recent: truncate(messages, 10) };
-    if (task && task.phase === "compressing") { task.phase = "generating"; task.label = task.generateLabel || "正在等待 " + role.name; app.events.emit("chat:changed", { conversationId: conversation.id, phase: "generating" }); }
     var selected = app.services.context.requestMessages(context);
     var hydrated = routeTurn(await hydrateMessages(selected, settings, role, service, profile, task), role);
     if (task && task.cancelled) { var stopped = new Error("本轮已停止"); stopped.cancelled = true; throw stopped; }

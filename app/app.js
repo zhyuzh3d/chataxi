@@ -148,7 +148,9 @@
     window.addEventListener('hashchange', routeFromHash);
     try {
       await app.data.store.init();
-      applyTheme((await app.data.store.get('meta', 'settings')).theme);
+      var settings = await app.data.store.get('meta', 'settings');
+      applyTheme(settings.theme);
+      app.i18n.setPreference(settings.uiLanguage, { silent: true });
       await routeFromHash();
       if (app.platform.hermit.available()) { try { await app.platform.hermit.api().app.ready(); } catch (_) {} }
     } catch (error) {

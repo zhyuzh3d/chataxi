@@ -59,13 +59,27 @@ const chatSessionSource = fs.readFileSync(path.join(root, "app/features/chat-ses
 assert.doesNotMatch(chatSessionSource, /autoSpeak[\s\S]{0,2000}tts\.prepare/, "automatic readout must play completed third-party audio instead of only preparing it");
 const contextSource = fs.readFileSync(path.join(root, "app/services/context.js"), "utf8");
 assert.match(contextSource, /本轮唯一允许发言的角色[\s\S]*不得扮演、代替、续写或模拟其他参与角色/, "group turns need an explicit single-speaker identity contract");
-assert.match(contextSource, /<active_role>[\s\S]*<other_roles_reference>/, "the active role instructions must be isolated from other role references");
+assert.match(contextSource, /<other_roles_reference>/, "the active role instructions must be isolated from other role references");
+assert.match(contextSource, /<active_role>[\s\S]*<behavior_guidance>/, "behavior guidance must reach the model right after the active role identity");
+assert.match(contextSource, /function roleReference\(role, prefix\)[\s\S]*行为指导：[\s\S]*roleReference: roleReference/, "every participant reference must carry its behavior guidance");
 assert.match(contextSource, /参与者资料仅用于辨认说话者[\s\S]*不要摘录、概括/, "compression participant profiles must remain reference-only");
 assert.match(contextSource, /throughMessageCreatedAt[\s\S]*retainedMessageCount[\s\S]*recent:\s*uncompressed/, "compression must persist its exact boundary and retain every uncompressed message");
+assert.match(contextSource, /function compressionRole\(conversation, participantRoles, fallback\)[\s\S]*moderatorRoleId[\s\S]*roles\[0\] \|\| fallback/, "compression must run on the moderator's model with a deterministic fallback");
+assert.match(contextSource, /function scheduleCompression[\s\S]*phase: "compressing"[\s\S]*phase: "compressed"/, "compression must run asynchronously and announce both phases");
+assert.doesNotMatch(contextSource, /task\.phase\s*=/, "background compression must not rewrite the current turn's task phase");
+assert.match(contextSource, /Number\(profile\.maxOutputTokens\) > 0\) profile\.maxOutputTokens/, "compression must not turn an unset output cap into zero");
+assert.match(contextSource, /压缩没有返回可用内容/, "an empty compression result must never advance the summary boundary");
+assert.match(contextSource, /function retainedCount\(messages, settings\)[\s\S]*total > retain[\s\S]*Math\.max\(2, count\)/, "the retention window must be derived from characters with a two-message floor");
+assert.doesNotMatch(contextSource, /recentFullMessages/, "the retention window must no longer come from a per-conversation message count");
+assert.match(contextSource, /function compressionRetain\(settings\)[\s\S]*compressionRetainChars/, "the retention length must live in the compression settings");
+assert.match(contextSource, /var retained = retainedCount\(history, settings\)[\s\S]*history\.length - retained/, "compression must cut its prefix with the derived retention window");
+assert.match(contextSource, /async function permissions\(messages, conversationId\)[\s\S]*lockedMap\[message\.id\] = true/, "frozen history must follow the summary boundary alone, not the retention setting");
+assert.match(contextSource, /async function updateSummaryText\(conversationId, text\)[\s\S]*压缩概要不能为空/, "the compression summary must stay hand-editable with an explicit empty guard");
 const llmSource = fs.readFileSync(path.join(root, "app/services/llm.js"), "utf8");
 assert.match(llmSource, /other-role-history[\s\S]*speakerMismatch/, "other role history and mismatched speaker labels need deterministic guards");
-assert.match(llmSource, /compressionRole\s*=\s*participantRoles[\s\S]*participantRoles\[0\]/, "group compression must use the first participant role");
+assert.doesNotMatch(llmSource, /compressionRole/, "compression must never be driven by the answering role");
 assert.match(llmSource, /selectRole[\s\S]*\{\\"role\\":\\"完整角色名称\\"\}[\s\S]*parseRoleChoice/, "automatic role selection must request and validate one standard role name");
+assert.match(llmSource, /app\.services\.context\.roleReference\(role\)/, "routing and scene prompts must reuse the shared role reference so behavior guidance reaches them");
 assert.match(chatSessionSource, /conversation\.autoSelectRole[\s\S]*moderatorRoleId[\s\S]*llm\.selectRole/, "group auto-selection must run through the persisted moderator");
 assert.match(chatSessionSource, /Math\.random\(\)[\s\S]*fallback:\s*routingFallback/, "failed automatic routing must continue with one random participant and expose its fallback state");
 assert.match(chatSessionSource, /kind:\s*["']routing["'][\s\S]*outputText[\s\S]*routingError/, "automatic routing must persist its model output and failure reason as a typed diagnostic record");
@@ -103,12 +117,13 @@ assert.match(styles, /\.modal-sheet\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%
 assert.match(styles, /\.modal-actions\s*\{[^}]*display:\s*grid[^}]*gap:\s*18px/s, "sheet action buttons must use a grid gap");
 assert.match(styles, /\.topbar-actions\s*\{[^}]*gap:\s*var\(--space-button-group\)/s, "top bar buttons need a normal gap");
 assert.match(styles, /\.title-version\s*\{[^}]*margin-left:\s*var\(--space-icon-text\)/s, "the app name and version need an explicit legacy-WebView gap");
-assert.match(styles, /\.profile-actions\s*\{[^}]*gap:\s*var\(--space-button-group\)/s, "service card buttons need a normal gap");
+assert.match(styles, /\.service-manage\s*\{[^}]*display:\s*grid[^}]*gap:\s*10px/s, "service card buttons need a legacy-WebView grid gap");
 assert.match(styles, /\.row,\s*\.row-between\s*\{[^}]*gap:\s*var\(--space-button-group\)/s, "generic horizontal button rows need a normal gap");
 assert.match(styles, /\.avatar-actions\s*\{[^}]*gap:\s*var\(--space-button-group\)/s, "avatar action buttons need a normal gap");
 assert.match(styles, /\.message-meta\s*\{[^}]*gap:\s*4px/s, "message action buttons need a compact normal gap");
 assert.match(styles, /\.role-actions\s*\{[^}]*display:\s*grid[^}]*gap:/s, "role card buttons must use a grid gap");
-assert.match(styles, /\.conversation-open\s*>\s*\.avatar-stack\s*\{[^}]*margin-right:\s*16px/s, "conversation cards need an explicit avatar-to-text gap on legacy WebView");
+assert.match(styles, /\.conversation-head\s*>\s*\.avatar-stack\s*\{[^}]*margin-right:\s*16px/s, "conversation cards need an explicit avatar-to-text gap on legacy WebView");
+assert.match(styles, /\.conversation-open\s*\{[^}]*display:\s*block/s, "the conversation card body must stay a block so the role-name row spans the full card width on the legacy WebView");
 assert.match(styles, /\.role-card-head\s*>\s*\.avatar\s*\{[^}]*margin-right:/s, "role cards need an explicit avatar-to-text gap on legacy WebView");
 assert.match(styles, /\.service-summary\s*>\s*\.service-icon\s*\{[^}]*margin-right:\s*12px/s, "service cards need an explicit icon-to-text gap on legacy WebView");
 assert.match(styles, /\.role-choice\s*>\s*\.role-choice-avatar\s*\{[^}]*margin-right:/s, "role selector cards need an explicit avatar-to-text gap on legacy WebView");
@@ -147,16 +162,31 @@ assert.match(conversationsSource, /共 ["']?\s*\+\s*conversations\.length\s*\+\s
 assert.match(conversationsSource, /role-choice-avatar[\s\S]*roles\.openEditor/, "conversation participants need a direct role settings entry");
 assert.match(conversationsSource, /selectionOrder[\s\S]*moderatorRoleId:\s*selected\[0\]/, "the first selected participant must remain the moderator and first stored role");
 assert.match(conversationsSource, /data-moderator-badge[\s\S]*主持/, "conversation settings must visibly mark the moderator");
-assert.match(conversationsSource, /data-menu="identity"[\s\S]*data-menu="scene"[\s\S]*场景设定/, "conversation management must place opening-scene settings below personal settings");
+assert.match(conversationsSource, /data-menu="settings"[\s\S]*常规设定/, "conversation management must open the merged conversation settings");
+assert.match(conversationsSource, /CONVERSATION_SETTING_TABS[\s\S]*基础设定[\s\S]*个人设定[\s\S]*场景设定/, "basic, profile and scene settings must live in one modal as three sub-tabs");
+assert.match(conversationsSource, /conversation-settings-sheet/, "the merged settings modal must reuse the fixed-height sheet");
+assert.match(conversationsSource, /submitText: editing \? "保存更改" : "开始对话"/, "the new-conversation dialog must share the merged settings content");
+assert.match(conversationsSource, /data-edit-participant[\s\S]*roles\.openEditor/, "participant avatars must open the standard role editor");
 assert.match(chatSource, /id="autoRoleToggle"[\s\S]*wand-magic-sparkles/, "group chat needs the right-side magic-wand auto-selection switch");
-assert.match(chatSource, /data-chat-menu="identity"[\s\S]*data-chat-menu="scene"[\s\S]*场景设定/, "open-chat management must place opening-scene settings below personal settings");
+assert.match(chatSource, /data-chat-menu="settings"[\s\S]*常规设定/, "open-chat management must reach the same merged conversation settings");
 assert.doesNotMatch(chatSource, /自动选角开发记录|data-chat-menu=["']routing-records/, "routing diagnostics must stay out of the user interface");
 assert.doesNotMatch(styles, /\.routing-record(?:-output)?\s*\{/, "removed routing diagnostics UI must not leave unused styles");
+assert.match(chatSource, /aria-disabled', 'true'\); edit\.title = '历史已被压缩，请修改压缩概要'/, "compressed history must keep its pencil visible but disabled and explain why");
+assert.match(chatSource, /toLocaleDateString\(app\.i18n\.locale\(\)/, "message date dividers must follow the interface language instead of a hardcoded Chinese locale");
+assert.match(chatSource, /is-frozen[\s\S]*frozen-badge/, "compressed history must be marked as frozen in the message meta");
+assert.match(chatSource, /updateSummaryText\(target\.conversation\.id,/, "the chat menu must save the compression summary through the context service");
+assert.match(chatSource, /!currentBusy\(target\)\) status\(target, '正在压缩历史上下文…'\)/, "background compression must not overwrite the status of an in-flight turn");
+assert.match(styles, /\.message-row\.is-frozen[\s\S]*opacity:\s*\.6/, "compressed history must render in a faded frozen style");
+assert.match(styles, /\.frozen-badge\s*\{[^}]*display:\s*inline-flex/s, "the frozen badge must stay inline next to the timestamp");
 const rolesSource = fs.readFileSync(path.join(root, "app/features/roles.js"), "utf8");
 for (const label of ["角色档案", "语言模型", "朗读发音"]) assert.match(rolesSource, new RegExp(label));
 assert.match(html, /app\/data\/role-templates\.js/, "the role template catalog must load before the role feature");
 assert.match(rolesSource, /!editing \? '<button[^']*data-open-role-templates/, "only the new-role editor may expose the template gallery");
-assert.match(rolesSource, /template\.name[\s\S]*template\.systemPrompt[\s\S]*syncAvatar\(\)/, "template selection must fill only the role profile fields and avatar");
+assert.match(rolesSource, /template\.name[\s\S]*template\.systemPrompt[\s\S]*template\.behaviorGuidance[\s\S]*syncAvatar\(\)/, "template selection must fill the identity, the behavior guidance and the avatar");
+assert.match(rolesSource, /name="systemPrompt" rows="4"/, "the identity and personality field must be a four-row input");
+assert.match(rolesSource, /name="behaviorGuidance" rows="4"/, "the behavior guidance field must be a four-row input");
+assert.match(rolesSource, /DEFAULT_BEHAVIOR_GUIDANCE_EN[\s\S]*defaultBehaviorGuidance\(\)/, "new roles must start from the bilingual default behavior guidance");
+assert.match(rolesSource, /systemPrompt: u\.formValue\(target, "systemPrompt"\)[\s\S]*behaviorGuidance: u\.formValue\(target, "behaviorGuidance"\)/, "the role editor must persist the behavior guidance");
 assert.doesNotMatch(rolesSource.match(/openTemplateGallery\(async function \(template\)[\s\S]*?\}\); \}\)\);/)[0], /llmProfileId|ttsProfileId|openingScene/, "template selection must not replace model, voice or scene settings");
 assert.match(styles, /\.role-template-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s, "the mobile gallery must use a compact two-column card grid");
 assert.match(styles, /\.role-template-profession\s*\{[^}]*-webkit-line-clamp:\s*2/s, "long professions must stay visually balanced");
@@ -164,7 +194,7 @@ assert.match(rolesSource, /data-role-avatar-name>[\s\S]*未命名[\s\S]*点击�
 assert.match(rolesSource, /function syncAvatar\(\)[\s\S]*data-role-avatar-name[\s\S]*name \|\| "未命名"/, "the avatar heading must follow role-name edits");
 assert.match(rolesSource, /role-template-help">点击角色卡片直接应用/, "the gallery must use the concise direct-apply hint");
 assert.match(rolesSource, /data-template-tab="all"[\s\S]*全部[\s\S]*data-template-tab="male"[\s\S]*男性[\s\S]*data-template-tab="female"[\s\S]*女性[\s\S]*data-template-tab="other"[\s\S]*其他/, "the gallery needs all, male, female and other category tabs");
-assert.match(rolesSource, /button\.dataset\.templateTab !== "all"/, "the default all tab must keep every template visible");
+assert.match(rolesSource, /activeTab !== "all"/, "the default all tab must keep every template visible");
 assert.match(rolesSource, /data-template-category[\s\S]*classList\.toggle\("is-hidden"/, "template tabs must filter the visible cards without rebuilding the editor");
 assert.match(styles, /\.role-template-trigger\s*\{[^}]*min-height:\s*68px[^}]*flex-direction:\s*column/s, "the gallery trigger must stack the mosaic and small label at the right of the avatar row");
 assert.match(styles, /\.role-template-card\s*\{[^}]*min-height:\s*210px[^}]*padding:\s*14px 10px 8px/s, "template cards need a smaller bottom inset below age and gender");
@@ -178,8 +208,20 @@ assert.equal(templateCatalog.items.length, 27);
 assert.deepEqual(Object.fromEntries(["male", "female", "other"].map(category => [category, templateCatalog.items.filter(item => item.category === category).length])), { male: 9, female: 9, other: 9 });
 assert.equal(new Set(templateCatalog.items.map(item => item.id)).size, 27);
 assert.equal(new Set(templateCatalog.items.map(item => item.name)).size, 27);
+assert.equal(new Set(templateCatalog.items.map(item => item.nameEn)).size, 27, "English template names must be unique");
+assert.ok(templateCatalog.items.every(item => item.categoryLabelEn), "every template needs a bilingual category label");
 for (const template of templateCatalog.items) {
   assert.ok(template.name && template.profession && template.categoryLabel && template.systemPrompt, `${template.id} has incomplete display or role data`);
+  assert.ok(template.nameEn && template.professionEn && template.systemPromptEn, `${template.id} has incomplete English display or role data`);
+  assert.ok(template.systemPrompt.includes(template.name), `${template.id} prompt must identify the character by name`);
+  assert.ok(template.systemPromptEn.includes(template.nameEn), `${template.id} English prompt must identify the character by name`);
+  assert.ok(template.behaviorGuidance && template.behaviorGuidanceEn, `${template.id} has incomplete behavior guidance`);
+  assert.equal(template.behaviorGuidance.split("\n").length, 3, `${template.id} behavior guidance must keep three separate rules`);
+  assert.equal(template.behaviorGuidanceEn.split("\n").length, 3, `${template.id} English behavior guidance must keep three separate rules`);
+  assert.doesNotMatch(template.behaviorGuidanceEn, /[\u4e00-\u9fff]/, `${template.id} English behavior guidance must not contain Chinese`);
+  assert.doesNotMatch(template.behaviorGuidance, /身份性格/, `${template.id} behavior guidance must not describe who the character is`);
+  assert.doesNotMatch(template.nameEn, /[\u4e00-\u9fff]/, `${template.id} English name must not contain Chinese`);
+  assert.doesNotMatch(template.professionEn, /[\u4e00-\u9fff]/, `${template.id} English profession must not contain Chinese`);
   if (template.category === "other") assert.equal(template.age, null, `${template.id} must not invent a non-human age`);
   else assert.ok(Number(template.age) >= 18, `${template.id} must retain its adult age`);
   assert.equal("openingScene" in template, false, `${template.id} must not carry scene design into this feature`);
@@ -193,19 +235,58 @@ assert.equal(mosaicBytes.subarray(8, 12).toString("ascii"), "WEBP", "template en
 assert.match(rolesSource, /repairElevenLabsVoiceNames[\s\S]*discover\("tts", refreshed, \{ persist: false \}\)[\s\S]*store\.put\("tts-profiles"/, "legacy ElevenLabs ID-only voice catalogs must recover account names before the role picker is built");
 assert.match(rolesSource, /已上线/); assert.match(fs.readFileSync(path.join(root, "app/services/profiles.js"), "utf8"), /已下线/);
 const settingsSource = fs.readFileSync(path.join(root, "app/features/settings.js"), "utf8");
-for (const label of ["界面", "对话", "压缩", "关于"]) assert.match(settingsSource, new RegExp(label));
+for (const label of ["界面", "对话", "压缩", "系统"]) assert.match(settingsSource, new RegExp(label));
 assert.match(settingsSource, /作者[\s\S]*zhyuzh3d/);
 assert.match(settingsSource, /tapCount\s*\+=\s*1[\s\S]*tapCount\s*<\s*3[\s\S]*setRuntimeMode\("live"\)/, "local to live needs three deliberate taps");
 assert.match(settingsSource, /改为本地运行[\s\S]*setRuntimeMode\("local"\)/);
 for (const name of ["conversations", "roles", "models", "profile"]) assert.match(settingsSource, new RegExp('toggle\\("' + name + '"'));
+// 压缩滑竿的三个界限是产品约定：触发 4000~32000、保留 2000~10000、目标 500~2000。
+assert.match(settingsSource, /range\("compressionThresholdChars", "触发字数"[\s\S]{0,80}4000, 32000,/, "trigger length must span 4000~32000");
+assert.match(settingsSource, /range\("compressionRetainChars", "压缩保留字数"[\s\S]{0,80}2000, 10000,/, "retention length must span 2000~10000");
+assert.match(settingsSource, /range\("compressionTargetChars", "压缩目标"[\s\S]{0,80}500, 2000,/, "compression target must span 500~2000");
+assert.match(settingsSource, /\["compressionThresholdChars", "compressionRetainChars", "compressionTargetChars"\]\.forEach/, "every compression number must round-trip through the settings form");
+assert.doesNotMatch(conversationsSource, /name="recentFullMessages"|data-output="recentFullMessages"/, "the per-conversation retained-N control must be gone");
+assert.match(conversationsSource, /delete next\.recentFullMessages;/, "saving a chat must drop the legacy retained-N field");
+assert.match(storeSource, /compressionBound\(settings\.compressionRetainChars, 2000, 10000, 4000\)/, "the retention length must be clamped to 2000~10000 on load");
+assert.match(storeSource, /compressionBound\(settings\.compressionThresholdChars, 4000, 32000, 10000\)/, "the trigger length must be clamped to 4000~32000 on load");
+assert.match(storeSource, /delete conversations\[conversationIndex\]\.recentFullMessages;/, "migration must drop the legacy retained-N field from stored chats");
 assert.match(settingsSource, /deleteConversation[\s\S]*releaseMedia[\s\S]*system-tts[\s\S]*user-profile/, "selective clearing must release media and preserve system services");
 assert.match(html, /brand-mark[^>]*>[\s\S]*app\/assets\/icon\.webp/, "the top bar must use the packaged chataxi icon");
 assert.doesNotMatch(rolesSource + conversationsSource + chatSource + fs.readFileSync(path.join(root, "app/features/models.js"), "utf8"), /icon\(["'](?:pen|user-pen|wrench)["']\)/, "edit and configuration buttons must use the gear icon");
 assert.match(styles, /\.role-actions\s*\{[^}]*border-top:\s*0/s);
-assert.match(styles, /\.profile-actions\s*\{[^}]*border-top:\s*0/s);
+assert.match(styles, /\.service-manage\s*\{[^}]*border-top:\s*0/s);
 assert.match(styles, /\.model-toggle\s*\{[^}]*border-bottom:\s*0/s);
-assert.match(styles, /\.about-hero\s*>\s*\.about-mark\s*\{[^}]*margin-right:\s*16px/s, "the About logo needs an explicit legacy-WebView text gap");
-assert.match(styles, /\.about-hero h2\s*>\s*\.badge\s*\{[^}]*margin-left:/s, "the version badge needs an explicit legacy-WebView text gap");
+assert.match(styles, /\.system-mark\s*\{[^}]*margin-right:\s*16px/s, "the system logo needs an explicit legacy-WebView text gap");
+assert.match(styles, /\.system-hero h2\s*>\s*\.badge\s*\{[^}]*margin-left:/s, "the version badge needs an explicit legacy-WebView text gap");
+assert.doesNotMatch(styles, /\.about-(?:panel|hero|mark|copy)/, "the About panel rename must not leave its old class names behind");
+
+// 「按 Enter 发送」已取消：Enter 始终换行，Ctrl / ⌘ + Enter 始终发送。
+assert.doesNotMatch(settingsSource, /enterToSend/, "the settings form must no longer offer Enter-to-send");
+assert.match(chatSource, /event\.key === 'Enter'[\s\S]*\(event\.ctrlKey \|\| event\.metaKey\)\)/, "only Ctrl / ⌘ + Enter may send from the composer");
+assert.doesNotMatch(chatSource, /enterToSend/, "the composer must not read the retired setting");
+assert.match(chatSource, /'Enter 换行'/, "the composer hint must state that Enter inserts a newline");
+assert.doesNotMatch(storeSource, /enterToSend: false,/, "the retired default must not stay in the settings seed");
+assert.match(storeSource, /delete settings\.enterToSend;/, "loading old settings must drop the retired field");
+
+// 系统页顶部是「备份软件和数据」：先由系统文件选择器定位置，再由宿主整包导出。
+// 标记里必须直接带 data-backup-app：只查字符串存在会被下面的点击处理器蒙过去。
+assert.match(settingsSource, /data-settings-panel="system">'\s*\+\s*'<button class="button primary full system-backup" type="button" data-backup-app>'\s*\+\s*ui\.icon\("box-archive"\)\s*\+\s*'备份软件和数据<\/button>'/, "the system panel must open with the hooked software-and-data backup button");
+assert.match(settingsSource, /main\.querySelector\("\[data-backup-app\]"\)\.addEventListener\("click"/, "the backup button must be wired to the host call");
+assert.match(settingsSource, /hermit\.call\("app\.backup"\)/, "the button must go through the host's self-backup method");
+assert.match(settingsSource, /result\.cancelled[\s\S]*已取消备份/, "a dismissed picker must be reported instead of silently ignored");
+assert.match(settingsSource, /备份完成" \+ " · " \+[\s\S]*sizeText/, "the receipt must report the produced file and its size");
+assert.match(styles, /\.system-backup i\s*\{[^}]*margin-right:/s, "the backup icon needs an explicit legacy-WebView text gap");
+
+// 压缩概要弹窗固定 80% 高，说明文字之外的高度全给输入框。
+assert.match(chatSource, /form\.closest\('\.modal-sheet'\)\.classList\.add\('summary-sheet'\)/, "the summary editor must use the fixed-height sheet");
+// 断言到具体声明：`height` 前一个字符是空格，跨行正则会误命中 min-height / max-height。
+const summarySheetRule = styles.match(/\.summary-sheet\s*\{([^}]*)\}/s);
+const editableSheetDeclarations = (rule) => rule[1].split(";").map((item) => item.replace(/\s+/g, ""));
+assert.ok(summarySheetRule, "the summary sheet needs its own rule");
+assert.ok(editableSheetDeclarations(summarySheetRule).includes("height:80%"), "the summary editor must be fixed at 80% height");
+const summaryEditorRule = styles.match(/\.summary-sheet \.summary-edit \.prompt-editor\s*\{([^}]*)\}/s);
+assert.ok(summaryEditorRule, "the summary textarea needs its own rule");
+assert.ok(editableSheetDeclarations(summaryEditorRule).includes("height:100%"), "the summary textarea must take the remaining height");
 
 const references = [...html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
 for (const reference of references) {

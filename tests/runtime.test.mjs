@@ -15,9 +15,11 @@ function runtime(files = []) {
     setItem(k, v) { if (fault) fault(k, v); values.set(k, v); }
   };
   const window = { crypto: globalThis.crypto, setTimeout, addEventListener() {} };
-  const context = vm.createContext({ window, localStorage, URL, Blob, TextEncoder, TextDecoder, Uint8Array, Uint32Array, Float32Array, DataView, btoa, atob, console, setTimeout, clearTimeout, AbortController });
+  // 界面语言模块按生产顺序装载：document 只用于判断何时应用，这里没有 DOM，所以应用阶段会直接返回。
+  const document = { readyState: 'complete', documentElement: null, addEventListener() {}, createTreeWalker: () => ({ nextNode: () => false }) };
+  const context = vm.createContext({ window, document, navigator: { language: 'zh-CN', languages: ['zh-CN'] }, localStorage, URL, Blob, TextEncoder, TextDecoder, Uint8Array, Uint32Array, Float32Array, DataView, btoa, atob, console, setTimeout, clearTimeout, AbortController });
   const load = (file) => vm.runInContext(fs.readFileSync(root + file, 'utf8'), context, { filename: file });
-  ['app/core/namespace.js', 'app/core/utils.js', 'app/core/events.js'].forEach(load);
+  ['app/core/namespace.js', 'app/core/utils.js', 'app/core/events.js', 'app/core/i18n.js', 'app/data/i18n-en.js'].forEach(load);
   const app = window.chataxi;
   app.platform = { hermit: { awaitReady: async () => false, available: () => false, api: () => null } };
   ['app/data/store.js', 'app/services/catalog.js', 'app/services/model-registry.js', 'app/services/model-services.js', 'app/services/providers.js', 'app/services/middleware.js', 'app/services/context.js', 'app/services/llm.js', 'app/services/profiles.js', 'app/features/chat-session.js'].forEach(load);
@@ -310,7 +312,28 @@ test('conversation personal settings override global name and introduction indep
   assert.doesNotMatch(applied.systemPrompt, /通用用户背景/);
 });
 
-test('group context shares one summary and keeps the timeline latest N across user and every role', async () => {
+test('the retention window is derived from the retention chars, not a fixed message count', async () => {
+  const { app } = await fixture();
+  const line = (id, length) => ({ id, kind: 'user', text: 'x'.repeat(length), status: 'done', createdAt: Number(id) });
+  const messages = [line('1', 10), line('2', 10), line('3', 10), line('4', 10), line('5', 10)];
+  // 保留 25 字：从最近一条往前累加到 30 字时用掉 3 条，所以 k=3。
+  assert.equal(app.services.context.retainedCount(messages, { compressionRetainChars: 25 }), 3);
+  // 保留字数调大只会多留，不会少留。
+  assert.equal(app.services.context.retainedCount(messages, { compressionRetainChars: 45 }), 5);
+  // 保留字数调到很小也至少留 2 条：刚发生的一问一答不会被立刻折进概要。
+  assert.equal(app.services.context.retainedCount(messages, { compressionRetainChars: 1 }), 2);
+  // 不足 2 条时不会凭空多留。
+  assert.equal(app.services.context.retainedCount([line('1', 500)], { compressionRetainChars: 10 }), 1);
+  assert.equal(app.services.context.retainedCount([], { compressionRetainChars: 10 }), 0);
+  // 缺省保留字数按 4000 算。
+  const wide = [line('1', 100), line('2', 100), line('3', 100), line('4', 3900)];
+  assert.equal(app.services.context.retainedCount(wide, {}), 3);
+  assert.equal(app.services.context.retainedCount(wide, {}), app.services.context.retainedCount(wide, { compressionRetainChars: 4000 }));
+  // 同样 4000 字预算，消息越长保留的条数越少。
+  assert.equal(app.services.context.retainedCount([line('1', 4000), line('2', 4000), line('3', 4000)], { compressionRetainChars: 4000 }), 2);
+});
+
+test('group context shares one summary and keeps a char-derived retention window across user and every role', async () => {
   const { app } = await fixture();
   const messages = [
     { id: 'u1', kind: 'user', text: '用户一', status: 'done', createdAt: 1 },
@@ -321,14 +344,25 @@ test('group context shares one summary and keeps the timeline latest N across us
     { id: 'a2', kind: 'assistant', roleId: 'a', roleName: 'A', text: '角色 A 二', status: 'done', createdAt: 6 },
     { id: 'u3', kind: 'user', text: '用户三', status: 'done', createdAt: 7 }
   ];
-  const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 1;
+  // 保留条数不再逐对话配置，而是由「压缩保留字数」按字数推导：
+  // 从最近一条往前累加到 20 字时刚好是 5 条（3+6+6+3+6），所以 k=5。
+  const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 1; settings.compressionTargetChars = 2; settings.compressionRetainChars = 20;
   app.platform.network = { requestJson: async () => ({ data: { output_text: '摘要' } }) };
-  const current = { id: 'a', name: 'A', systemPrompt: 'A 的设定', llmProfileId: 'p' }, other = { id: 'b', name: 'B', systemPrompt: 'B 的设定' };
-  const prepared = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, current, messages, settings, {});
-  assert.deepEqual(plain(prepared.recent.map(message => message.id)), ['b1', 'u2', 'b2', 'a2', 'u3']);
-  assert.deepEqual(plain(prepared.recent.map(message => message.kind === 'user' ? 'user' : message.roleId)), ['b', 'user', 'b', 'a', 'user']);
-  const shared = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, other, messages, settings, {});
-  assert.equal(shared.summary.id, 'c'); assert.equal(shared.summary.text, '摘要'); assert.equal(shared.summary.compressedByRoleId, 'a');
+  const current = { id: 'a', name: 'A', systemPrompt: 'A 的设定', llmProfileId: 'p' }, other = { id: 'b', name: 'B', systemPrompt: 'B 的设定', llmProfileId: 'p' };
+  const conversation = { id: 'c', moderatorRoleId: 'b' };
+  // 压缩是后台任务：本轮先用现有历史回答，概要随后才写回存储。
+  const prepared = await app.services.context.prepare(conversation, current, messages, settings, [current, other], {});
+  assert.equal(prepared.summary, null); assert.equal(prepared.compressionPending, true);
+  assert.deepEqual(plain(prepared.recent.map(message => message.id)), ['u1', 'a1', 'b1', 'u2', 'b2', 'a2', 'u3']);
+  const job = app.services.context.compressionJob('c');
+  assert.ok(job, 'compression must still be pending when prepare returns');
+  const written = await job;
+  assert.equal(written.throughMessageId, 'a1'); assert.equal(written.sourceMessageCount, 2); assert.equal(written.retainedMessageCount, 5);
+  assert.equal(written.compressedByRoleId, 'b'); assert.equal(written.compressedByRoleName, 'B');
+  const shared = await app.services.context.prepare(conversation, other, messages, settings, [current, other], {});
+  assert.equal(shared.summary.id, 'c'); assert.equal(shared.summary.text, '摘要'); assert.equal(shared.summary.compressedByRoleId, 'b');
+  assert.deepEqual(plain(shared.recent.map(message => message.id)), ['b1', 'u2', 'b2', 'a2', 'u3']);
+  assert.deepEqual(plain(shared.recent.map(message => message.kind === 'user' ? 'user' : message.roleId)), ['b', 'user', 'b', 'a', 'user']);
   const requestMessages = app.services.context.requestMessages(shared);
   assert.equal(requestMessages[0].kind, 'system'); assert.equal(requestMessages[0].systemType, 'summary'); assert.equal(requestMessages[0].text, '摘要');
   const merged = app.services.context.applyToRole(current, [current, other]);
@@ -347,61 +381,110 @@ test('all uncompressed timeline messages stay in context before the first compre
     { id: 'u3', kind: 'user', text: '用户三', status: 'done', createdAt: 7 }
   ];
   const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 100000;
-  const prepared = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, { id: 'a', name: 'A' }, messages, settings, {});
+  const prepared = await app.services.context.prepare({ id: 'c' }, { id: 'a', name: 'A' }, messages, settings, {});
   assert.equal(prepared.summary, null);
   assert.deepEqual(plain(prepared.recent.map(message => message.id)), ['u1', 'a1', 'b1', 'u2', 'a2', 'b2', 'u3']);
 });
 
-test('successive compression merges the previous summary and only advances through messages before retained N', async () => {
+test('successive compression merges the previous summary and only advances through messages before the retention window', async () => {
   const { app } = await fixture(), requests = [];
   const make = index => ({ id: 'm' + String(index).padStart(2, '0'), conversationId: 'c', kind: index % 2 ? 'assistant' : 'user', roleId: index % 2 ? 'a' : '', roleName: index % 2 ? 'A' : '', status: 'done', text: '消息' + index + 'xxxxxx', createdAt: index + 1 });
   const messages = Array.from({ length: 10 }, (_, index) => make(index));
-  const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 60; settings.compressionTargetChars = 400;
-  app.platform.network = { requestJson: async options => { requests.push(JSON.parse(options.bodyText)); return { data: { output_text: requests.length === 1 ? '概要一' : '概要二' } }; } };
+  const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 60; settings.compressionTargetChars = 20; settings.compressionRetainChars = 40;
+  // 主持人 B 绑在另一个模型服务上：压缩必须用主持人的模型，而不是第一位参与角色的。
+  await app.data.store.put('llm-profiles', 'p-moderator', { id: 'p-moderator', name: '主持人服务', model: 'moderator-fixture', endpoint: 'https://example.com/v1/responses', systemRoleMode: 'native', enabled: true });
+  app.platform.network = { requestJson: async options => { requests.push(JSON.parse(options.bodyText)); return { data: { output_text: requests.length === 1 ? '概要一' : '概'.repeat(60) } }; } };
   const roles = [
     { id: 'a', name: 'A', systemPrompt: 'A 的角色介绍', llmProfileId: 'p' },
-    { id: 'b', name: 'B', systemPrompt: 'B 的角色介绍', llmProfileId: 'p' }
+    { id: 'b', name: 'B', systemPrompt: 'B 的角色介绍', llmProfileId: 'p-moderator' }
   ];
-  const first = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, roles[0], messages, settings, {}, roles, { name: '用户甲', introduction: '用户介绍' });
-  assert.equal(first.summary.throughMessageId, 'm04'); assert.equal(first.summary.sourceMessageCount, 5);
-  assert.deepEqual(plain(first.recent.map(message => message.id)), ['m05', 'm06', 'm07', 'm08', 'm09']);
-  assert.match(requests[0].instructions, /参与者资料仅用于辨认说话者/); assert.match(requests[0].instructions, /用户「用户甲」介绍：用户介绍/);
-  assert.match(requests[0].instructions, /角色「A」介绍：A 的角色介绍/); assert.match(requests[0].instructions, /角色「B」介绍：B 的角色介绍/);
+  const conversation = { id: 'c', moderatorRoleId: 'b' };
+  const first = await app.services.context.prepare(conversation, roles[0], messages, settings, roles, { name: '用户甲', introduction: '用户介绍' });
+  const firstSummary = await app.services.context.compressionJob('c');
+  assert.equal(first.summary, null); assert.equal(firstSummary.throughMessageId, 'm04'); assert.equal(firstSummary.sourceMessageCount, 5);
+  assert.equal(firstSummary.compressedByRoleId, 'b'); assert.equal(firstSummary.compressionTargetChars, 20);
+  assert.equal(requests[0].model, 'moderator-fixture');
+  assert.match(requests[0].instructions, /不超过约 20 个中文字符/); assert.match(requests[0].instructions, /参与者资料仅用于辨认说话者/);
+  assert.match(requests[0].instructions, /用户「用户甲」介绍：用户介绍/); assert.match(requests[0].instructions, /角色「A」介绍：A 的角色介绍/);
+  assert.match(requests[0].instructions, /角色「B」介绍：B 的角色介绍/);
   assert.doesNotMatch(JSON.stringify(requests[0].input), /A 的角色介绍|B 的角色介绍|用户介绍/);
   const expanded = messages.concat(Array.from({ length: 4 }, (_, index) => make(index + 10)));
-  const second = await app.services.context.prepare({ id: 'c', recentFullMessages: 5 }, roles[0], expanded, settings, {}, roles, { name: '用户甲', introduction: '用户介绍' });
-  assert.equal(second.summary.text, '概要二'); assert.equal(second.summary.throughMessageId, 'm08'); assert.equal(second.summary.throughMessageCreatedAt, 9);
-  assert.equal(second.summary.sourceMessageCount, 9); assert.equal(second.summary.retainedMessageCount, 5);
-  assert.deepEqual(plain(second.recent.map(message => message.id)), ['m09', 'm10', 'm11', 'm12', 'm13']);
+  const second = await app.services.context.prepare(conversation, roles[0], expanded, settings, roles, { name: '用户甲', introduction: '用户介绍' });
+  // 本轮仍然用上一版概要：新概要要等后台任务写成。
+  assert.equal(second.summary.throughMessageId, 'm04');
+  const secondSummary = await app.services.context.compressionJob('c');
+  assert.equal(secondSummary.throughMessageId, 'm08'); assert.equal(secondSummary.throughMessageCreatedAt, 9);
+  assert.equal(secondSummary.sourceMessageCount, 9); assert.equal(secondSummary.retainedMessageCount, 5);
+  // 概要正文按压缩目标截断：模型多写也不会让概要超出目标字数。
+  assert.equal(secondSummary.text.length, 20); assert.match(secondSummary.text, /^概+$/);
   assert.match(JSON.stringify(requests[1].input), /已有压缩上下文.*概要一/); assert.match(JSON.stringify(requests[1].input), /消息5/); assert.doesNotMatch(JSON.stringify(requests[1].input), /消息4/);
-  assert.deepEqual(Object.keys(await app.services.context.editable(expanded, 'c', 5)), ['m09', 'm10', 'm11', 'm12', 'm13']);
+  settings.compressionThresholdChars = 100000;
+  const third = await app.services.context.prepare(conversation, roles[0], expanded, settings, roles, { name: '用户甲', introduction: '用户介绍' });
+  assert.equal(third.summary.throughMessageId, 'm08');
+  assert.deepEqual(plain(third.recent.map(message => message.id)), ['m09', 'm10', 'm11', 'm12', 'm13']);
+  assert.deepEqual(Object.keys(await app.services.context.editable(expanded, 'c')), ['m09', 'm10', 'm11', 'm12', 'm13']);
 });
 
-test('group compression always uses the first participant model even when another role answers', async () => {
-  const { app } = await fixture();
-  const conversation = await app.data.store.get('conversations', 'c'), roles = await app.data.store.list('roles');
-  const active = roles.find(role => role.id === 'b'), original = app.services.context.prepare; let compressor;
-  app.services.context.prepare = async function (currentConversation, role, messages, settings, task, participants, userProfile) {
-    compressor = role.id; return { summary: null, recent: messages, compressed: false, retainedCount: 5, uncompressedCount: messages.length };
+test('an empty compression result never advances the summary boundary', async () => {
+  const { app } = await fixture(), phases = [];
+  const messages = Array.from({ length: 8 }, (_, index) => ({ id: 'm' + index, conversationId: 'c', kind: index % 2 ? 'assistant' : 'user', roleId: 'a', roleName: 'A', status: 'done', text: '消息' + index + 'xxxxxxxx', createdAt: index + 1 }));
+  const settings = await app.data.store.get('meta', 'settings'); settings.autoCompress = true; settings.compressionThresholdChars = 1; settings.compressionTargetChars = 10; settings.compressionRetainChars = 20;
+  app.events.on('chat:changed', event => { if (event.conversationId === 'c') phases.push(event.phase); });
+  app.platform.network = { requestJson: async () => ({ data: { output_text: '   ' } }) };
+  const prepared = await app.services.context.prepare({ id: 'c' }, { id: 'a', name: 'A', llmProfileId: 'p' }, messages, settings, [], {});
+  assert.equal(prepared.summary, null);
+  assert.equal(await app.services.context.compressionJob('c'), null);
+  assert.deepEqual(phases, ['compressing', 'compress-failed']);
+  assert.equal(await app.services.context.get('c'), null);
+  // 失败只是背景任务的一次报错：历史一条都不能丢，边界也不能被推进。
+  assert.deepEqual(Object.keys(await app.services.context.editable(messages, 'c')), messages.map(message => message.id));
+});
+
+test('automatic compression runs in the background so a reply never waits for it', async () => {
+  const { app } = await fixture(), s = app.data.store;
+  const conversation = await s.get('conversations', 'c');
+  conversation.moderatorRoleId = 'b'; await s.put('conversations', 'c', conversation);
+  const settings = await s.get('meta', 'settings');
+  settings.autoCompress = true; settings.compressionThresholdChars = 1; settings.compressionTargetChars = 5; settings.compressionRetainChars = 20; await s.put('meta', 'settings', settings);
+  const roles = await s.list('roles'), phases = [];
+  app.events.on('chat:changed', event => { if (event.conversationId === 'c') phases.push(event.phase); });
+  // 压缩请求一直挂着不返回，用来证明本轮回复不会等它。
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  app.platform.network = {
+    requestJson: async () => pending,
+    requestSse: async options => { await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"B 回复"}' }); await options.onEvent({ data: '{"type":"response.completed","response":{}}' }); }
   };
-  app.platform.network = { requestSse: async options => { await options.onEvent({ data: '{"type":"response.output_text.delta","delta":"B 回复"}' }); await options.onEvent({ data: '{"type":"response.completed","response":{}}' }); } };
-  await app.services.llm.complete(active, [{ id: 'u', kind: 'user', text: '问题', media: [], status: 'done', createdAt: 1 }], { cancelled: false }, conversation, roles, { name: '用户', introduction: '' });
-  app.services.context.prepare = original;
-  assert.equal(compressor, 'a');
+  const messages = Array.from({ length: 12 }, (_, index) => ({ id: 'm' + index, conversationId: 'c', kind: index % 2 ? 'assistant' : 'user', roleId: 'a', roleName: 'A', status: 'done', text: '消息' + index + 'xxxxxxxx', createdAt: index + 1 }));
+  const reply = await app.services.llm.complete(roles.find(role => role.id === 'b'), messages, { cancelled: false }, conversation, roles, { name: '用户', introduction: '' });
+  assert.match(reply.text, /B 回复/);
+  assert.equal(reply.contextCompressed, false);
+  assert.equal(await s.get('summaries', 'c'), null);
+  assert.deepEqual(phases, ['compressing']);
+  release({ data: { output_text: '迟到概要' } });
+  const written = await app.services.context.compressionJob('c');
+  assert.equal(written.text, '迟到概要'); assert.equal(written.compressedByRoleId, 'b');
+  assert.equal((await s.get('summaries', 'c')).text, '迟到概要');
+  assert.deepEqual(phases, ['compressing', 'compressed']);
 });
 
-test('schema migration initializes the moderator and auto-selection state, infers conversation type, clamps N and removes legacy icon avatars', async () => {
+test('schema migration initializes the moderator and auto-selection state, infers conversation type, drops the legacy retained-N field and removes legacy icon avatars', async () => {
   const { app } = await fixture(), s = app.data.store;
   const conversation = await s.get('conversations', 'c'); conversation.kind = 'group'; conversation.roleIds = ['a']; conversation.activeRoleIds = ['b', 'a']; conversation.recentFullMessages = 2; await s.put('conversations', 'c', conversation);
   const role = await s.get('roles', 'a'); role.avatarIcon = 'robot'; role.avatarColor = '#123456'; await s.put('roles', 'a', role);
+  // 旧版把设置存成滑竿范围外的值，seed() 必须就地收进新界限。
+  const before = await s.get('meta', 'settings'); before.compressionThresholdChars = 99999; before.compressionRetainChars = 99999; await s.put('meta', 'settings', before);
   await s.init();
   const migratedConversation = await s.get('conversations', 'c'), migratedRole = await s.get('roles', 'a');
-  assert.equal(migratedConversation.kind, 'single'); assert.equal(migratedConversation.recentFullMessages, 5);
+  assert.equal(migratedConversation.kind, 'single');
+  assert.equal(Object.hasOwn(migratedConversation, 'recentFullMessages'), false);
   assert.deepEqual(plain(migratedConversation.activeRoleIds), ['a']);
   assert.equal(migratedConversation.moderatorRoleId, 'a'); assert.equal(migratedConversation.autoSelectRole, false);
   assert.equal(migratedConversation.userName, ''); assert.equal(migratedConversation.userIntroduction, ''); assert.equal(migratedConversation.userAvatarMediaId, '');
   assert.equal(Object.hasOwn(migratedRole, 'avatarIcon'), false); assert.equal(Object.hasOwn(migratedRole, 'avatarColor'), false);
-  assert.equal(Object.hasOwn(await s.get('meta', 'settings'), 'recentFullMessages'), false);
+  const migratedSettings = await s.get('meta', 'settings');
+  assert.equal(Object.hasOwn(migratedSettings, 'recentFullMessages'), false);
+  assert.equal(migratedSettings.compressionThresholdChars, 32000);
+  assert.equal(migratedSettings.compressionRetainChars, 10000);
 });
 
 test('schema migration keeps the moderator first in every conversation participant order', async () => {
@@ -483,13 +566,36 @@ test('an interrupted language model stream is an error even after partial text',
   );
 });
 
-test('message editing is unrestricted before compression and limited to recent N after the summary boundary', async () => {
+test('message editing is unrestricted before compression and frozen only inside the summary boundary', async () => {
   const { app } = await fixture(), s = app.data.store;
   const messages = Array.from({ length: 12 }, (_, index) => ({ id: 'm' + index, conversationId: 'c', kind: index % 2 ? 'assistant' : 'user', roleId: 'a', status: 'done', text: String(index), createdAt: index + 1 }));
   for (const message of messages) await s.putMessage(message);
-  assert.equal(Object.keys(await app.services.context.editable(messages, 'c', 5)).length, 12);
+  const before = await app.services.context.permissions(messages, 'c');
+  assert.equal(before.compressed, false); assert.equal(Object.keys(before.editable).length, 12); assert.deepEqual(Object.keys(before.locked), []);
   await s.put('summaries', 'c', { id: 'c', conversationId: 'c', text: '摘要', throughMessageId: 'm5', throughCreatedAt: 6, updatedAt: 20 });
-  assert.deepEqual(Object.keys(await app.services.context.editable(messages, 'c', 5)), ['m7', 'm8', 'm9', 'm10', 'm11']);
+  const after = await app.services.context.permissions(messages, 'c');
+  assert.equal(after.compressed, true);
+  assert.deepEqual(Object.keys(after.locked), ['m0', 'm1', 'm2', 'm3', 'm4', 'm5']);
+  assert.deepEqual(Object.keys(after.editable), ['m6', 'm7', 'm8', 'm9', 'm10', 'm11']);
+  // 冻结范围只由概要边界决定：改「固定携带最近 N 条」不会让已经压缩的消息换个样子，
+  // permissions 只吃消息和对话 id，连 N 都不需要。
+  assert.equal(app.services.context.permissions.length, 2);
+  assert.deepEqual(Object.keys(await app.services.context.editable(messages, 'c')), ['m6', 'm7', 'm8', 'm9', 'm10', 'm11']);
+});
+
+test('the compression summary stays hand-editable without moving its boundary', async () => {
+  const { app } = await fixture(), s = app.data.store;
+  await s.put('summaries', 'c', { id: 'c', conversationId: 'c', text: '旧概要', throughMessageId: 'm5', throughMessageCreatedAt: 6, sourceMessageCount: 5, retainedMessageCount: 5, updatedAt: 20 });
+  const updated = await app.services.context.updateSummaryText('c', '  新概要  ');
+  assert.equal(updated.text, '新概要'); assert.ok(updated.editedAt > 0); assert.equal(updated.throughMessageId, 'm5'); assert.equal(updated.sourceMessageCount, 5);
+  const reloaded = await app.services.context.get('c');
+  assert.equal(reloaded.text, '新概要');
+  // 改过的概要立刻参与下一次组装，替换掉边界之前的历史消息。
+  const requestMessages = app.services.context.requestMessages({ summary: reloaded, recent: [] });
+  assert.equal(requestMessages.length, 1); assert.equal(requestMessages[0].text, '新概要'); assert.equal(requestMessages[0].systemType, 'summary');
+  await assert.rejects(app.services.context.updateSummaryText('c', '   '), /压缩概要不能为空/);
+  assert.equal((await app.services.context.get('c')).text, '新概要');
+  await assert.rejects(app.services.context.updateSummaryText('missing', '任意内容'), /还没有生成压缩概要/);
 });
 
 test('conversation mute suppresses future automatic readout without affecting generation', async () => {

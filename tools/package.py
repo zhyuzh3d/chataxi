@@ -12,7 +12,7 @@ import zipfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME_ROOTS = ("index.html", "hermit.json", "app", "styles")
+RUNTIME_ROOTS = ("index.html", "hermit.json", "guid.md", "app", "styles")
 FIXED_TIMESTAMP = (2026, 9, 13, 0, 0, 0)
 
 

@@ -45,6 +45,8 @@
     var service = existing || { id: u.id(kind), family: initialFamily, name: "", enabled: true, models: [], voices: [] };
     var sourceMode = app.services.modelRegistry.sourceMode(service), modelId = service.externalModelId || service.model || service.defaultModelId || "";
     var catalogModels = (service.catalogModels || service.models || []).slice(), catalogVoices = (service.voices || []).slice();
+    // 只有成功获取过模型目录（含上次成功缓存的目录）才允许保存；在此之前提交按钮就是「获取模型列表」。
+    var catalogReady = catalogModels.length > 0;
     var selected = modelId, testedIdentity = service.validationState === "verified" ? identity(Object.assign({}, service, { externalModelId: modelId })) : "", testPassed = service.validationState === "verified";
     var familyHtml = kind === "llm" ? '<div data-model-family>' + ui.picker("modelFamilyId", "模型系列", "", "聚合与本地模型会自动推荐；如识别错误可以修改") + '</div>' : '';
     var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + secretField(service, initialDefinition) +
@@ -60,8 +62,10 @@
       '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + field("endpoint", "完整请求地址", service.endpoint || initialDefinition.endpoint || "", 'type="url"') + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
       '<label class="switch-row"><span><strong>启用模型</strong><small>停用后保留设置，但不会被角色或对话调用</small></span><input name="enabled" type="checkbox"' + (service.enabled !== false ? ' checked' : '') + '></label></div>';
     var form = ui.openModal({
-      title: (editing ? "编辑" : "添加") + labels[kind], submitText: "保存设置", html: html,
+      title: (editing ? "编辑" : "添加") + labels[kind], submitText: catalogReady ? "保存设置" : "获取模型列表", html: html,
       onSubmit: async function () {
+        // 目录还没获取成功时，这个按钮就是「获取模型列表」：按它等同于上方的同名按钮，且不关闭弹窗。
+        if (!catalogReady) { await fetchModels(); syncSubmitLater(); return false; }
         var draft = readDraft(), chosen = selectedDescriptor(catalogModels, draft.externalModelId);
         if (!chosen && draft.externalModelId) chosen = { id: draft.externalModelId, name: draft.externalModelId, capabilitySource: "unknown" };
         if (!chosen) throw new Error("请先获取目录并选择一个具体模型");
@@ -70,7 +74,7 @@
         next.voices = kind === "tts" ? catalogVoices : [];
         next.validationBaseline = service.validationBaseline || null;
         next.validationState = testPassed ? "verified" : form.dataset.modelValidation || next.validationState || "unverified";
-        if ((kind === "llm" || kind === "tts") && next.validationState !== "verified") throw new Error("连接信息或模型已改变，请先连接并测试");
+        // 连接测试是可选的验证手段：目录已获取成功即可保存，未测试的卡片保存为 unverified。
         delete next.directorySourceId;
         validateConnection(next); await app.services.profiles.validateEnabled(kind, next); await store.put(collection(kind), next.id, next); await store.saveModelDirectory(kind, next.id, catalogModels, catalogVoices);
         if (kind === "tts") await app.services.tts.invalidateAll();
@@ -79,6 +83,7 @@
       onSuccess: async function (next) { ui.toast("模型设置已保存"); if (onSaved) return onSaved(next); if (app.state.route === "models") await app.features.models.renderServices(kind); }
     });
     form.dataset.modelValidation = service.validationState || "unverified";
+    syncSubmit();
     ui.bindPicker(form, "family", providerItems(kind), initialFamily);
     var modelPicker = ui.bindPicker(form, "externalModelId", modelItems(kind, catalogModels, service), selected, { allowEmpty: true });
     var familyPicker = kind === "llm" ? ui.bindPicker(form, "modelFamilyId", app.services.modelRegistry.familyItems(kind), service.modelFamilyId || app.services.modelRegistry.suggestFamily(kind, selected, service), { allowEmpty: true }) : null;
@@ -87,8 +92,9 @@
     store.modelDirectory(service.directorySourceId || service.id).then(function (cached) {
       if (!form.isConnected || !cached.models.length || catalogModels.length > 1) return;
       catalogModels = cached.models; catalogVoices = cached.voices || catalogVoices;
+      catalogReady = true; syncSubmit();
       modelPicker.setItems(modelItems(kind, catalogModels, service), selected);
-      form.querySelector("#catalogStatus").textContent = "已载入上次成功获取的模型目录；可以选择后重新测试。";
+      form.querySelector("#catalogStatus").textContent = "已载入上次成功获取的模型目录；可以直接保存。";
     }).catch(function () {});
 
     function value(name) { var field = form.elements.namedItem(name); return field ? String(field.value || "").trim() : ""; }
@@ -115,6 +121,26 @@
       var family = definition(kind, draft), missing = app.services.modelServices.requiredCredentialMessage(family, draft), endpoint = app.services.modelServices.computedEndpoint(kind, draft);
       if (missing) throw new Error(missing); if (!endpoint) throw new Error("请填写服务地址或区域"); u.validateEndpoint(endpoint); u.parseHeaders(draft.customHeaders);
     }
+    // 提交按钮承担两种角色：目录未获取时是「获取模型列表」，获取成功后才是「保存设置」。
+    // openModal 在提交过程中会临时改写按钮文字并在收尾时还原，所以只在按钮可用时同步，
+    // 提交那一轮结束之后再补一次（syncSubmitLater）。
+    function syncSubmit() {
+      var submit = form.querySelector("#modalSubmit");
+      if (!submit || submit.disabled) return;
+      var label = catalogReady ? "保存设置" : "获取模型列表";
+      submit.textContent = label;
+      submit.dataset.idleLabel = label;
+      submit.dataset.mode = catalogReady ? "save" : "fetch";
+    }
+    function syncSubmitLater() {
+      var attempt = 0;
+      (function retry() {
+        var submit = form.querySelector("#modalSubmit");
+        if (!submit || form.isConnected === false) return;
+        if (submit.disabled) { if (attempt++ < 40) setTimeout(retry, 16); return; }
+        syncSubmit();
+      })();
+    }
     function show(selector, visible) { var node = form.querySelector(selector); if (node) node.classList.toggle("is-hidden", !visible); }
     function syncProvider(reset) {
       var familyId = value("family"), family = app.services.modelServices.family(kind, familyId), mode = app.services.modelRegistry.sourceMode({ family: familyId });
@@ -131,6 +157,7 @@
         apiStylePicker.setItems(app.services.catalog.apiStyles.map(function (item) { return { id: item.id, name: item.name }; }), family.apiStyle || "");
         catalogModels = []; catalogVoices = []; selected = ""; modelPicker.setItems([], ""); if (familyPicker) familyPicker.setItems(app.services.modelRegistry.familyItems(kind), app.services.modelRegistry.suggestFamily(kind, "", { family: familyId }));
         invalidateTest(); form.querySelector("#catalogStatus").textContent = ""; form.querySelector("#connectionStatus").textContent = "";
+        catalogReady = false; syncSubmit();
       }
     }
     function syncFamilySuggestion(force) {
@@ -146,11 +173,12 @@
         var result = await app.services.modelServices.discover(kind, draft, { persist: false });
         catalogModels = result.models || []; catalogVoices = result.voices || [];
         if (!catalogModels.length) throw new Error("服务已响应，但没有找到可用于当前分类的模型");
+        catalogReady = true; syncSubmit();
         var items = modelItems(kind, catalogModels, draft), preferred = selected && items.some(function (item) { return item.id === selected; }) ? selected : (items.find(function (item) { return item.group.indexOf("推荐") === 0; }) || items[0]).id;
         selected = preferred; modelPicker.setItems(items, preferred); syncFamilySuggestion(true);
         service.catalogState = result.catalogState; service.discoveryWarnings = result.warnings || [];
         await store.saveModelDirectory(kind, service.id, catalogModels, catalogVoices);
-        invalidateTest(); status.textContent = "已获取 " + catalogModels.length + " 个候选" + (catalogVoices.length ? "、" + catalogVoices.length + " 个音色" : "") + "。请选择一个模型并测试。" + (result.warnings && result.warnings.length ? " " + result.warnings.join("；") : "");
+        invalidateTest(); status.textContent = app.i18n.pick("已获取 " + catalogModels.length + " 个候选" + (catalogVoices.length ? "、" + catalogVoices.length + " 个音色" : "") + "。请选择一个模型。", "Fetched " + catalogModels.length + " candidates" + (catalogVoices.length ? " and " + catalogVoices.length + " voices" : "") + ". Pick one model.") + (result.warnings && result.warnings.length ? " " + result.warnings.join(app.i18n.pick("；", "; ")) : "");
       } finally { button.disabled = false; }
     }
     async function testModel() {

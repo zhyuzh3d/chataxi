@@ -65,7 +65,7 @@
     resizeInput(input);
     input.addEventListener('input', function () { target.draft.text = input.value; resizeInput(input); queueDraft(target); syncComposer(target); });
     input.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && (event.ctrlKey || event.metaKey || target.settings.enterToSend)) { event.preventDefault(); if (!currentBusy(target)) send(target); }
+      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (!currentBusy(target)) send(target); }
     });
     document.getElementById('sendButton').addEventListener('click', function () { if (currentBusy(target)) { session.stop(id); status(target, '已停止后续回复；已发出的服务请求可能仍计费'); } else send(target); });
     document.getElementById('imageButton').addEventListener('click', ui.action(function () { return chooseMedia(target); }));
@@ -118,7 +118,19 @@
         syncComposer(target); return;
       }
       else if (event.phase === 'idle') { target.routing = false; status(target, event.stopped ? '本轮已停止，可重试已停止的回复' : '本轮完成'); }
-      else if (event.phase === 'generating' || event.phase === 'compressing') { target.routing = false; rememberMessage(target, event.message); status(target, session.active(id) ? session.active(id).label : event.phase === 'compressing' ? '正在压缩历史上下文…' : '正在生成…'); }
+      else if (event.phase === 'compressing') {
+        // 后台压缩不改本轮状态：本轮正在回复时就当它不存在，只有空闲时才提示一句。
+        if (!currentBusy(target)) status(target, '正在压缩历史上下文…');
+        syncComposer(target); return;
+      }
+      else if (event.phase === 'compressed') {
+        // 概要写成后压缩边界变了：重建消息，让冻结样式和编辑按钮立刻跟上。
+        if (!currentBusy(target)) status(target, '历史上下文已压缩');
+        target.messageCache = {};
+        renderMessages(target, false).catch(showError); return;
+      }
+      else if (event.phase === 'compress-failed') { if (!currentBusy(target)) status(target, '历史上下文压缩失败：' + event.error); return; }
+      else if (event.phase === 'generating') { target.routing = false; rememberMessage(target, event.message); status(target, session.active(id) ? session.active(id).label : '正在生成…'); }
       else if (event.phase === 'updated') rememberMessage(target, event.message);
       syncComposer(target); renderMessages(target).catch(showError);
     });
@@ -152,7 +164,7 @@
     var mic = document.getElementById('micButton'), speechAvailable = Boolean(target.asrCapability && target.asrCapability.available);
     mic.classList.toggle('is-hidden', !speechAvailable); mic.disabled = !speechAvailable || busy || target.io || target.speechStarting;
     var selectedRole = target.roleMap[target.selected[0]];
-    document.getElementById('composerHint').textContent = busy ? '点击方块停止' : unavailable ? '角色配置需要修复' : target.conversation.kind === 'group' ? target.autoSelectRole ? (empty ? '空消息将发送“请你们自主回答。”' : '主持人将自动选择回复角色') : (empty ? '空消息将请 ' + (selectedRole ? selectedRole.name : '所选角色') + ' 继续' : '将由 ' + (selectedRole ? selectedRole.name : '所选角色') + ' 回复') : target.settings.enterToSend ? 'Enter 发送' : 'Enter 换行';
+    document.getElementById('composerHint').textContent = busy ? '点击方块停止' : unavailable ? '角色配置需要修复' : target.conversation.kind === 'group' ? target.autoSelectRole ? (empty ? '空消息将发送“请你们自主回答。”' : '主持人将自动选择回复角色') : (empty ? '空消息将请 ' + (selectedRole ? selectedRole.name : '所选角色') + ' 继续' : '将由 ' + (selectedRole ? selectedRole.name : '所选角色') + ' 回复') : 'Enter 换行';
     document.querySelectorAll('[data-role-toggle]').forEach(function (button) { button.disabled = busy || target.autoSelectRole; button.setAttribute('aria-pressed', String(target.selected.indexOf(button.dataset.roleToggle) >= 0)); });
     var autoToggle = document.getElementById('autoRoleToggle');
     if (autoToggle) { autoToggle.disabled = busy; autoToggle.setAttribute('aria-checked', String(target.autoSelectRole)); }
@@ -194,13 +206,20 @@
   async function renderMessages(target, forceBottom) {
     target = target || view; if (!target || !alive(target)) return;
     var paint = ++target.paint, messages = target.messageSnapshot || await store.messages(target.conversation.id); target.messageSnapshot = messages;
-    var editable = await app.services.context.editable(messages, target.conversation.id, target.conversation.recentFullMessages || 10);
+    var permissions = await app.services.context.permissions(messages, target.conversation.id);
+    // 每条消息的编辑状态：edit 可编辑 / frozen 已压缩冻结 / none 还没完成，谈不上编辑。
+    function messageState(message) {
+      if (message.status !== 'done') return 'none';
+      return permissions.editable[message.id] ? 'edit' : permissions.locked[message.id] ? 'frozen' : 'none';
+    }
     var visibleStart = Math.max(0, messages.length - target.messageRenderLimit), visibleMessages = messages.slice(visibleStart);
     var nodes = [], cache = {}, createdUrls = [], lastDate = '';
     if (!messages.length) {
       var empty = document.createElement('div'); empty.className = 'chat-welcome';
       var participants = target.conversation.roleIds.map(function (id) { return target.roleMap[id]; }).filter(Boolean);
-      empty.innerHTML = '<div class="chat-welcome-avatars">' + participants.slice(0, 3).map(function (role) { return ui.roleAvatar(role, 'large'); }).join('') + '</div><h2>聊点什么？</h2><p>' + u.escapeHtml(participants.length === 1 ? '从一个问题或想法开始。' : '点选本轮回答的角色，让不同视角一起参与。') + '</p><div class="starter-list"><button class="starter" type="button">介绍一下你自己</button><button class="starter" type="button">帮我梳理一个想法</button><button class="starter" type="button">我们一起制定一个计划</button></div>';
+      // 对话还没有消息时的欢迎面板：头像本身可以点开标准角色编辑弹窗（与消息头像、角色页同一个编辑器）。
+      empty.innerHTML = '<div class="chat-welcome-avatars">' + participants.slice(0, 3).map(function (role) { return '<button class="chat-welcome-avatar" type="button" data-edit-welcome-role="' + u.escapeHtml(role.id) + '" aria-label="编辑角色 ' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'large') + '</button>'; }).join('') + '</div><h2>聊点什么？</h2><p>' + u.escapeHtml(participants.length === 1 ? '从一个问题或想法开始。' : '点选本轮回答的角色，让不同视角一起参与。') + '</p><div class="starter-list"><button class="starter" type="button">我想跟你说个有趣的事情</button><button class="starter" type="button">帮我梳理一个想法</button><button class="starter" type="button">我们一起制定一个计划</button></div>';
+      empty.querySelectorAll('[data-edit-welcome-role]').forEach(function (button) { button.addEventListener('click', ui.action(function () { return editChatRole(button.dataset.editWelcomeRole, target); })); });
       empty.querySelectorAll('.starter').forEach(function (button) { button.addEventListener('click', function () { if (target.draft.text.trim()) { document.getElementById('messageInput').focus(); return; } target.draft.text = button.textContent; var input = document.getElementById('messageInput'); input.value = target.draft.text; input.dispatchEvent(new Event('input')); input.focus(); }); }); nodes.push(empty);
     }
     if (visibleStart > 0) {
@@ -210,10 +229,10 @@
     }
     for (var i = 0; i < visibleMessages.length; i += 1) {
       var message = visibleMessages[i];
-      var date = new Date(message.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+      var date = new Date(message.createdAt).toLocaleDateString(app.i18n.locale(), { year: 'numeric', month: 'long', day: 'numeric' });
       if (date !== lastDate) { var separator = document.createElement('div'); separator.className = 'date-divider'; separator.textContent = date; nodes.push(separator); lastDate = date; }
-      var signature = JSON.stringify(message) + String(Boolean(editable[message.id])) + ((message.status === "error" || message.status === "cancelled") ? String(currentBusy(target)) : ""), cached = target.messageCache[message.id], messageUrls = [];
-      var node = cached && cached.signature === signature ? cached.node : await messageElement(message, target, messageUrls, Boolean(editable[message.id]));
+      var signature = JSON.stringify(message) + messageState(message) + ((message.status === "error" || message.status === "cancelled") ? String(currentBusy(target)) : ""), cached = target.messageCache[message.id], messageUrls = [];
+      var node = cached && cached.signature === signature ? cached.node : await messageElement(message, target, messageUrls, messageState(message));
       if (messageUrls.length) createdUrls = createdUrls.concat(messageUrls);
       cache[message.id] = cached && cached.signature === signature ? cached : { signature: signature, node: node, urls: messageUrls }; nodes.push(node);
     }
@@ -227,9 +246,12 @@
     ui.hydrateAvatars(inner);
     if (forceBottom || target.follow) requestAnimationFrame(function () { scrollBottom(target); }); else list.scrollTop = top;
   }
-  async function messageElement(message, target, urls, editable) {
+  async function messageElement(message, target, urls, state) {
     var system = message.kind === 'system', user = message.kind === 'user', assistant = !system && !user, role = target.roleMap[message.roleId];
+    // frozen：这条消息已经被压缩进概要。原文照常显示，但整条淡化，表示它不再按原文参与上下文。
+    var frozen = state === 'frozen';
     var row = document.createElement('article'); row.className = 'message-row ' + (system ? 'system' : user ? 'user' : 'assistant'); row.dataset.messageId = message.id;
+    if (frozen) row.classList.add('is-frozen');
     if (assistant) {
       var avatar = await messageAvatar(role || { name: message.roleName || 'AI', avatarMediaId: '' }, 'message-avatar', target, 'role');
       if (target.conversation.kind === 'group' && role && role.id === moderatorRoleId(target.conversation)) avatar.classList.add('moderator-avatar-trigger');
@@ -270,13 +292,25 @@
     var meta = document.createElement('div'); meta.className = 'message-meta';
     var time = document.createElement('time'); time.textContent = u.formatTime(message.createdAt); meta.appendChild(time);
     if (message.contextTrimmed) { var note = document.createElement('span'); note.className = 'context-badge'; note.textContent = message.contextCompressed ? '含压缩上下文' : '仅最近 N 条'; note.title = message.contextCompressed ? '这次请求使用了压缩历史和最近完整消息' : '更早消息没有包含在这次请求中'; meta.appendChild(note); }
+    if (frozen) { var frozenBadge = document.createElement('span'); frozenBadge.className = 'context-badge frozen-badge'; frozenBadge.innerHTML = ui.icon('compress') + '<span>已压缩</span>'; frozenBadge.title = '这条消息已经压缩进概要，不再按原文参与上下文，也不能单独修改'; meta.appendChild(frozenBadge); }
     if (assistant && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
     if (message.text) {
       var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'icon-button'; copy.setAttribute('aria-label', '复制这条消息'); copy.innerHTML = ui.icon('copy'); copy.addEventListener('click', ui.action(async function () { await app.platform.hermit.copyText(message.text); ui.toast('已复制'); })); meta.appendChild(copy);
       if (assistant && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id)) return; return app.services.tts.speak(message.text, role); })); meta.appendChild(speak); }
     }
-    if (editable && message.status === 'done') { var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button'; edit.setAttribute('aria-label', '编辑这条消息'); edit.innerHTML = ui.icon('pencil'); edit.addEventListener('click', ui.action(function () { return editMessage(target, message); })); meta.appendChild(edit); }
-    if (assistant && editable && message.status === 'done') { var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button'; regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right'); regenerate.addEventListener('click', ui.action(function () { return regenerateMessage(target, message); })); meta.appendChild(regenerate); }
+    // 铅笔与重新生成：已经压缩进概要的消息仍然保留按钮，但按钮呈禁用态，
+    // 点一下只提示去「压缩概要」改延续上下文 —— 直接把旧消息改掉会让概要与原文对不上。
+    // 注意不能用 disabled 属性：那会吃掉点击，提示也就弹不出来。
+    if (state !== 'none') {
+      var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button' + (frozen ? ' is-disabled' : ''); edit.setAttribute('aria-label', '编辑这条消息'); edit.innerHTML = ui.icon('pencil');
+      if (frozen) { edit.setAttribute('aria-disabled', 'true'); edit.title = '历史已被压缩，请修改压缩概要'; }
+      edit.addEventListener('click', ui.action(function () { return frozen ? frozenHistoryNotice() : editMessage(target, message); })); meta.appendChild(edit);
+    }
+    if (assistant && state !== 'none') {
+      var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button' + (frozen ? ' is-disabled' : ''); regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right');
+      if (frozen) { regenerate.setAttribute('aria-disabled', 'true'); regenerate.title = '历史已被压缩，请修改压缩概要'; }
+      regenerate.addEventListener('click', ui.action(function () { return frozen ? frozenHistoryNotice() : regenerateMessage(target, message); })); meta.appendChild(regenerate);
+    }
     block.appendChild(meta); row.appendChild(block); if (user) row.appendChild(await messageAvatar(target.userProfile, 'message-avatar user-message-avatar', target, 'user')); return row;
   }
   async function messageAvatar(profile, className, target, owner) {
@@ -434,11 +468,13 @@
     target.messageSnapshot = null; await session.refreshPreview(target.conversation.id); await renderMessages(target, false);
     ui.toast('消息已保存');
   }
+  // 已压缩的历史消息不能再单独改写：统一提示到「压缩概要」这个唯一可改的入口。
+  function frozenHistoryNotice() { ui.toast('历史已被压缩，请修改压缩概要', 4200); }
   async function editMessage(target, original) {
     if (currentBusy(target)) { ui.toast('请先停止当前回复'); return; }
     var messages = await store.messages(target.conversation.id), index = messages.findIndex(function (item) { return item.id === original.id; });
     if (index < 0) throw new Error('消息不存在');
-    var editable = await app.services.context.editable(messages, target.conversation.id, target.conversation.recentFullMessages || 10);
+    var editable = await app.services.context.editable(messages, target.conversation.id);
     if (!editable[original.id]) throw new Error('这条消息已经进入压缩历史，不能再修改');
     var system = original.kind === 'system';
     ui.openModal({ title: system ? '编辑场景开场白' : original.kind === 'user' ? '编辑我的消息' : '编辑角色回复', submitText: '保存', html: '<div class="form-grid"><label class="field"><span>消息内容</span><textarea name="text" maxlength="16000">' + u.escapeHtml(original.text || '') + '</textarea></label><p class="helper">这里只保存消息内容，不会自动重新生成或删除后续消息。' + (system ? '这条场景消息仍会按普通历史参与压缩。' : original.kind === 'user' ? '' : '角色回复可在保存后使用气泡下方的重新生成按钮。') + '</p></div>', onSubmit: async function (form) {
@@ -451,7 +487,7 @@
     if (currentBusy(target)) { ui.toast('请先停止当前回复'); return; }
     var messages = await store.messages(target.conversation.id), index = messages.findIndex(function (item) { return item.id === original.id; });
     if (index < 0) throw new Error('消息不存在');
-    var editable = await app.services.context.editable(messages, target.conversation.id, target.conversation.recentFullMessages || 10);
+    var editable = await app.services.context.editable(messages, target.conversation.id);
     if (!editable[original.id]) throw new Error('这条回复已经进入压缩历史，不能再重新生成');
     if (index < messages.length - 1) {
       var confirmed = await ui.confirm({ title: '删除后续消息并重新生成？', message: '这条回复之后的所有消息，包括用户消息和任何角色的回复，都会从当前设备删除，然后由当前角色重新生成。此操作无法撤销。', confirmText: '删除并重新生成', danger: true });
@@ -468,14 +504,17 @@
   }
   async function editSummaries(target) {
     var summaries = await app.services.context.list(target.conversation.id);
-    if (!summaries.length) { ui.toast('这个对话还没有生成压缩上下文'); return; }
-    var html = '<div class="form-grid"><p class="helper">这是所有参与角色共同使用的对话摘要。修改后将从下一次回复开始生效。</p>' + summaries.map(function (summary, index) {
+    if (!summaries.length) { ui.toast('这个对话还没有生成压缩概要'); return; }
+    var html = '<div class="form-grid summary-edit"><p class="helper">压缩概要是被压缩历史唯一能改的地方：已经压缩进概要的消息不能再单独编辑，改这里就能调整延续上下文。保存后从下一次回复开始生效。</p>' + summaries.map(function (summary, index) {
       return '<label class="field"><span>已压缩 ' + Number(summary.sourceMessageCount || 0) + ' 条 · 由 ' + u.escapeHtml(summary.compressedByRoleName || '角色') + ' 最近更新</span><textarea class="prompt-editor" name="summary' + index + '" required maxlength="8000">' + u.escapeHtml(summary.text) + '</textarea></label>';
     }).join('') + '</div>';
-    ui.openModal({ title: '编辑压缩上下文', submitText: '保存压缩内容', html: html, onSubmit: async function (form) {
-      for (var i = 0; i < summaries.length; i += 1) { var text = u.formValue(form, 'summary' + i); if (!text) throw new Error('压缩内容不能为空'); summaries[i].text = text; summaries[i].updatedAt = Date.now(); summaries[i].editedAt = Date.now(); await store.put('summaries', summaries[i].id, summaries[i]); }
+    var form = ui.openModal({ title: '编辑压缩概要', submitText: '保存概要', html: html, onSubmit: async function (form) {
+      // 逐条走 updateSummaryText：空内容会被明确拒绝，保存成功的概要从下一次上下文组装开始替换旧历史。
+      for (var i = 0; i < summaries.length; i += 1) await app.services.context.updateSummaryText(target.conversation.id, u.formValue(form, 'summary' + i));
       return true;
-    }, onSuccess: function () { ui.toast('压缩上下文已更新'); } });
+    }, onSuccess: function () { ui.toast('压缩概要已更新'); target.messageCache = {}; renderMessages(target, false).catch(showError); } });
+    // 概要可能很长：弹窗固定占 80% 高，输入框吃掉说明文字之外的全部高度（见 styles/app.css 的 .summary-sheet）。
+    form.closest('.modal-sheet').classList.add('summary-sheet');
   }
   async function voiceSettings(target) {
     var services = (await store.list('asr-profiles')).filter(function (item) { return item.enabled !== false; });
@@ -503,7 +542,11 @@
     var unsupportedNames = streamDetails.filter(function (item) { return !item.capabilities.audioStreaming; }).map(function (item) { return item.role.name; }).filter(Boolean);
     var autoSpeak = target.conversation.autoSpeak == null ? Boolean(target.settings.autoSpeak) : Boolean(target.conversation.autoSpeak);
     var streamTitle = streamSupported ? '流式播放 · 自动启用' : someStreamSupported ? '按回复角色自动选择' : '完整音频播放';
-    var streamHelp = someStreamSupported ? '支持流式音频的角色' + (streamingNames.length ? '（' + streamingNames.join('、') + '）' : '') + '会在约三秒音频到达后自动开始；' + (unsupportedNames.length ? '其余角色（' + unsupportedNames.join('、') + '）等待完整音频。' : '') + (textStreamSupported ? '支持增量文字的模型会在语言模型形成完整段落后立即持续提交。' : '当前模型按段提交完整文字，每段音频仍会边生成边播放。') : '当前角色的朗读模型不支持流式音频，将在完整音频生成后播放。';
+    var listSeparator = app.i18n.pick('、', ', ');
+    var streamHelp = someStreamSupported ? app.i18n.pick(
+      '支持流式音频的角色' + (streamingNames.length ? '（' + streamingNames.join(listSeparator) + '）' : '') + '会在约三秒音频到达后自动开始；' + (unsupportedNames.length ? '其余角色（' + unsupportedNames.join(listSeparator) + '）等待完整音频。' : '') + (textStreamSupported ? '支持增量文字的模型会在语言模型形成完整段落后立即持续提交。' : '当前模型按段提交完整文字，每段音频仍会边生成边播放。'),
+      'Roles that support streaming audio' + (streamingNames.length ? ' (' + streamingNames.join(listSeparator) + ')' : '') + ' start automatically once about three seconds of audio have arrived; ' + (unsupportedNames.length ? 'other roles (' + unsupportedNames.join(listSeparator) + ') wait for the full audio. ' : '') + (textStreamSupported ? 'Models with incremental text submit continuously once a paragraph is complete.' : 'This model submits complete text paragraph by paragraph, and each audio segment still plays as it is generated.')
+    ) : '当前角色的朗读模型不支持流式音频，将在完整音频生成后播放。';
     var form = ui.openModal({ title: '本对话语音与朗读', submitText: '保存设置', html: '<div class="form-grid"><section class="editor-section"><h3>回复朗读</h3><label class="switch-row"><span><strong>自动朗读</strong><small>开启后自动播放每轮最后一位角色的回复</small></span><input name="autoSpeak" type="checkbox"' + (autoSpeak ? ' checked' : '') + '></label><div class="capability-note" id="streamTtsPlaybackStatus"><strong>' + u.escapeHtml(streamTitle) + '</strong><small>' + u.escapeHtml(streamHelp) + '</small></div></section><section class="editor-section"><h3>语音输入</h3>' + ui.picker('asrProfileId', '语音输入服务', '') + '<div class="capability-note is-hidden" id="conversationAsrStatus"></div><div id="conversationAsrModelField">' + ui.picker('asrModel', '识别模型', '') + '</div><div id="conversationAsrLanguageField">' + ui.picker('asrLanguage', '识别语言', '', '只显示当前服务明确提供的语言') + '</div><p class="helper">没有公开模型或语言目录时会跟随服务默认值，不生成猜测选项。</p></section></div>', onSubmit: async function (sheet) {
       var next = await store.get('conversations', target.conversation.id); next.autoSpeak = u.checked(sheet, 'autoSpeak'); delete next.streamTtsPlayback; next.asrProfileId = u.formValue(sheet, 'asrProfileId'); next.asrModel = next.asrProfileId ? u.formValue(sheet, 'asrModel') : ''; next.asrLanguage = next.asrProfileId ? u.formValue(sheet, 'asrLanguage') : ''; next.updatedAt = Date.now(); await store.put('conversations', next.id, next); target.conversation = next; return next;
     }, onSuccess: async function () { target.asrCapability = await selectedAsrCapability(target); syncComposer(target); ui.toast('本对话语音设置已保存'); } });
@@ -527,13 +570,18 @@
   }
   async function manageChat(target) {
     var summaries = await app.services.context.list(target.conversation.id), conversation = await store.get('conversations', target.conversation.id);
-    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="edit">' + ui.icon('gear') + '<span>基础设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="identity">' + ui.icon('gear') + '<span>个人设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="scene">' + ui.icon('clapperboard') + '<span>场景设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩上下文' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩概要' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-chat-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.chatMenu; ui.closeModal();
-      if (currentBusy(target) && (command === 'edit' || command === 'scene' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
-      if (command === 'edit') return app.features.conversations.openEditor(conversation);
-      if (command === 'identity') return app.features.conversations.openPersonalProfile(conversation, function (next) { target.conversation = next; target.userProfile = app.services.profiles.userForConversation(next, target.globalUserProfile); target.avatarSources = {}; revoke(target.urls); target.urls = []; target.messageCache = {}; return renderMessages(target, false); });
-      if (command === 'scene') return app.features.conversations.openSceneSettings(conversation, async function (result) { target.conversation = result.conversation || target.conversation; target.messageSnapshot = null; target.messageCache = {}; await renderMessages(target, true); });
+      if (currentBusy(target) && (command === 'settings' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
+      // 常规设定弹窗含基础设定、个人设定、场景设定三个子 tab，一次保存后刷新当前对话。
+      if (command === 'settings') return app.features.conversations.openConversationSettings(conversation, { tab: 'basic', openAfterSave: false, onSaved: async function (next) {
+        target.conversation = next;
+        target.userProfile = app.services.profiles.userForConversation(next, target.globalUserProfile);
+        target.avatarSources = {}; target.messageCache = {}; target.messageSnapshot = null;
+        revoke(target.urls); target.urls = [];
+        await renderMessages(target, true);
+      } });
       if (command === 'voice') return voiceSettings(target);
       if (command === 'summary') return editSummaries(target);
       if (command === 'export') return app.features.conversations.exportText(conversation.id);

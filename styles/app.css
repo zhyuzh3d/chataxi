@@ -64,8 +64,12 @@
 .search-field > i { margin-right: 10px; }
 .search-field input { width: 100%; min-height: 46px; border: 0; outline-offset: 0; background: transparent; font-size: 14px; }
 .conversation-card { display: flex; align-items: stretch; overflow: hidden; }
-.conversation-open { display: flex; align-items: flex-start; gap: 0; flex: 1 1 auto; min-width: 0; overflow: hidden; padding: 20px 16px 20px 20px; }
-.conversation-open > .avatar-stack { margin-right: 16px; }
+/* 对话卡片正文：第一行是「头像 + 标题/预览」，第三行的角色名称（单聊/群聊 | 角色）要横跨
+   整个内容区、左边缘与头像左边缘对齐，所以正文保持普通块级，名称行不再嵌在文本列里。
+   flex 的 gap 在老 WebView 上不可靠，头像到文本的间距继续用 margin 明确给出。 */
+.conversation-open { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; padding: 20px 16px 20px 20px; }
+.conversation-head { display: flex; align-items: flex-start; min-width: 0; }
+.conversation-head > .avatar-stack { margin-right: 16px; }
 .conversation-action-rail { width: 58px; flex: 0 0 58px; display: flex; flex-direction: column; border-left: 1px solid var(--border); }
 .conversation-action-cell { min-height: 58px; flex: 1; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--text-soft); font-size: 16px; }
 .conversation-action-cell + .conversation-action-cell { border-top: 1px solid var(--border); }
@@ -108,8 +112,10 @@
 .connection-result { display: flex; gap: 0; align-items: flex-start; margin: 15px 0; font-size: 13px; overflow-wrap: anywhere; }
 .connection-result > i { margin-right: 9px; }
 .connection-result small { display: block; color: var(--text-faint); font-size: 11px; margin-top: 2px; }
-.profile-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-button-group); min-width: 0; max-width: 100%; padding-top: 4px; margin-top: 12px; overflow: hidden; border-top: 0; }
-.profile-actions .button { font-size: 13px; padding: 8px 12px; }
+/* 复制 / 编辑 / 删除 并排一行：grid 自动列可靠地提供横向间距（旧 WebView 的 flex gap 不可靠）。 */
+.service-manage { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; justify-content: start; gap: 10px; min-width: 0; max-width: 100%; padding-top: 4px; margin-top: 12px; border-top: 0; }
+.service-manage .button { font-size: 13px; padding: 8px 12px; }
+.service-test { display: grid; justify-items: start; margin-top: 14px; }
 .service-unavailable { min-width: 0; max-width: 100%; margin: 0; color: var(--danger); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .stop-preview { margin-top: 18px; }
 .section-title { font-size: 16px; font-weight: 650; }
@@ -122,10 +128,24 @@
 .section-tabs { display: flex; flex-wrap: nowrap; gap: 5px; min-width: 0; max-width: 100%; padding: 5px; margin-bottom: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-muted); }
 .section-tabs button { flex: 1 1 0; width: 0; min-width: 0; max-width: 100%; min-height: 46px; padding: 10px 6px; overflow: hidden; border: 0; border-radius: 11px; background: transparent; color: var(--text-soft); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .section-tabs button > span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 英文标签比中文长：分段控件在英文界面下收紧内边距与字号，避免文字被截断。 */
+html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .section-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: 0 2px 4px #18221309; }
-.scene-settings-sheet { height: 80%; min-height: 80%; max-height: 80%; }
-.scene-settings-sheet #modalForm { flex: 1 1 auto; }
-.scene-settings-sheet .modal-body { flex: 1 1 auto; }
+/* 常规设定（基础设定 / 个人设定 / 场景设定三个子 tab）沿用场景设定时的固定高度与滚动主体。 */
+.conversation-settings-sheet { height: 80%; min-height: 80%; max-height: 80%; }
+.conversation-settings-sheet #modalForm { flex: 1 1 auto; }
+.conversation-settings-sheet .modal-body { flex: 1 1 auto; }
+/* 压缩概要弹窗：固定 80% 高，说明文字之外的高度全部给输入框，长概要不再挤在 154px 的小框里。
+   多份概要时超出的行仍按内容排布，整体交给 .modal-body 滚动。 */
+.summary-sheet { height: 80%; min-height: 80%; max-height: 80%; }
+.summary-sheet #modalForm { flex: 1 1 auto; min-height: 0; }
+.summary-sheet .modal-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.summary-sheet .summary-edit { flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.summary-sheet .summary-edit .field { min-height: 0; }
+.summary-sheet .summary-edit .prompt-editor { height: 100%; min-height: 240px; resize: none; }
+.conversation-settings-content { display: grid; gap: 18px; min-width: 0; max-width: 100%; }
+.conversation-setting-tabs { margin-bottom: 0; }
+.conversation-setting-panel { min-width: 0; max-width: 100%; }
 .scene-settings-content { display: grid; gap: 18px; min-width: 0; max-width: 100%; }
 .scene-setting-tabs { margin-bottom: 0; }
 .scene-auto-panel { display: grid; gap: 16px; padding: 2px 0 0; }
@@ -139,13 +159,20 @@
 .scene-opening-field { min-height: 0; }
 .scene-opening-field .prompt-editor { min-height: 140px; }
 .settings-tabs { min-width: 0; }
-.section-toolbar { display: flex; align-items: center; gap: 16px; min-width: 0; margin-bottom: 16px; }
-.section-toolbar p { flex: 1; min-width: 0; color: var(--text-soft); font-size: 13px; overflow-wrap: anywhere; }
+.section-toolbar { display: grid; gap: 10px; min-width: 0; margin-bottom: 16px; }
+.section-toolbar .button { justify-self: start; }
+.section-toolbar p { min-width: 0; color: var(--text-soft); font-size: 13px; overflow-wrap: anywhere; }
+/* 目录未获取成功时，模型编辑器的提交按钮显示「获取模型列表」；英文文案更长，收一点字号避免省略号。 */
+#modalSubmit[data-mode="fetch"] { font-size: 14px; }
 .model-service-card { width: 100%; min-width: 0; max-width: 100%; padding: 18px; }
 .service-summary { display: flex; align-items: center; gap: 0; min-width: 0; overflow: hidden; }
 .service-summary > .service-icon { margin-right: 12px; }
 .service-summary > .badge { margin-left: 12px; }
-.service-endpoint { max-width: 100%; padding: 10px 12px; margin-top: 14px; border-radius: 10px; background: var(--surface-muted); color: var(--text-faint); overflow-wrap: anywhere; }
+.service-endpoint { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; max-width: 100%; padding: 10px 12px; margin-top: 14px; border-radius: 10px; background: var(--surface-muted); color: var(--text-faint); }
+.service-endpoint .copy-url { display: flex; align-items: center; min-width: 0; overflow: hidden; }
+.service-endpoint .copy-url i { flex: 0 0 auto; }
+.service-endpoint .copy-url code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-endpoint .test-service-button { flex: 0 0 auto; }
 .service-endpoint .copy-url, .service-endpoint .copy-url code { color: inherit; font-size: 11px; line-height: 1.5; }
 .automation-note { display: flex; align-items: center; gap: 0; min-width: 0; padding: 13px 14px; overflow: hidden; border-radius: 12px; background: var(--success-soft); color: var(--success); font-size: 13px; }
 .automation-note > i { margin-right: var(--space-icon-text); }
@@ -212,15 +239,16 @@
 .model-family-summary span { color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
 .model-picker-list { display: grid; gap: 8px; min-width: 0; max-width: 100%; border-top: 0; }
 .model-toggle { width: 100%; min-width: 0; max-width: 100%; padding: 12px 0; border-bottom: 0; }
-.about-panel { padding: 18px 0; }
-.about-hero { display: flex; align-items: center; gap: 0; margin: 8px 0 24px; }
-.about-hero > .about-mark { margin-right: 16px; }
-.about-mark { width: 58px; height: 58px; flex: 0 0 58px; display: block; border-radius: 19px; object-fit: contain; }
-.about-hero h2 { display: flex; align-items: center; gap: var(--space-icon-text); font-size: 22px; }
-.about-hero > .about-mark { margin-right: 16px; }
-.about-hero h2 > .badge { margin-left: var(--space-icon-text); }
-.about-hero p, .about-copy { color: var(--text-soft); }
-.about-copy { line-height: 1.8; }
+.system-panel { padding: 18px 0; }
+/* 备份按钮在系统页最上方：图标与文字之间显式留出间距（旧 WebView 的 flex gap 不可靠）。 */
+.system-backup { margin-bottom: 14px; }
+.system-backup i { margin-right: var(--space-icon-text); }
+.system-hero { display: flex; align-items: center; gap: 0; margin: 22px 0 24px; }
+.system-mark { width: 58px; height: 58px; flex: 0 0 58px; display: block; margin-right: 16px; border-radius: 19px; object-fit: contain; }
+.system-hero h2 { display: flex; align-items: center; gap: var(--space-icon-text); font-size: 22px; }
+.system-hero h2 > .badge { margin-left: var(--space-icon-text); }
+.system-hero p, .system-copy { color: var(--text-soft); }
+.system-copy { line-height: 1.8; }
 .runtime-mode-text { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: right; }
 .runtime-switch { margin: 18px 0; }
 .data-clear-button { width: auto; margin-top: 18px; }
@@ -249,6 +277,9 @@
 .history-window-control .button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 0; }
 .chat-welcome-avatars { display: flex; gap: var(--space-icon-text); margin-bottom: 22px; }
+/* 头像本身就是按钮：点开标准角色编辑弹窗；内层 .avatar 不吃点击，尺寸与 .avatar.large 对齐。 */
+.chat-welcome-avatar { width: 58px; height: 58px; flex: 0 0 58px; padding: 0; border: 0; border-radius: 20px; background: transparent; }
+.chat-welcome-avatar .avatar { pointer-events: none; }
 .chat-welcome h2 { font-size: 25px; margin-bottom: 10px; }
 .chat-welcome p { color: var(--text-soft); font-size: 14px; max-width: 330px; }
 .starter-list { display: block; margin: 27px -6px -12px; text-align: center; }
@@ -282,6 +313,16 @@
 .message-row.user .message-meta { justify-content: flex-end; }
 .message-row.system .message-meta { justify-content: center; }
 .context-badge { font-size: 10px; color: var(--text-soft); }
+/* 已压缩进概要的历史消息：整条淡化、退掉一点颜色，看起来像被「冻结」的旧记录。
+   只降透明度、不隐藏内容 —— 用户仍然需要能回看原文，只是不能再单独改写。 */
+.message-row.is-frozen .message-bubble, .message-row.is-frozen .message-name { opacity: .6; }
+.message-row.is-frozen .message-bubble { filter: saturate(.5); }
+.message-row.is-frozen > .message-avatar-trigger { opacity: .6; }
+.frozen-badge { display: inline-flex; align-items: center; min-height: 22px; margin-right: 2px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); color: var(--text-soft); font-size: 10px; }
+.frozen-badge i { margin-right: 3px; font-size: 9px; }
+/* 冻结消息上的铅笔/重新生成：保留按钮可见但呈禁用态，点击只给提示。 */
+.message-meta .icon-button.is-disabled { cursor: not-allowed; }
+@media (hover: hover) { .message-meta .icon-button.is-disabled:hover { background: transparent; } }
 .message-error { color: var(--danger); margin-bottom: 10px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-image { display: block; max-width: 100%; background: var(--surface-muted); border: 0; padding: 0; border-radius: 12px; overflow: hidden; margin-bottom: 10px; min-height: 44px; }
 .message-image img { max-height: 320px; object-fit: contain; }
@@ -349,7 +390,7 @@
   .search-field { flex-basis: 100%; }
   .welcome-card { padding: 25px 22px; }
   .welcome-emblem { width: 54px; height: 54px; font-size: 23px; border-radius: 18px; }
-  .conversation-open { padding: 18px 14px; gap: var(--space-icon-text); }
+  .conversation-open { padding: 18px 14px; }
   .conversation-action-rail { width: 54px; flex-basis: 54px; }
   .conversation-title { gap: var(--space-icon-text); }
   .conversation-title strong { font-size: 15px; }

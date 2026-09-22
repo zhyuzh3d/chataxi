@@ -19,6 +19,7 @@ class PackageTests(unittest.TestCase):
             (PACKAGE.ROOT / folder).mkdir()
         (PACKAGE.ROOT / "index.html").write_text("<!doctype html><title>fixture</title>")
         (PACKAGE.ROOT / "hermit.json").write_text(json.dumps({"version": {"name": "test"}}))
+        (PACKAGE.ROOT / "guid.md").write_text("# guid fixture\n")
         (PACKAGE.ROOT / "app/app.js").write_text("'use strict';")
         (PACKAGE.ROOT / "app/assets").mkdir()
         (PACKAGE.ROOT / "app/assets/icon.webp").write_bytes(b"RIFFfixtureWEBP")
@@ -36,6 +37,7 @@ class PackageTests(unittest.TestCase):
         PACKAGE.verify(self.relative, self.output)
         with PACKAGE.zipfile.ZipFile(self.output) as archive:
             self.assertNotIn("docs/private.txt", archive.namelist())
+            self.assertIn("guid.md", archive.namelist())
             self.assertEqual(archive.read("app/assets/icon.webp"), b"RIFFfixtureWEBP")
 
     def test_check_detects_modified_source_content(self):

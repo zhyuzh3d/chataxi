@@ -26,13 +26,19 @@
       .replace(/'/g, "&#039;");
   }
 
+  // 时间的显示格式跟随界面语言：英文界面不能出现「下午 03:33」这类中文时段标记。
+  function displayLocale() {
+    return app.i18n && app.i18n.locale ? app.i18n.locale() : "zh-CN";
+  }
+
   function formatTime(timestamp) {
     var date = new Date(timestamp);
     var now = new Date();
+    var locale = displayLocale();
     if (date.toDateString() === now.toDateString()) {
-      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+      return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
     }
-    return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+    return date.toLocaleDateString(locale, { month: "numeric", day: "numeric" });
   }
 
   function debounce(fn, delay) {

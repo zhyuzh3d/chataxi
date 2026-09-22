@@ -3,8 +3,8 @@
   "happId": "com.airen.chataxi",
   "name": "chataxi",
   "version": {
-    "code": 75,
-    "name": "0.6.15"
+    "code": 78,
+    "name": "0.6.18"
   },
   "entry": "index.html",
   "routing": "hash",

@@ -26,9 +26,9 @@ function imageSize(file) {
 }
 
 const groups = [
-  { key: "boys", category: "male", categoryLabel: "男", primary: "boys.json.new", fallback: "boys.json" },
-  { key: "girls", category: "female", categoryLabel: "女", primary: "girls.json.new", fallback: "girls.json" },
-  { key: "others", category: "other", categoryLabel: "其他", primary: "others.json" }
+  { key: "boys", category: "male", categoryLabel: "男", categoryLabelEn: "Male", primary: "boys.json.new", fallback: "boys.json" },
+  { key: "girls", category: "female", categoryLabel: "女", categoryLabelEn: "Female", primary: "girls.json.new", fallback: "girls.json" },
+  { key: "others", category: "other", categoryLabel: "其他", categoryLabelEn: "Other", primary: "others.json" }
 ];
 
 fs.mkdirSync(assetRoot, { recursive: true });
@@ -54,24 +54,33 @@ for (const group of groups) {
       assert.deepEqual([avatar.sprite, avatar.row, avatar.column, avatar.x, avatar.y, avatar.width, avatar.height], [fallbackAvatar.sprite, fallbackAvatar.row, fallbackAvatar.column, fallbackAvatar.x, fallbackAvatar.y, fallbackAvatar.width, fallbackAvatar.height], `${group.key}[${index}] schema positions differ`);
     }
     const id = String(item.id || supplement && supplement.id || "").trim(), name = String(item["角色名称"] || "").trim(), systemPrompt = String(item["角色介绍"] || "").trim();
+    const nameEn = String(item["角色名称_en"] || "").trim(), systemPromptEn = String(item["角色介绍_en"] || "").trim();
+    // 行为指导与身份性格分开存放：它约束角色怎么说话，不描述角色是谁。
+    const behaviorGuidance = String(item["行为指导"] || "").trim(), behaviorGuidanceEn = String(item["行为指导_en"] || "").trim();
+    assert.ok(behaviorGuidance && behaviorGuidanceEn, `${id} has incomplete behavior guidance`);
+    assert.ok(behaviorGuidance.split("\n").length >= 2 && behaviorGuidanceEn.split("\n").length >= 2, `${id} behavior guidance must keep its separate lines`);
     const age = supplement ? Number(supplement["角色"] && supplement["角色"]["年龄"]) : null;
     const profession = String(item["角色类型"] || supplement && supplement["角色"] && supplement["角色"]["职业"] || "").trim();
+    const professionEn = String(item["角色类型_en"] || "").trim();
     assert.match(id, /^[a-z0-9-]+$/, `${group.key}[${index}] lacks a stable id`);
     assert.ok(name && systemPrompt && profession, `${id} has incomplete gallery data`);
+    assert.ok(nameEn && systemPromptEn && professionEn, `${id} has incomplete English gallery data`);
     if (group.category !== "other") assert.ok(age >= 18 && age <= 120, `${id} has an invalid adult age`);
     else assert.equal(age, null, `${id} must not fabricate an age for a non-human template`);
     assert.ok(systemPrompt.includes(name), `${id} prompt must identify the schema 2 name`);
+    assert.ok(systemPromptEn.includes(nameEn), `${id} English prompt must identify the English name`);
     assert.equal(avatar.width, 418); assert.equal(avatar.height, 418);
     const assetName = `${id}.webp`, assetPath = path.join(assetRoot, assetName);
     expectedAssets.add(assetName);
     execFileSync("cwebp", ["-quiet", "-q", "84", "-crop", String(avatar.x), String(avatar.y), String(avatar.width), String(avatar.height), "-resize", "320", "320", spritePath, "-o", assetPath]);
-    return { id, name, profession, age, category: group.category, categoryLabel: group.categoryLabel, systemPrompt, avatar: `./app/assets/role-templates/${assetName}` };
+    return { id, name, nameEn, profession, professionEn, age, category: group.category, categoryLabel: group.categoryLabel, categoryLabelEn: group.categoryLabelEn, systemPrompt, systemPromptEn, behaviorGuidance, behaviorGuidanceEn, avatar: `./app/assets/role-templates/${assetName}` };
   });
 }
 
 const items = [...byGroup.male, ...byGroup.female, ...byGroup.other];
 assert.equal(new Set(items.map(item => item.id)).size, 27, "template ids must be unique");
 assert.equal(new Set(items.map(item => item.name)).size, 27, "template names must be unique");
+assert.equal(new Set(items.map(item => item.nameEn)).size, 27, "English template names must be unique");
 
 const mixedPeople = [];
 for (let index = 0; mixedPeople.length < 9; index += 1) mixedPeople.push(byGroup.female[index], byGroup.male[index]);

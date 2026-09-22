@@ -98,33 +98,54 @@
     return backend;
   }
 
+  // 首次安装时按界面语言写入这两段默认内容；之后切换语言不会改写已经保存的值。
+  function defaultCompressionPrompt() {
+    return app.i18n.pick("请把更早的对话压缩成可供后续继续交流的上下文。保留已经确认的事实、用户偏好、重要结论、未完成事项、约束和角色之间的关键分歧；删除寒暄、重复内容和已被否定的方案。不要补充原对话没有的信息，使用清晰紧凑的中文。", "Compress the earlier part of the conversation into context that can carry the chat forward. Keep confirmed facts, user preferences, important conclusions, open items, constraints and the key disagreements between roles; drop small talk, repetition and options that have already been rejected. Do not add anything that was not in the original conversation. Write in clear, compact English.");
+  }
+  function defaultUserName() { return app.i18n.pick("我", "Me"); }
+  // 缺省、非数字或落在滑竿范围外的历史值统一收进范围；范围内的用户选择原样保留。
+  function compressionBound(value, min, max, fallback) {
+    var number = Number(value);
+    if (!isFinite(number) || number <= 0) return fallback;
+    return Math.min(max, Math.max(min, Math.round(number)));
+  }
+
   async function seed() {
     var settings = await get("meta", "settings");
     if (!settings) {
       settings = {
         autoSpeak: true,
-        enterToSend: false,
         defaultTtsProfileId: "system-tts",
         defaultAsrProfileId: "system-asr",
+        uiLanguage: "system",
         language: "zh-CN",
         imageDetail: "auto",
         autoCompress: true,
-        compressionThresholdChars: 32000,
-        compressionTargetChars: 2400,
-        compressionPrompt: "请把更早的对话压缩成可供后续继续交流的上下文。保留已经确认的事实、用户偏好、重要结论、未完成事项、约束和角色之间的关键分歧；删除寒暄、重复内容和已被否定的方案。不要补充原对话没有的信息，使用清晰紧凑的中文。",
+        compressionThresholdChars: 10000,
+        compressionRetainChars: 4000,
+        compressionTargetChars: 1000,
+        compressionPrompt: defaultCompressionPrompt(),
         theme: "system"
       };
     } else {
       if (settings.autoCompress == null) settings.autoCompress = true;
-      if (!settings.compressionThresholdChars) settings.compressionThresholdChars = 32000;
-      if (!settings.compressionTargetChars) settings.compressionTargetChars = 2400;
+      // 触发字数 4000~32000（默认 10000）、压缩保留字数 2000~10000（默认 4000）、
+      // 压缩目标 500~2000（默认 1000）是设置页滑竿的界限。
+      // 老版本存下的值可能落在范围外（滑竿显示不出来），这里就地收进范围，保证界面与实际一致。
+      settings.compressionThresholdChars = compressionBound(settings.compressionThresholdChars, 4000, 32000, 10000);
+      settings.compressionRetainChars = compressionBound(settings.compressionRetainChars, 2000, 10000, 4000);
+      settings.compressionTargetChars = compressionBound(settings.compressionTargetChars, 500, 2000, 1000);
+      if (["system", "zh-CN", "en"].indexOf(settings.uiLanguage) < 0) settings.uiLanguage = "system";
       delete settings.recentFullMessages;
       delete settings.historyLimit;
-      if (!settings.compressionPrompt) settings.compressionPrompt = "请把更早的对话压缩成可供后续继续交流的上下文。保留已经确认的事实、用户偏好、重要结论、未完成事项、约束和角色之间的关键分歧；删除寒暄、重复内容和已被否定的方案。不要补充原对话没有的信息，使用清晰紧凑的中文。";
+      // 「按 Enter 发送」也不再提供：Enter 始终换行，Ctrl / ⌘ + Enter 始终发送。
+      delete settings.enterToSend;
+      // 语音语言（settings.language）照旧保留给朗读/识别做兜底，界面语言是另一个字段。
+      if (!settings.compressionPrompt) settings.compressionPrompt = defaultCompressionPrompt();
     }
     await put("meta", "settings", settings);
-    var userProfile = await get("meta", "user-profile") || { name: "我", introduction: "", avatarMediaId: "", createdAt: Date.now() };
-    if (!String(userProfile.name || "").trim()) userProfile.name = "我";
+    var userProfile = await get("meta", "user-profile") || { name: defaultUserName(), introduction: "", avatarMediaId: "", createdAt: Date.now() };
+    if (!String(userProfile.name || "").trim()) userProfile.name = defaultUserName();
     if (userProfile.introduction == null) userProfile.introduction = userProfile.bio || "";
     delete userProfile.bio;
     userProfile.updatedAt = Number(userProfile.updatedAt || Date.now());
@@ -176,8 +197,9 @@
       if (conversations[conversationIndex].userAvatarMediaId == null) { conversations[conversationIndex].userAvatarMediaId = ""; conversationChanged = true; }
       var inferredKind = (conversations[conversationIndex].roleIds || []).length > 1 ? "group" : "single";
       if (conversations[conversationIndex].kind !== inferredKind) { conversations[conversationIndex].kind = inferredKind; conversationChanged = true; }
-      var recent = Math.min(50, Math.max(5, Number(conversations[conversationIndex].recentFullMessages || 10)));
-      if (conversations[conversationIndex].recentFullMessages !== recent) { conversations[conversationIndex].recentFullMessages = recent; conversationChanged = true; }
+      // 「固定携带最近消息」已取消：保留多少条改由「压缩保留字数」按字数推导，
+      // 逐对话存下的条数不再有任何作用，留着只会让人误以为还能配置。
+      if (conversations[conversationIndex].recentFullMessages != null) { delete conversations[conversationIndex].recentFullMessages; conversationChanged = true; }
       var participantIds = conversations[conversationIndex].roleIds || [];
       var moderatorRoleId = conversations[conversationIndex].moderatorRoleId && participantIds.indexOf(conversations[conversationIndex].moderatorRoleId) >= 0 ? conversations[conversationIndex].moderatorRoleId : participantIds[0] || "";
       var orderedParticipantIds = moderatorRoleId ? [moderatorRoleId].concat(participantIds.filter(function (roleId) { return roleId !== moderatorRoleId; })) : participantIds.slice();
@@ -191,7 +213,8 @@
       if (JSON.stringify(conversations[conversationIndex].activeRoleIds || []) !== JSON.stringify(activeRoleIds)) { conversations[conversationIndex].activeRoleIds = activeRoleIds; conversationChanged = true; }
       if (conversationChanged) await put("conversations", conversations[conversationIndex].id, conversations[conversationIndex]);
     }
-    await put("meta", "schema", { version: 13, modelProfileMigrationVersion: 1, updatedAt: Date.now() });
+    // 14：压缩设置由「触发字数 + 目标字数」扩为「触发 / 保留 / 目标」三项，并删除对话上的 recentFullMessages。
+    await put("meta", "schema", { version: 14, modelProfileMigrationVersion: 1, updatedAt: Date.now() });
   }
 
   function profileCollection(collection) { return collection === "llm-profiles" || collection === "tts-profiles" || collection === "asr-profiles"; }

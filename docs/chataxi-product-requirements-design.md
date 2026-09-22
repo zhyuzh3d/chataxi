@@ -23,7 +23,8 @@ chataxi 负责对话体验和有限的供应商协议适配，不取代模型网
 - 角色：紧凑角色卡、创建和编辑角色、发起对话。
 - 模型：不带图标的“对话模型、朗读模型、语音输入”三个服务分类。
 - 我的：全局个人设定，包括用户名称、本地图片头像和加入模型上下文的自我介绍。
-- 设置：按“界面、对话、压缩、关于”组织主题、对话偏好、默认语音服务、上下文压缩参数和运行信息。
+- 设置：按“界面、对话、压缩、系统”组织主题、对话偏好、默认语音服务、上下文压缩参数和运行信息。系统页顶部提供“备份软件和数据”，由宿主把当前 happ 连同全部数据整包导出到用户选择的位置。
+- 输入框默认 Enter 换行，Ctrl / ⌘ + Enter 发送；不提供“按 Enter 发送”开关。
 
 所有新增、编辑、确认、菜单和选择流程使用同一套自定义底部 Sheet。Sheet 从屏幕底部进入并始终横向铺满屏幕；主 Sheet、二级选择 Sheet 与确认 Sheet 都由视口级弹层根节点挂载，并显式设置左右边界与 100% 宽度，不能依赖旧 WebView 可能忽略的 `inset`。桌面宽屏仍停靠底部，不切换为系统菜单或居中系统对话框。模型、服务、音色、主题等枚举选择也使用叠加在编辑 Sheet 上方的自定义选择 Sheet，不触发系统原生列表菜单。并排按钮使用 Grid 间距或相邻元素外边距，不把 flex-gap 当作唯一间距来源。点击不显示浏览器外框；键盘焦点使用组件内部高亮。
 
@@ -33,7 +34,7 @@ chataxi 负责对话体验和有限的供应商协议适配，不取代模型网
 
 角色卡将头像、名称、具体模型和状态放在紧凑首行。底部“编辑角色”和“开始对话”按钮等宽，均使用图标加文字。对话卡头像在左上对齐，正文与头像保留横向间距；参与者信息统一显示为“群聊 | Alice · Bob · Jane”或“单聊 | Alice”，超长时单行省略。
 
-新建和编辑对话不提供单聊/群聊开关：选择一位角色自动成为单聊，选择两位及以上自动成为群聊。标题为空时按参与角色生成。每个对话直接显示自己的 `recentFullMessages` 滑杆，范围 5–50，默认 10；通用设置不再提供重复的 N 值入口。
+新建和编辑对话不提供单聊/群聊开关：选择一位角色自动成为单聊，选择两位及以上自动成为群聊。标题为空时按参与角色生成。对话不再提供“固定携带最近 N 条”的条数配置：保留多少条由设置页的 `compressionRetainChars` 按字数推导 —— 从最近一条往前累加，累计字数刚超过保留字数时的条数就是要保留的 k，至少 2 条，保证刚发生的一问一答始终是原文。压缩时把 k 之前的未压缩历史与已有概要合并成新概要。
 
 ## 4. 角色与模型服务
 
@@ -78,23 +79,23 @@ Hermit 的系统 TTS 合同提供当前引擎的语言、音色、语速和音�
 1. 本对话全部参与角色的名称与角色提示词，并标明当前发言角色；
 2. 用户名称与自我介绍；具体对话的名称、介绍分别在非空时覆盖“我的”对应字段，空字段各自回落到全局值，不做内容合并；头像只用于界面显示，不进入模型上下文；
 3. 本对话共享的最近压缩上下文，作为合成的 `system` 历史消息；
-4. 摘要覆盖边界之后全部尚未压缩的完整完成消息，其中同时包含用户消息和所有角色回复。N 是每次压缩后必须保留的最近完整消息下限，不是平时截断上下文的上限。
+4. 摘要覆盖边界之后全部尚未压缩的完整完成消息，其中同时包含用户消息和所有角色回复。压缩保留字数决定每次压缩后必须保留的最近消息范围，它不是平时截断上下文的上限。
 
 当前角色只执行自己的角色设定，同时理解其他参与者的身份。任何一个角色失败不会删除用户消息或其他已完成回复。停止本轮会跳过未开始角色、把当前回复标记为已停止并忽略迟到结果；已发出的原生网络请求仍可能在供应商侧计费。
 
 ## 6. 上下文自动压缩
 
-通用设置保存四项：是否自动压缩、触发总字数、目标字数和压缩提示词。每个对话独立保存 N。摘要文字与摘要边界之后全部未压缩消息的总字数超过阈值，并且未压缩消息多于 N 条时，在下一次角色回答前执行压缩。触发前，全部未压缩消息持续进入角色上下文，不允许因为超过 N 条而静默丢弃；N 只规定压缩完成后仍保留多少条最近完整消息。
+通用设置保存五项：是否自动压缩、触发总字数、压缩保留字数、目标字数和压缩提示词。摘要文字与摘要边界之后全部未压缩消息的总字数超过触发字数，并且待压缩前缀不小于目标字数时，在下一次角色回答前异步执行压缩。触发前，全部未压缩消息持续进入角色上下文，不允许被静默丢弃。压缩保留字数只决定这一次哪些最近消息不参与压缩：从最近一条往前累加，累计字数刚超过保留字数时的条数就是要保留的 k，至少 2 条，因此短消息多留几条、长消息少留几条，保留量始终稳定；保留条数不再逐对话配置。
 
-单聊由该角色压缩；群聊始终由参与角色列表中的第一位角色使用自己的语言模型压缩，关闭图片生成，并把输出 Token 限制到与目标字数相符的范围。待压缩输入严格由上次共享概要和“当前未压缩消息中除最近 N 条之外的前缀”组成。压缩请求另带全部参与角色的名称与角色介绍，以及当前对话实际生效的用户名称与介绍，资料只帮助模型识别说话者、指代和关系；系统指令明确禁止摘录、概括或故意把这些资料本身写入概要，只有消息中实际形成的事实才可总结。
+单聊由该角色压缩；群聊始终由主持人角色使用自己的语言模型压缩，主持人缺失时退回第一位参与角色。压缩关闭图片生成，并把输出 Token 限制到与目标字数相符的范围。待压缩输入严格由上次共享概要和“当前未压缩消息中除要保留的 k 条之外的前缀”组成。压缩请求另带全部参与角色的名称与角色介绍，以及当前对话实际生效的用户名称与介绍，资料只帮助模型识别说话者、指代和关系；系统指令明确禁止摘录、概括或故意把这些资料本身写入概要，只有消息中实际形成的事实才可总结。
 
-成功后用一条概要记录保存压缩文本、压缩模型角色、实际覆盖到的最后消息 ID 与时间、累计覆盖消息数、保留 N 和更新时间。第二次压缩把上次概要与上次边界之后、本次最近 N 条之前的新消息合并成概要 2，再把覆盖边界前移；原消息继续保存在设备上。请求期间输入区显示“正在压缩历史上下文 · 角色名”。失败时不移动边界，也不删除历史。
+成功后用一条概要记录保存压缩文本、压缩模型角色、实际覆盖到的最后消息 ID 与时间、累计覆盖消息数、本次保留条数与保留字数、更新时间。第二次压缩把上次概要与上次边界之后、本次要保留的 k 条之前的新消息合并成概要 2，再把覆盖边界前移；原消息继续保存在设备上。压缩在后台执行，不等待也不打断本轮回复，进行中输入区显示“正在压缩历史上下文…”。失败时不移动边界，也不删除历史。
 
 每个对话只维护一份共享压缩内容，后续所有参与角色读取同一份摘要。对话菜单可查看并手工修改最近压缩内容。修改只改变后续模型上下文，不伪装为原始历史。
 
 概要不再拼入角色提示词。每轮请求在摘要存在时把它转换为一条 `systemType=summary` 的合成历史消息，再与最近完整消息共同进入统一供应商适配。场景、概要和每轮重建的角色/用户设定在确认支持的模型上进入协议原生 system 通道；无法确认 system 能力时合并为请求开头的一条 user 消息，并分别使用 `[角色与用户设定]`、`[场景设定]`、`[历史概要]` 标记。该降级只发生在请求编译层，不改写或复制持久化消息。
 
-首次生成压缩内容之前，全部状态完成的消息均可编辑，角色回复也提供独立重新生成按钮。生成压缩内容后，已经进入摘要边界的消息不再提供编辑或重新生成入口；可操作范围是摘要边界之后且位于当前对话最近 N 条内的完成消息。编辑操作只保存文字，不触发模型、不删除任何后续消息。用户需要重新生成角色回复时，另行点击该回复下方按钮；只要目标回复后还有任何用户消息或角色回复，就必须先确认删除全部后续消息，再由原角色重新生成当前回复。删除会同时回收无引用媒体并刷新列表摘要。
+首次生成压缩内容之前，全部状态完成的消息均可编辑，角色回复也提供独立重新生成按钮。生成压缩内容后，已进入摘要边界的消息不再提供编辑或重新生成入口，界面把它们整条淡化并标注“已压缩”，点击编辑或重新生成会提示“历史已被压缩，请修改压缩概要”。可操作范围只由摘要边界决定，不随保留字数变化。编辑操作只保存文字，不触发模型、不删除任何后续消息。用户需要重新生成角色回复时，另行点击该回复下方按钮；只要目标回复后还有任何用户消息或角色回复，就必须先确认删除全部后续消息，再由原角色重新生成当前回复。删除会同时回收无引用媒体并刷新列表摘要。
 
 ## 7. 语音输入与朗读
 
@@ -119,11 +120,11 @@ Android 系统语音识别为默认服务。调用前检查可用性，处理 re
 | `asrProfile` | `id/name/family/type/endpoint/apiKey/models/enabled` |
 | `role` | `id/name/systemPrompt/avatarMediaId/llmProfileId/model/temperature/maxOutputTokens/reasoningEffort/allowImageGeneration/ttsProfileId/ttsModel/ttsVoice/voicePrompt/ttsSpeechRate/ttsPitchRate/ttsLoudnessRate/enabled` |
 | `userProfile` | `name/avatarMediaId/introduction/createdAt/updatedAt` |
-| `conversation` | `id/title/kind/roleIds/moderatorRoleId/activeRoleIds/autoSelectRole/recentFullMessages/openingSceneDraft/userName/userIntroduction/userAvatarMediaId/autoSpeak/ttsMuted/asrProfileId/asrModel/asrLanguage/pinned/lastMessage`；`openingSceneDraft` 仅在尚未落成消息前短暂存在 |
+| `conversation` | `id/title/kind/roleIds/moderatorRoleId/activeRoleIds/autoSelectRole/openingSceneDraft/userName/userIntroduction/userAvatarMediaId/autoSpeak/ttsMuted/asrProfileId/asrModel/asrLanguage/pinned/lastMessage`；`openingSceneDraft` 仅在尚未落成消息前短暂存在 |
 | `message` | `id/conversationId/kind/systemType/roleId/replyTo/text/media/status/error/createdAt/editedAt/usage/contextTrimmed/streamed/streamFallback` |
-| `summary` | `conversationId/compressedByRoleId/compressedByRoleName/text/throughMessageId/throughMessageCreatedAt/throughCreatedAt/sourceMessageCount/retainedMessageCount/compressionInputCharacters/updatedAt/editedAt` |
+| `summary` | `conversationId/compressedByRoleId/compressedByRoleName/text/throughMessageId/throughMessageCreatedAt/throughCreatedAt/sourceMessageCount/retainedMessageCount/compressionRetainChars/compressionInputCharacters/updatedAt/editedAt`；`retainedMessageCount` 是本次压缩按字数推导出的 k |
 | `draft` | `id/messageId/text/media/updatedAt` |
-| `settings` | `autoSpeak/enterToSend/defaultTtsProfileId/defaultAsrProfileId/language/imageDetail/theme/autoCompress/compressionThresholdChars/compressionTargetChars/compressionPrompt` |
+| `settings` | `autoSpeak/defaultTtsProfileId/defaultAsrProfileId/uiLanguage/language/imageDetail/theme/autoCompress/compressionThresholdChars/compressionRetainChars/compressionTargetChars/compressionPrompt`；三个压缩数字的界限为触发 4000–32000（默认 10000）、保留 2000–10000（默认 4000）、目标 500–2000（默认 1000） |
 
 结构化数据优先使用 `hermit.data`，浏览器源码预览降级为 localStorage；媒体 Blob 使用 IndexedDB。消息按 `conversationId:timestamp:id` 排序。超过约 60 KiB 的正文分块保存到 `message-text`，结构化记录保留引用。删除对话级联删除消息、草稿、压缩内容和无引用媒体。
 
