@@ -156,7 +156,10 @@ await app.openChat(id);
 console.log('passed: schema 2 role template gallery applies profile fields and cleans up cancelled avatar');
 
 click('#chatMenuButton'); await until(() => document.querySelector('[data-chat-menu="settings"]'), 'merged conversation settings menu');
-assert.deepEqual(Array.from(document.querySelectorAll('[data-chat-menu]')).slice(0, 3).map(button => button.dataset.chatMenu), ['settings', 'voice', 'summary']);
+// 菜单顺序以 chat.js 的 manageChat 为准: settings / background / voice / summary / export / pin / delete。
+// 这里只取前三项。曾经写的是 ['settings','voice','summary'] —— 「对话背景」那一项落地之后这条就过期了,
+// 于是整个 DOM 流程套件从这一行直接抛错退出, 后面所有断言都跑不到（看起来像"界面坏了"）。
+assert.deepEqual(Array.from(document.querySelectorAll('[data-chat-menu]')).slice(0, 3).map(button => button.dataset.chatMenu), ['settings', 'background', 'voice']);
 let generatedSceneRequest;
 app.services.llm.generateScene = async (moderator, participants, conversation, userProfile, modes, guidance) => {
   generatedSceneRequest = { moderator, participants, conversation, userProfile, modes, guidance };
@@ -560,6 +563,29 @@ const editedSummary = await app.data.store.get('summaries', id);
 assert.equal(editedSummary.text, '手工修订后的概要'); assert.equal(editedSummary.throughMessageId, boundaryMessage.id); assert.ok(editedSummary.editedAt > 0);
 assert.equal(document.querySelector('#toastRoot .toast').textContent, '压缩概要已更新');
 assert.equal(app.services.context.requestMessages({ summary: editedSummary, recent: [] })[0].text, '手工修订后的概要', 'the edited summary replaces the frozen history in the next request');
+// ── 沉浸模式：点消息列表的空白处收掉全部控件, 只留背景; 再点一次恢复 ──────────
+// 这里跑的是**真实点击路径**（事件从列表气泡/空白冒泡到 .chat-layout 上那一个监听器）,
+// 静态门禁只能证明写法, 证明不了"点哪儿算空白、点完能不能回来"。
+// 用 dispatchEvent 而不是 node.click(), 因为被测的监听器挂在祖先上 —— 判据是冒泡真的到得了。
+const tap = node => { assert.ok(node, 'the tap target must exist'); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
+const shellNode = document.getElementById('appShell');
+const hiddenRegions = ['.topbar', '.message-viewport', '.composer'];
+const hiddenState = () => shellNode.classList.contains('chat-chrome-hidden');
+assert.equal(hiddenState(), false, 'the chat page opens with every control visible');
+tap(document.querySelector('.message-list-inner'));
+assert.equal(hiddenState(), true, 'a tap on the blank area of the message list hides the chrome');
+hiddenRegions.forEach(selector => assert.equal(document.querySelector(selector).getAttribute('aria-hidden'), 'true', selector + ' must leave the accessibility tree with it'));
+tap(document.querySelector('.chat-layout'));
+assert.equal(hiddenState(), false, 'the second tap brings the chrome back');
+hiddenRegions.forEach(selector => assert.equal(document.querySelector(selector).getAttribute('aria-hidden'), null, selector + ' must be exposed again'));
+// 点在消息上不算空白（用户说的是"空白位置"）: 那是消息自己的区域, 不能顺手把界面藏起来。
+tap(document.querySelector('.message-row .message-bubble'));
+assert.equal(hiddenState(), false, 'a tap on a message bubble is not a blank-area tap');
+// 隐着的时候离开对话, 下一页不能继承这个状态: 类是挂在跨页面的 #appShell 上的。
+tap(document.querySelector('.message-list-inner'));
+assert.equal(hiddenState(), true, 'hide again before leaving');
+await app.features.chat.close();
+assert.equal(hiddenState(), false, 'leaving the conversation must clear the hidden chrome, or the list page opens invisible');
 console.log('passed: five tabs, user profile, compact mention, mute state and message regeneration controls');
 console.log('DOM flow checks passed (no layout, browser, device or provider acceptance claimed)');
 process.exit(0);

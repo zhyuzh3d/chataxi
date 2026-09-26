@@ -6,6 +6,36 @@
   --accent: #f4cb46; --accent-strong: #987000; --accent-ink: #302809;
   --accent-soft: #faf2d3; --accent-border: #e7d38c;
   --glass: rgba(255, 255, 255, .58); --glass-muted: rgba(255, 255, 255, .46); --glass-accent: rgba(250, 242, 211, .62); --glass-edge: rgba(255, 255, 255, .5);
+  /* 毛玻璃的两个统一参数（半径 / 饱和度）：全应用只有这一处定义, 各个玻璃面都引用它,
+     想统一调软硬只改这里。明暗两套不需要各自一份, 模糊与饱和跟主题无关。 */
+  --glass-blur: 18px; --glass-saturate: 1.6;
+  /* 非对话页背景图的处理量（用户 2026-09-26 在真机上一路调下来的: 模糊 30 → 20 → 10,
+     不透明度 80% → 50%）。压到一半: 背景图只当底子用, 要认得出是什么照片又不抢卡片的注意力。 */
+  --page-bg-blur: 10px; --page-bg-opacity: .5;
+  /* 反色文字阴影（用户 2026-09-26）: "白字黑阴影、黑字白阴影, 字跟着主题变, 阴影也跟着变"。
+     吃它的都是"直接坐在背景上"的小字 —— 角色名、气泡下方的时间与操作按钮、日期分隔条、
+     压缩徽章、输入框玻璃下方的"本轮完成 / 草稿已保存"。对话一设背景图它们就糊在照片里。
+     阴影整体只在 --text-halo-shadow 一处定义; 明暗两套各写一份 --text-halo 就够了 ——
+     阴影里那次 var() 替换发生在 :root 上, 三个主题块都写在 :root, 深色块一覆盖 --text-halo
+     阴影就跟着换。
+
+     形状是**向外扩的一圈实心描边**, 不是一团模糊光晕（用户 2026-09-26: "阴影应该是向外扩
+     不向内收缩"）。八个方向各偏 1px 的实心副本把字的外缘整整围出一圈 —— 阴影画在字形**下面**,
+     所以字形内部不会被染色, 只有外圈看得见, 笔画粗细一点没变。
+     早先用的是 `0 0 2px` + `0 0 7px` 两层大半径模糊: 那会让光晕糊住笔画边缘, 字看着发虚、变细,
+     也就是用户说的"向内收缩"。那层 7px 已经去掉, 只留 2px 补满八向偏移之间的缝。
+     不透明度 .33（用户 2026-09-26: "对话页面这些沉浸在背景上的文字和 icon 的阴影都太重了,
+     改为阴影透明度 50" → 同日再收一档: "请把阴影效果的透明度减少到66%"）。
+     这里按**强度**算, 不是按 alpha 的字面值算: 0.5 × 0.66 = 0.33 —— "减少到 66%" = 只剩原来的
+     66%（字面写 0.66 的话反而比 0.5 更重, 与"减少"自相矛盾, 所以那个读法排除了）。
+     上一版浅色是 .92、深色是 .78 —— 白描边几乎实心, 压在浅色照片上像一圈贴纸边;
+     .5 时"太重"仍在, .33 之后只把字从背景里轻轻"托"出来, 背景本身的观感基本不动。 */
+  --text-halo: rgba(255, 255, 255, .33);
+  --text-halo-shadow: 0 0 2px var(--text-halo), 1px 0 0 var(--text-halo), -1px 0 0 var(--text-halo), 0 1px 0 var(--text-halo), 0 -1px 0 var(--text-halo), 1px 1px 0 var(--text-halo), -1px -1px 0 var(--text-halo), 1px -1px 0 var(--text-halo), -1px 1px 0 var(--text-halo);
+  /* 会话列表上下两条渐隐带的高度（用户 2026-09-26: "不要有这里的透明交叉"）:
+     消息滚到顶栏玻璃 / 输入框玻璃底下时, 不能是"被玻璃边缘切一刀"的半截轮廓,
+     要在进玻璃之前淡出（上边带 = 顶栏高度, 下边带见 --chat-list-fade）。 */
+  --chat-list-fade: 56px;
   --danger: #b93c38; --danger-soft: #fceeea; --danger-border: #efc9c2;
   --success: #41673f; --success-soft: #edf4e8; --voice-active: #16a34a;
   --focus-ring: #75895c; --shadow: 0 20px 70px #202b1924;
@@ -24,6 +54,8 @@
   --glass: rgba(34, 38, 31, .58); --glass-muted: rgba(48, 54, 43, .5); --glass-accent: rgba(57, 53, 31, .68); --glass-edge: rgba(255, 255, 255, .18);
   --danger: #f5998e; --danger-soft: #3e2924; --danger-border: #6e4138;
   --success: #b0d29c; --success-soft: #2d3826; --voice-active: #35d46f; --focus-ring: #c2db9d; --shadow: 0 20px 70px #0007;
+  /* 深色反过来: 黑描边衬浅色字。数值必须与浅色那份同步（都是"原来的 66%"）。 */
+  --text-halo: rgba(0, 0, 0, .33);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) {
@@ -34,5 +66,24 @@
     --glass: rgba(34, 38, 31, .58); --glass-muted: rgba(48, 54, 43, .5); --glass-accent: rgba(57, 53, 31, .68); --glass-edge: rgba(255, 255, 255, .18);
     --danger: #f5998e; --danger-soft: #3e2924; --danger-border: #6e4138;
     --success: #b0d29c; --success-soft: #2d3826; --voice-active: #35d46f; --focus-ring: #c2db9d; --shadow: 0 20px 70px #0007;
+    /* 跟随系统的深色: 与 [data-theme="dark"] 那份逐位相同, 改了要一起改。 */
+    --text-halo: rgba(0, 0, 0, .33);
   }
+}
+
+/* 全局毛玻璃：开关只有一处 —— <html>.has-app-background（= 最近使用的对话设了背景）。
+   做法是把"实色面"这几个 token 指到 --glass 系列, 于是所有用 var(--surface*) 的组件自动变成
+   玻璃, 不用一个个列出来; 明暗两套也不用重写, 因为 var(--glass) 自己就分明暗两套。
+   故意不换的三组, 都是"换了会看不清"的:
+   - --border / --border-strong: 它们是分隔线与控件轮廓。整套设计里"白底白卡"上的区分全靠它
+     （例如胶囊按钮与卡片填色相同, 只靠边框分辨）, 换成近乎全白的 --glass-edge 它们会直接消失。
+   - --accent*: "选中 / 强调"本来就该看得见, 玻璃化不该把它抹平。
+   - --danger-* / --success-*: 语义色块本来就该比周围更实, 那是它起作用的方式。
+   !important 是必要的: 深色那一套写在 @media (prefers-color-scheme) 里, 选择器权重
+   （:root:not():not()）比 :root.has-app-background 高, 不压就换不过去。 */
+:root.has-app-background {
+  --surface: var(--glass) !important;
+  --surface-raised: var(--glass) !important;
+  --surface-muted: var(--glass-muted) !important;
+  --accent-soft: var(--glass-accent) !important;
 }

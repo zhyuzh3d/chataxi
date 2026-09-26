@@ -2,7 +2,7 @@
   "use strict";
   var backend = "local";
   var prefix = "chataxi.v1.";
-  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "remote-media", "model-catalog", "model-directory"];
+  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "remote-media", "model-catalog", "model-directory", "tts-cache"];
   var secretFields = ["apiKey", "accessKeyId", "sessionToken", "customHeaders"];
 
   function localKey(collection, key) { return prefix + collection + "." + key; }
@@ -136,6 +136,29 @@
       settings.compressionRetainChars = compressionBound(settings.compressionRetainChars, 2000, 10000, 4000);
       settings.compressionTargetChars = compressionBound(settings.compressionTargetChars, 500, 2000, 1000);
       if (["system", "zh-CN", "en"].indexOf(settings.uiLanguage) < 0) settings.uiLanguage = "system";
+      // 混响与环境声的开关并进滑竿了（用户 2026-09-26: "不用开关, 默认滑竿 0 就是关, 不是 0 就是打开"）。
+      // 旧存档里"开关关着、滑竿却停在非零值"的人, 如果只按新语义读, 升级后混响/环境声会自己冒出来
+      // —— 这里把那种组合显式归零一次。（滑竿位置本身保留: 开关开着的人原来就在 35 / 60 上。）
+      if (settings.ttsReverb === false && Number(settings.ttsReverbMix) > 0) settings.ttsReverbMix = 0;
+      if (settings.ttsAmbience === false && Number(settings.ttsAmbienceMix) > 0) settings.ttsAmbienceMix = 0;
+      // 环境声滑竿的量程从 0~50 改回 0~100（用户 2026-09-26 收尾: "把当前的两个实际范围值都映射
+      // 成为滑竿的 0~100…现在环境音范围正好"）。刻度放大、天花板不动 ⇒ 存档里的旧数值必须一起放大
+      // 一倍, 否则升级后环境声**直接减半**, 与"范围正好"直接矛盾。
+      // 这一乘是可证明等响的, 不是估的: 原响度 = AMBIENCE_MAX * min(50, v)/50, 乘完
+      // v' = min(100, 2v) ⇒ 新响度 = AMBIENCE_MAX * min(100, 2v)/100, 对任意 v ≥ 0 与原来逐位相同。
+      // （顺带把 0.7.18 之前写在 0~100 量程上的旧值也归位。）
+      // 只迁移环境声: 混响那一侧的回归是靠重锚 WET_MAX 修的, 存档值一个都不动（见 tts.js 那段）。
+      // 幂等靠 ttsMixRange100 这个一次性标记 —— 没有它, 每次 seed() 都会再乘一次 2, 用不了几天滑竿
+      // 就会自己顶到 100 并永远停在满档, 而且看起来完全不像"量程迁移"造成的。缺值(null)的不动:
+      // 那种人是"从没设置过", 应该去吃新默认值, 而不是被写成一个 0。
+      if (settings.ttsMixRange100 !== true) {
+        if (settings.ttsAmbienceMix != null && isFinite(Number(settings.ttsAmbienceMix))) {
+          settings.ttsAmbienceMix = Math.min(100, Math.max(0, Number(settings.ttsAmbienceMix)) * 2);
+        }
+        settings.ttsMixRange100 = true;
+      }
+      delete settings.ttsReverb;
+      delete settings.ttsAmbience;
       delete settings.recentFullMessages;
       delete settings.historyLimit;
       // 「按 Enter 发送」也不再提供：Enter 始终换行，Ctrl / ⌘ + Enter 始终发送。
@@ -493,7 +516,7 @@
     var used = {}, usedLogical = {};
     references.forEach(function (item) { (item.media || []).forEach(function (media) { if (media.mediaId) used[media.mediaId] = true; if (media.logicalFileId) usedLogical[media.logicalFileId] = true; }); });
     (await list("roles")).forEach(function (role) { if (role.avatarMediaId) used[role.avatarMediaId] = true; });
-    (await list("conversations")).forEach(function (conversation) { if (conversation.userAvatarMediaId) used[conversation.userAvatarMediaId] = true; if (conversation.background && conversation.background.mediaId) used[conversation.background.mediaId] = true; });
+    (await list("conversations")).forEach(function (conversation) { if (conversation.userAvatarMediaId) used[conversation.userAvatarMediaId] = true; var background = conversation.background; if (background && background.mediaId) used[background.mediaId] = true; if (background && background.logicalFileId) usedLogical[background.logicalFileId] = true; });
     var userProfile = await get("meta", "user-profile"); if (userProfile && userProfile.avatarMediaId) used[userProfile.avatarMediaId] = true;
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = typeof candidates[i] === "string" ? { mediaId: candidates[i] } : candidates[i] || {};
@@ -510,7 +533,10 @@
     var conversation = await get("conversations", conversationId);
     var media = (draft && draft.media || []).slice();
     if (conversation && conversation.userAvatarMediaId) media.push({ mediaId: conversation.userAvatarMediaId });
-    if (conversation && conversation.background && conversation.background.mediaId) media.push({ mediaId: conversation.background.mediaId });
+    if (conversation && conversation.background) {
+      if (conversation.background.mediaId) media.push({ mediaId: conversation.background.mediaId });
+      if (conversation.background.logicalFileId) media.push({ logicalFileId: conversation.background.logicalFileId });
+    }
     for (var i = 0; i < records.items.length; i += 1) {
       var value = records.items[i].value;
       media = media.concat(value.media || []);

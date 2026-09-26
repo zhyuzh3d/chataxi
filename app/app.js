@@ -28,12 +28,29 @@
     if (darkScheme.addEventListener) darkScheme.addEventListener("change", systemThemeChanged);
     else if (darkScheme.addListener) darkScheme.addListener(systemThemeChanged);
   }
+  // 背景图层钉住的"正常视口"（用户 2026-09-26: 不一定是键盘, 任何窗口变化下背景都要满屏、不能变小）。
+  // .app-shell 的高度必须跟着可视区缩（否则输入框会被键盘盖住）, 但背景图层不能跟着缩 ——
+  // 它上面的 background-size / background-position 都是百分比, 一缩就按新容器重算, 照片当场变小、
+  // 横向也可能覆盖不住。所以图层高度读 --viewport-full-height, 少掉的那截由 .app-shell 裁掉。
+  // 判定: 宽度变了 = 转屏 / 分屏 / 宿主窗口真的换了尺寸 ⇒ 重新起算;
+  //       宽度没变而高度变小 = 键盘或系统栏 ⇒ 不跟; 高度变大 = 新的正常高度 ⇒ 跟上。
+  // 正常高度一变, 铺背景用的宽高比就变了, 取景（百分比）得按新比例重算, 否则极端比例的照片会露边。
+  var nominalWidth = 0, nominalHeight = 0;
+  function syncBackgroundViewport(width, height) {
+    var changed = false;
+    if (width !== nominalWidth) { nominalWidth = width; nominalHeight = height; changed = true; }
+    else if (height > nominalHeight) { nominalHeight = height; changed = true; }
+    if (!changed && document.documentElement.style.getPropertyValue('--viewport-full-height')) return;
+    document.documentElement.style.setProperty('--viewport-full-height', nominalHeight + 'px');
+    if (app.features && app.features.chat && app.features.chat.repaintAppBackground) app.features.chat.repaintAppBackground();
+  }
   function resizeViewport() {
     var viewport = window.visualViewport;
     if (viewport && viewport.scale !== 1) return;
     var height = viewport ? viewport.height : window.innerHeight;
     document.documentElement.style.setProperty('--viewport-height', height + 'px');
     document.documentElement.style.setProperty('--viewport-top', (viewport ? viewport.offsetTop : 0) + 'px');
+    syncBackgroundViewport(window.innerWidth, height);
     if (!acceptsKeyboard(document.activeElement)) {
       stableViewportHeight = Math.max(stableViewportHeight, height);
       document.documentElement.classList.remove('keyboard-open');
@@ -151,6 +168,9 @@
       var settings = await app.data.store.get('meta', 'settings');
       applyTheme(settings.theme);
       app.i18n.setPreference(settings.uiLanguage, { silent: true });
+      // 全局背景要在首屏渲染之前铺上：晚了会先闪一帧没有背景的界面。
+      // 来源是"最近使用的对话"（meta/last-conversation），所以不用等用户进对话。
+      if (app.features.chat && app.features.chat.refreshAppBackground) await app.features.chat.refreshAppBackground();
       await routeFromHash();
       if (app.platform.hermit.available()) { try { await app.platform.hermit.api().app.ready(); } catch (_) {} }
     } catch (error) {
@@ -158,6 +178,8 @@
       document.getElementById('reloadApp').addEventListener('click', function () { location.reload(); });
     }
   }
-  app.navigate = navigate; app.openChat = openChat; app.closeChat = closeChat; app.applyTheme = applyTheme;
+  // resolvedTheme 要对外: 对话背景的六个色板各备明亮 / 深色两套渐变, 得按同一个
+  // 主题判断取用, 不能让 chat.js 自己再读一遍 data-theme 与 prefers-color-scheme。
+  app.navigate = navigate; app.openChat = openChat; app.closeChat = closeChat; app.applyTheme = applyTheme; app.resolvedTheme = resolvedTheme;
   document.addEventListener('DOMContentLoaded', init);
 })(window.chataxi);

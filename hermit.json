@@ -4,8 +4,8 @@
   "name": "chataxi",
   "author": "zhyuzh",
   "version": {
-    "code": 79,
-    "name": "0.7.0"
+    "code": 104,
+    "name": "0.7.25"
   },
   "entry": "index.html",
   "routing": "hash",

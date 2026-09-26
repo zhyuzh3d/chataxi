@@ -24,6 +24,9 @@ function runtime(files = []) {
   app.platform = { hermit: { awaitReady: async () => false, available: () => false, api: () => null } };
   ['app/data/store.js', 'app/services/catalog.js', 'app/services/model-registry.js', 'app/services/model-services.js', 'app/services/providers.js', 'app/services/middleware.js', 'app/services/context.js', 'app/services/llm.js', 'app/services/profiles.js', 'app/features/chat-session.js'].forEach(load);
   app.data.media = { remove: async (id) => removedMedia.push(id), put: async () => { throw Error('no images expected'); } };
+  // tts.js 会在合成前后访问朗读缓存（app/services/tts-cache.js）。它是 tts 的服务级依赖, 所以和
+  // store/catalog 一样预先装载 —— 否则每个 TTS 测试都得自己把它列进 files。
+  load('app/services/tts-cache.js');
   app.services.tts = { speak: async () => {} };
   files.forEach(load);
   return { app, context, values, removedMedia, fault(fn) { fault = fn; }, load };
@@ -487,6 +490,27 @@ test('schema migration initializes the moderator and auto-selection state, infer
   assert.equal(migratedSettings.compressionRetainChars, 10000);
 });
 
+// 环境声滑竿的量程从 0~50 改回 0~100（用户 2026-09-26 收尾: "把当前的两个实际范围值都映射成为
+// 滑竿的 0~100…现在环境音范围正好"）。刻度放大而天花板不动 ⇒ 存档旧值必须 ×2 才能保持同响度。
+// 单独立一条测试, 因为风险不在"乘 2"本身, 而在**乘几次**: seed() 每次 init() 都跑, 少了那个一次性
+// 标记就会越乘越大, 用不了几天滑竿自己顶到 100 并永远停在满档 —— 而现象完全不像"量程迁移"造成的。
+// 同时钉住混响那一侧: 它的回归是靠重锚 WET_MAX 修的, 存档值必须**一点不动**。
+test('the ambience slider is re-scaled to 0~100 exactly once, so an existing setting keeps its loudness', async () => {
+  const { app } = await fixture(), s = app.data.store;
+  const before = await s.get('meta', 'settings');
+  before.ttsAmbienceMix = 20; before.ttsReverbMix = 50;
+  delete before.ttsMixRange100;                 // 模拟"量程迁移还没跑过"的旧存档
+  await s.put('meta', 'settings', before);
+  await s.init();
+  const once = await s.get('meta', 'settings');
+  assert.equal(once.ttsAmbienceMix, 40, '20 on 0~50 must become 40 on 0~100: same scale position, same loudness');
+  assert.equal(once.ttsReverbMix, 50, 'reverb is fixed by re-anchoring WET_MAX, so its stored value must not be touched');
+  await s.init();
+  await s.init();
+  const thrice = await s.get('meta', 'settings');
+  assert.equal(thrice.ttsAmbienceMix, 40, 'the one-shot flag must stop seed() from doubling the value on every boot');
+});
+
 test('schema migration keeps the moderator first in every conversation participant order', async () => {
   const { app } = await fixture(), s = app.data.store;
   const conversation = await s.get('conversations', 'c'); conversation.roleIds = ['a', 'b']; conversation.moderatorRoleId = 'b'; await s.put('conversations', 'c', conversation);
@@ -939,6 +963,9 @@ test('backgrounding preserves prepared native audio and replays it on foreground
     files: { delete: async () => { deletes++; } }
   });
   assert.equal(await app.services.tts.prepare('已生成的朗读', { ttsProfileId: 'external' }, 'message-ready'), true);
+  // 宿主文件型 clip 不进缓存（0.7.22）: 那种音频只在 Web Audio 总线之外出声（没有混响）, 页面也取不回
+  // 它的字节, 存下来只会是一条永远命中不了的死记录, 还要拖着宿主文件不放。缓存空着才是对的。
+  assert.equal(await app.services.ttsCache.count(), 0);
   const firstPlayback = app.services.tts.playReady('message-ready');
   for (let i = 0; i < 100 && !plays; i++) await new Promise(resolve => setTimeout(resolve, 1));
   assert.equal(await app.services.tts.pauseForBackground(), true); assert.equal(stops, 1); assert.equal(deletes, 0);
@@ -946,7 +973,11 @@ test('backgrounding preserves prepared native audio and replays it on foreground
   for (let i = 0; i < 100 && plays < 2; i++) await new Promise(resolve => setTimeout(resolve, 1));
   assert.equal(requests, 1); assert.equal(plays, 2);
   await app.services.tts.stop(); await firstPlayback;
-  assert.equal(stops, 2); assert.equal(deletes, 1);
+  assert.equal(stops, 2);
+  // 停播时释放宿主文件 —— 没有任何缓存条目拥有它, 留着只会只增不减。
+  assert.equal(deletes, 1);
+  assert.equal(await app.services.ttsCache.clear(), true);
+  assert.equal(deletes, 1, 'a second release would mean the clip was owned twice');
 });
 
 test('complete TTS falls back after a retryable audio stream aborts before playback starts', async () => {
@@ -967,7 +998,9 @@ test('complete TTS falls back after a retryable audio stream aborts before playb
     request: async () => { completeRequests++; return { status: 200, bodyBase64: 'SUQzBAUG', headers: { 'content-type': 'audio/mpeg' } }; }
   };
   await app.services.tts.speak('自动朗读完整回复', { ttsProfileId: 'openai-tts', ttsModel: 'tts-1', ttsVoice: 'alloy' });
-  assert.equal(streamRequests, 1); assert.equal(completeRequests, 1); assert.equal(plays, 1);
+  // 两次字节流: 第一次是 speak() 的流式尝试（abort 时还没开声）, 第二次是整段合成回退时的那一次
+  // —— 这条通道就是它现在唯一能拿到音频字节的地方, 所以这里必须是 2 而不是 1。
+  assert.equal(streamRequests, 2); assert.equal(completeRequests, 1); assert.equal(plays, 1);
 });
 
 test('streaming TTS starts PCM playback before the HTTP response finishes', async () => {
@@ -1113,4 +1146,177 @@ test('ASR cancellation during capability lookup prevents a later microphone star
   const starting = app.services.asr.startSystem({}, {});
   await reached.promise; await app.services.asr.cancelSystem(); availability.resolve({ available: true });
   await assert.rejects(starting, /已取消/); assert.equal(starts, 0);
+});
+
+// 朗读音频缓存（用户 2026-09-26）: "相同的文本、相同的模型、相同的音色每次生成的音频文件都是一样的…
+// 每次要进行朗读的任务前, 都检查一下 hash 是否存在, 如果存在则直接使用已有的音频文件"。
+test('speech audio is cached by request digest, so the same line is only synthesized once', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  // 这个装置默认把媒体库打成"不许存", 换成能存能取的, 才能同时验证"音频本体在媒体库、记录里只有句柄"。
+  const media = new Map();
+  app.data.media = {
+    put: async (blob, meta) => { media.set(meta.id, { id: meta.id, blob, mime: blob.type || meta.mime }); return { id: meta.id }; },
+    get: async (id) => media.get(id) || null,
+    remove: async (id) => { media.delete(id); }
+  };
+  await app.data.store.put('tts-profiles', 'external', { id: 'external', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', voice: 'v1', voices: [{ id: 'v1' }], defaultVoiceId: 'v1', enabled: true });
+  let requests = 0;
+  app.platform.network = { request: async () => { requests++; return { status: 200, bodyBase64: 'AA==', headers: { 'content-type': 'audio/mpeg' } }; } };
+  const service = await app.data.store.get('tts-profiles', 'external');
+  await app.services.tts.testService(service);
+  assert.equal(requests, 1);
+  await app.services.tts.testService(service);
+  assert.equal(requests, 1); // 第二次必须命中缓存, 不再打接口
+  assert.equal(await app.services.ttsCache.count(), 1);
+  // 记录里只应该有文件句柄, 音频本体在媒体库里。
+  const record = await app.data.store.get('tts-cache', (await app.data.store.list('tts-cache'))[0].hash);
+  assert.equal(record.kind, 'media');
+  assert.ok(record.mediaId); assert.equal(record.blob, undefined);
+  assert.equal(media.size, 1);
+  // 换音色 = 换请求体 = 换键 ⇒ 必须重新合成, 不能拿上一段的音频顶替。
+  await app.services.tts.testService(Object.assign({}, service, { voice: 'v2', defaultVoiceId: 'v2', voices: [{ id: 'v2' }] }));
+  assert.equal(requests, 2);
+  assert.equal(await app.services.ttsCache.count(), 2);
+});
+
+// 混响只挂在 Web Audio 总线上, 而宿主播放器（api.audio.play）是在 WebView 之外出声的 —— 音频根本不进
+// AudioContext, 混响器与环境声都挂不上去。宿主对**没有 Content-Length 的响应**（chunked ——
+// ElevenLabs / OpenAI 这类 TTS 一律如此, NativeHttpClient.request: declaredLength < 0）一律落成宿主
+// 文件, 那种 clip 只能交给宿主播放器 ⇒ 那条路上永远没有混响（业主 2026-09-26: "我把混响效果拉到 100
+// 仍然没有混响效果, 之前是有的啊"）。页面按同源 url 去 fetch 也不行: happ 的 CSP 是 connect-src 'none'
+// （liveUrl 为空的实例走这一支, 见 LocalContentGateway.headers）, fetch 被直接拦掉。
+// 所以整段合成改走原生字节流（openStream/readStream, 流式朗读一直在用的那条通道）: 字节回到页面
+// ⇒ Blob ⇒ 带混响的解码路。这条测试钉住: 不再走 network.request、真走了 Web Audio 解码、落点是总线
+// input 而不是 destination、缓存里存的是媒体型条目。
+test('a non-SSE speech response is streamed back as bytes so it plays through the reverb bus', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  const media = new Map();
+  app.data.media = {
+    put: async (blob, meta) => { media.set(meta.id, { id: meta.id, blob, mime: blob.type || meta.mime }); return { id: meta.id }; },
+    get: async (id) => media.get(id) || null,
+    remove: async (id) => { media.delete(id); }
+  };
+  await app.data.store.put('tts-profiles', 'external', { id: 'external', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', voice: 'v1', voices: [{ id: 'v1' }], defaultVoiceId: 'v1', enabled: true });
+  // 环境声关掉只是为了让用例快: 它要现场合成两段 16 秒级的噪声, 与这条断言无关。
+  const settings = await app.data.store.get('meta', 'settings'); settings.ttsAmbienceMix = 0; await app.data.store.put('meta', 'settings', settings);
+  let completes = 0, streamed = 0;
+  app.platform.network = {
+    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', url: '/__hermit/files/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', mime: 'audio/mpeg' } }; },
+    requestByteStream: async options => { streamed++; await options.onChunk(new Uint8Array([73, 68, 51, 4, 0, 0])); await options.onChunk(new Uint8Array(42)); return { status: 200, headers: { 'content-type': 'audio/mpeg' }, contentType: 'audio/mpeg', url: options.url }; }
+  };
+  app.platform.hermit.available = () => true;
+  const nodes = [], contexts = [];
+  function makeNode(kind) { const node = { kind, targets: [], connect(target) { this.targets.push(target); } }; nodes.push(node); return node; }
+  class FakeAudioContext {
+    constructor() { this.state = 'running'; this.destination = { kind: 'destination' }; this.currentTime = 0; this.sampleRate = 24000; contexts.push(this); }
+    resume() { this.state = 'running'; return Promise.resolve(); }
+    createBuffer(channels, length, rate) { const planes = Array.from({ length: channels }, () => new Float32Array(length)); return { length, sampleRate: rate, numberOfChannels: channels, getChannelData: index => planes[index] }; }
+    createGain() { const node = makeNode('gain'); node.gain = { value: 1, setTargetAtTime() {}, cancelScheduledValues() {} }; return node; }
+    createBiquadFilter() { const node = makeNode('biquad'); node.frequency = { value: 0, setTargetAtTime() {} }; node.Q = { value: 0 }; node.gain = { value: 0 }; return node; }
+    createConvolver() { const node = makeNode('convolver'); node.buffer = null; return node; }
+    createDynamicsCompressor() { const node = makeNode('compressor'); for (const key of ['threshold', 'knee', 'ratio', 'attack', 'release']) node[key] = { value: 0 }; return node; }
+    createBufferSource() { const node = makeNode('source'); node.buffer = null; node.loop = false; node.start = function () { setTimeout(() => node.onended && node.onended(), 0); }; node.stop = function () {}; return node; }
+    decodeAudioData(_bytes, done) { const decoded = { decoded: true }; done(decoded); return Promise.resolve(decoded); }
+  }
+  env.context.window.AudioContext = FakeAudioContext;
+  assert.equal(app.services.tts.unlockPlayback(), true);
+  await app.services.tts.speak('字节流朗读', { ttsProfileId: 'external' });
+  assert.equal(streamed, 1, 'binary speech must be read through the native byte stream');
+  assert.equal(completes, 0, 'network.request lets the host spill a chunked body into a file, and that clip can only play outside the reverb bus');
+  // unlockPlayback() 会起一个 1 采样的静默音源; 只有解出来的那段才带 decoded 标记。
+  const audible = nodes.filter(node => node.kind === 'source' && node.buffer && node.buffer.decoded);
+  assert.equal(audible.length, 1, 'the streamed bytes must be decoded through Web Audio: that is the only path carrying the reverb');
+  const gain = audible[0].targets[0];
+  assert.ok(gain && gain.kind === 'gain', 'the decoded clip must be wired through its own gain before it starts');
+  assert.notEqual(gain.targets[0], contexts[0].destination, 'the clip must land on the reverb bus input, not straight on destination');
+  const record = await app.data.store.get('tts-cache', (await app.data.store.list('tts-cache'))[0].hash);
+  assert.equal(record.kind, 'media', 'the cache must hold the audio body, not a host file handle');
+  assert.ok(record.mediaId); assert.equal(record.logicalFileId, undefined);
+});
+
+// 旧宿主没有 openStream/readStream 时不能把朗读弄丢: 退回老的 network.request 流程, 那条路只是没有混响。
+// 顺带钉住"宿主文件型 clip 不进缓存": 存了也永远命中不了, 还要拖着宿主文件不放; 返回 false 之后
+// disposeClip 在播完就把它删掉。这一条同时是老爷机上的回归保险。
+test('a host without the byte stream still speaks through the old request path, and releases the host file', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  const fileId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await app.data.store.put('tts-profiles', 'external', { id: 'external', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', voice: 'v1', voices: [{ id: 'v1' }], defaultVoiceId: 'v1', enabled: true });
+  const settings = await app.data.store.get('meta', 'settings'); settings.ttsAmbienceMix = 0; await app.data.store.put('meta', 'settings', settings);
+  let completes = 0, nativePlays = 0, deleted = 0;
+  app.platform.network = {
+    requestByteStream: async () => { const error = Error('当前 HermitApp 尚未提供流式网络能力，请更新宿主'); error.streamUnavailable = true; throw error; },
+    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: fileId, url: '/__hermit/files/' + fileId, mime: 'audio/mpeg' } }; }
+  };
+  const listeners = {};
+  app.platform.hermit = {
+    awaitReady: async () => true, available: () => true,
+    on: (event, handler) => { listeners[event] = handler; return () => { delete listeners[event]; }; },
+    api: () => ({
+      files: { delete: async () => { deleted++; } },
+      audio: { play: async () => { nativePlays++; const playbackId = 'p1'; setTimeout(() => { const done = listeners['audio.playback.done']; if (done) done({ playbackId: playbackId }); }, 0); return { playbackId: playbackId }; }, stopPlayback: async () => {} }
+    })
+  };
+  await app.services.tts.speak('老宿主', { ttsProfileId: 'external' });
+  assert.equal(completes, 1, 'the old flow must still run when the host reports no byte-stream capability');
+  assert.equal(nativePlays, 1, 'the legacy host file is played by the host player, exactly as before');
+  assert.equal(await app.services.ttsCache.count(), 0, 'a host-file clip can never be a usable hit: it must not take a cache slot');
+  assert.equal(deleted, 1, 'and with no cache owning it, the host file must be released right after playback');
+});
+
+
+// 缓存必须覆盖**流式**那条路（用户 2026-09-26 追加: "缓存好像没有生效啊, 我在反复点同一个对话内容的
+// 朗读按钮, 正常情况应该立即播放无需等待啊, 播放缓存的才对"）。原来缓存只挂在整段合成那条路上,
+// 而支持流式音频的服务**永远**走流式分支 —— 那条路既不查也不写, 于是每点一次都重新生成一次,
+// 从头到尾一次都不会命中。这条测试就钉住这一点。
+test('streamed speech is written back to the cache so the next request is a hit', async () => {
+  const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
+  const media = new Map();
+  app.data.media = {
+    put: async (blob, meta) => { media.set(meta.id, { id: meta.id, blob, mime: blob.type }); return { id: meta.id }; },
+    get: async (id) => media.get(id) || null,
+    remove: async (id) => { media.delete(id); }
+  };
+  await app.data.store.put('tts-profiles', 'openai-tts', { id: 'openai-tts', family: 'openai', type: 'openai', apiKey: 'fixture', endpoint: 'https://api.openai.com/v1/audio/speech', models: [{ id: 'tts-1', streaming: true, audioStreaming: true }], modelsDiscovered: true, enabledModelIds: ['tts-1'], voices: [{ id: 'alloy' }], enabled: true });
+  let streamRequests = 0, completeRequests = 0, plays = 0;
+  class FakeAudioContext {
+    constructor() { this.state = 'running'; this.destination = {}; this.currentTime = 0; }
+    resume() { return Promise.resolve(); }
+    createBuffer(_channels, length, sampleRate) { const samples = new Float32Array(length); return { length, sampleRate, getChannelData: () => samples }; }
+    // 只数真正出声的音源: unlockPlayback() 会起一个 1 采样的静默音源, 把它算进来就会多 1。
+    createBufferSource() { return { buffer: null, connect() {}, start() { if (this.buffer && (this.buffer.length > 1 || this.buffer.decoded)) plays++; setTimeout(() => this.onended && this.onended(), 0); }, stop() {} }; }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    decodeAudioData(_bytes, done) { const decoded = { decoded: true }; done(decoded); return Promise.resolve(decoded); }
+  }
+  env.context.window.AudioContext = FakeAudioContext; assert.equal(app.services.tts.unlockPlayback(), true);
+  app.platform.network = {
+    requestByteStream: async options => { streamRequests++; await options.onChunk(new Uint8Array(960)); await options.onChunk(new Uint8Array(960)); },
+    request: async () => { completeRequests++; return { status: 200, bodyBase64: 'SUQzBAUG', headers: { 'content-type': 'audio/mpeg' } }; }
+  };
+  const role = { ttsProfileId: 'openai-tts', ttsModel: 'tts-1', ttsVoice: 'alloy' };
+  await app.services.tts.speak('反复朗读同一句', role);
+  assert.equal(streamRequests, 1); assert.equal(completeRequests, 0); assert.equal(plays, 2);
+  assert.equal(await app.services.ttsCache.count(), 1); // 流式音频必须回写进缓存
+  const stored = [...media.values()][0];
+  assert.equal(stored.blob.type, 'audio/wav'); // 裸 PCM 要套一个 decodeAudioData 认得的容器
+  assert.equal(stored.blob.size, 44 + 1920);
+  await app.services.tts.speak('反复朗读同一句', role);
+  assert.equal(streamRequests, 1); // 第二次必须命中缓存, 不再打接口
+  assert.equal(completeRequests, 0);
+  assert.equal(plays, 3); // 命中之后仍走既有那条解码播放路径, 不另开一条播放链
+});
+
+test('the speech cache keeps the 100 most recent clips and releases both halves when it evicts', async () => {
+  const env = runtime([]), { app } = env; await app.data.store.init();
+  const media = new Map();
+  app.data.media = {
+    put: async (blob, meta) => { media.set(meta.id, { id: meta.id, blob }); return { id: meta.id }; },
+    get: async (id) => media.get(id) || null,
+    remove: async (id) => { media.delete(id); }
+  };
+  for (let i = 0; i < 105; i++) await app.services.ttsCache.store('k' + i, { blob: new Blob(['a']), mime: 'audio/mpeg' }, { chars: 1 });
+  assert.equal(await app.services.ttsCache.count(), 100);
+  assert.equal(media.size, 100); // 淘汰要连音频本体一起删, 否则媒体库只增不减
+  const kept = await app.data.store.list('tts-cache');
+  assert.equal(kept.some(item => item.hash === 'k0'), false); // 最久未用的先走
+  assert.equal(kept.some(item => item.hash === 'k104'), true);
 });

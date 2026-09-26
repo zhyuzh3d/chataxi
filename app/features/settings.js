@@ -12,7 +12,9 @@
     return '<label class="switch-row"><span><strong>' + label + '</strong><small>' + text + '</small></span><input name="' + name + '" type="checkbox"' + (checked ? ' checked' : '') + '></label>';
   }
   function range(name, label, value, min, max, step, suffix) {
-    return '<label class="field range-field"><span>' + label + '<output data-output="' + name + '">' + u.escapeHtml(value) + suffix + '</output></span><input name="' + name + '" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + u.escapeHtml(value) + '"></label>';
+    // 后缀挂在 input 的 data-suffix 上, 由下面统一的 input 监听读出来 —— 原来这里写死
+    // " 字", 加进混响强度那种 "%" 的滑竿就会把单位显示错。
+    return '<label class="field range-field"><span>' + label + '<output data-output="' + name + '">' + u.escapeHtml(value) + suffix + '</output></span><input name="' + name + '" type="range" data-suffix="' + u.escapeHtml(suffix || "") + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + u.escapeHtml(value) + '"></label>';
   }
   function sizeText(bytes) {
     var value = Number(bytes || 0);
@@ -27,6 +29,8 @@
     if (selected.indexOf("conversations") >= 0) {
       var conversations = await store.list("conversations");
       for (var conversationIndex = 0; conversationIndex < conversations.length; conversationIndex += 1) await store.deleteConversation(conversations[conversationIndex].id);
+      // 全局背景来自"最近使用的对话"，对话都没了它就该跟着撤掉，不能继续铺在整个应用上。
+      await app.features.chat.refreshAppBackground();
     }
     if (selected.indexOf("roles") >= 0) {
       var roles = await store.list("roles"), roleMedia = [];
@@ -87,12 +91,26 @@
     var modeValue = info.runtimeMode === "local" && appInfo.liveAvailable ? '<button class="runtime-mode-text" type="button" data-enable-live aria-label="本地运行，连续点击三次切换到线上实时运行">' + modeText + '</button>' : u.escapeHtml(modeText);
     var tabs = Object.keys(tabNames).map(function (key) { return '<button type="button" role="tab" data-settings-tab="' + key + '" aria-selected="' + (key === tab) + '">' + tabNames[key] + '</button>'; }).join("");
     main.innerHTML = '<section class="page settings-page"><div class="section-tabs settings-tabs" role="tablist" aria-label="设置分类">' + tabs + '</div><form id="generalForm" class="settings-stack">' +
-      '<section class="card card-body form-grid settings-panel' + (tab === "interface" ? '' : ' is-hidden') + '" data-settings-panel="interface"><h2 class="section-title">界面</h2>' +
+      '<section class="form-grid settings-panel' + (tab === "interface" ? '' : ' is-hidden') + '" data-settings-panel="interface"><h2 class="section-title">界面</h2>' +
       ui.picker("theme", "界面主题", "") + ui.picker("uiLanguage", "界面语言", "", "跟随系统时，中文系统使用中文，其他系统使用英文。") + ui.picker("imageDetail", "发送图片清晰度", "") + '</section>' +
-      '<section class="card card-body form-grid settings-panel' + (tab === "conversation" ? '' : ' is-hidden') + '" data-settings-panel="conversation"><h2 class="section-title">对话</h2>' +
+      '<section class="form-grid settings-panel' + (tab === "conversation" ? '' : ' is-hidden') + '" data-settings-panel="conversation"><h2 class="section-title">对话</h2>' +
       toggle("autoSpeak", "自动朗读新回复", "群聊完成后朗读最后一位角色的回复", settings.autoSpeak) +
+      // 开关已并进滑竿（用户 2026-09-26: "混响和环境声不用开关, 默认滑竿 0 就是关, 不是 0 就是打开。
+      // 所以可以去掉 Switch 开关控件, 只留强度滑竿了, 合并"）。所以这里不再有 toggle:
+      // 滑竿标题直接就是功能名（合并了原来开关的标题), 拉到 0 = 关, 非 0 = 开。
+      // 原来的说明句（"小房间混响…" / "隐约的远处人声和风声…"）收进下方一行 helper, 免得丢信息。
+      // 量程（用户 2026-09-26: "环境噪声设定要变小, 范围 0~50; 房间回响 0~100" → 同日收尾改成
+      // "把当前的两个实际范围值都映射成为滑竿的 0~100"）⇒ 两根滑竿现在都是 0~100。
+      // 环境声那边只放大刻度、不动声音: 天花板当时仍是 0.08, 存档旧值在 store.seed 里一并 ×2,
+      // 所以显示默认值也跟着从 30 换成等响的 60。0.7.24 起两根滑竿映射出的实际值各 ×2（天花板
+      // 0.08 → 0.16）, 但那是映射层的事 —— 显示、存档、默认值这三样都不动, 这里不需要改。
+      // 显示值必须按**各自的量程**钳一次, 否则升级上来的人会看到读数超出滑竿右端（滑块本身会被
+      // 浏览器钳住）, 变成一个看起来像坏掉、又没人知道是这次改量程造成的界面。
+      range("ttsReverbMix", "朗读房间混响", Number(settings.ttsReverbMix == null ? 35 : Math.min(100, settings.ttsReverbMix)), 0, 100, 5, "%") +
+      range("ttsAmbienceMix", "背景环境声", Number(settings.ttsAmbienceMix == null ? 60 : Math.min(100, settings.ttsAmbienceMix)), 0, 100, 5, "%") +
+      '<p class="helper">混响是小房间的贴耳效果, 让朗读声音像话筒就在嘴边; 环境声是远处断续的人声与风声, 时大时小, 每次不同。两根滑竿拉到 0 就是关闭, 对 Android 系统朗读无效。</p>' +
       ui.picker("defaultTtsProfileId", "默认朗读服务", "", "角色选择“跟随通用设置”时使用") + ui.picker("defaultAsrProfileId", "默认语音输入", "", "新对话默认使用；可在对话管理中覆盖") + '</section>' +
-      '<section class="card card-body form-grid settings-panel' + (tab === "compression" ? '' : ' is-hidden') + '" data-settings-panel="compression"><div><h2 class="section-title">上下文自动压缩</h2><p class="helper section-helper">超过触发字数时，由主持人角色用自己的模型在后台压缩更早的消息，不打断本轮回复。</p></div>' +
+      '<section class="form-grid settings-panel' + (tab === "compression" ? '' : ' is-hidden') + '" data-settings-panel="compression"><div><h2 class="section-title">上下文自动压缩</h2><p class="helper section-helper">超过触发字数时，由主持人角色用自己的模型在后台压缩更早的消息，不打断本轮回复。</p></div>' +
       toggle("autoCompress", "自动压缩历史", "超过触发字数后在后台自动执行", settings.autoCompress) + range("compressionThresholdChars", "触发字数", Number(settings.compressionThresholdChars || 10000), 4000, 32000, 2000, " 字") + range("compressionRetainChars", "压缩保留字数", Number(settings.compressionRetainChars || 4000), 2000, 10000, 1000, " 字") + '<p class="helper">从最近一条往前累加，达到这个字数就不再往更早处压；至少保留 2 条。</p>' + range("compressionTargetChars", "压缩目标", Number(settings.compressionTargetChars || 1000), 500, 2000, 100, " 字") +
       '<label class="field"><span>压缩提示词</span><textarea class="prompt-editor" name="compressionPrompt" maxlength="8000">' + u.escapeHtml(settings.compressionPrompt || "") + '</textarea><small>压缩内容可以在具体对话中手工修订；已经压缩的原消息不再允许编辑。</small></label></section>' +
       '<div class="settings-save' + (tab === "system" ? ' is-hidden' : '') + '" data-settings-save><button class="button primary full" type="submit">保存设置</button><p class="save-status" id="settingsSaveStatus" role="status"></p></div></form>' +
@@ -111,7 +129,9 @@
     // 界面语言选中即生效；持久化仍走下方「保存设置」，与其它设置项一致。
     form.elements.namedItem("uiLanguage").addEventListener("change", function (event) { app.i18n.setPreference(event.target.value); markDirty(); });
     ui.bindPicker(form, "imageDetail", [{ id: "auto", name: "自动" }, { id: "low", name: "低清" }, { id: "high", name: "高清" }], settings.imageDetail || "auto");
-    form.querySelectorAll('input[type="range"]').forEach(function (slider) { slider.addEventListener("input", function () { var output = form.querySelector('[data-output="' + slider.name + '"]'); output.textContent = slider.value + " 字"; markDirty(); }); });
+    form.querySelectorAll('input[type="range"]').forEach(function (slider) { slider.addEventListener("input", function () { var output = form.querySelector('[data-output="' + slider.name + '"]'); output.textContent = slider.value + (slider.dataset.suffix || ""); markDirty(); }); });
+    // 原来这里还有一段"开关关掉时把强度滑竿置灰"的联动。开关控件已经去掉, 滑竿自己就是开关, 所以
+    // 整段联动连同 `.range-field.is-disabled` 的用法一并撤掉 —— 留着只会把滑竿又置灰。
     function markDirty() { document.getElementById("settingsSaveStatus").textContent = "有未保存的更改"; }
     form.addEventListener("input", markDirty);
     form.addEventListener("submit", ui.action(async function (event) {
@@ -122,7 +142,7 @@
         // language（朗读/识别的语音语言兜底）已不再有界面控件，因此不能出现在保存列表里，
         // 否则表单里取不到该字段会把已保存的值清空。
         ["defaultTtsProfileId", "defaultAsrProfileId", "theme", "imageDetail", "uiLanguage", "compressionPrompt"].forEach(function (key) { next[key] = u.formValue(form, key); });
-        ["compressionThresholdChars", "compressionRetainChars", "compressionTargetChars"].forEach(function (key) { next[key] = Number(u.formValue(form, key)); });
+        ["compressionThresholdChars", "compressionRetainChars", "compressionTargetChars", "ttsReverbMix", "ttsAmbienceMix"].forEach(function (key) { next[key] = Number(u.formValue(form, key)); });
         if (!next.compressionPrompt) throw new Error("请填写压缩提示词");
         await store.put("meta", "settings", next); app.applyTheme(next.theme); document.getElementById("settingsSaveStatus").textContent = "设置已保存"; ui.toast("设置已保存");
       } finally { button.disabled = false; }

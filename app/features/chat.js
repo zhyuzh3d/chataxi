@@ -59,11 +59,39 @@
     app.services.tts.setMuted(Boolean(conversation.ttsMuted));
     ui.pageHeader(conversation.title, participants.map(function (role) { return role.name; }).join('、'), '<button class="icon-button" type="button" id="muteTtsButton" aria-label="静音自动朗读" title="静音自动朗读">' + ui.icon(conversation.ttsMuted ? 'volume-xmark' : 'volume-high') + '</button><button class="icon-button" type="button" id="chatMenuButton" aria-label="对话管理">' + ui.icon('ellipsis') + '</button>');
     var main = document.getElementById('mainContent'); main.className = 'main chat-main';
-    main.innerHTML = '<section class="chat-layout"><div class="message-viewport"><div class="message-list" id="messageList" aria-label="对话消息"><div class="message-list-inner" id="messageListInner"></div></div><button type="button" class="button secondary jump-latest is-hidden" id="jumpLatest">' + ui.icon('arrow-down') + '回到最新</button></div><div class="composer"><div class="composer-inner"><div class="attachment-tray is-hidden" id="attachmentTray"></div><div class="composer-box">' + (conversation.kind === 'group' ? '<div class="composer-recipients"><span class="recipient-at" aria-label="艾特一位角色">@</span><div class="mention-strip" role="group" aria-label="选择本轮回复角色">' + participants.map(function (role) { return '<button class="chip mention-chip" type="button" data-role-toggle="' + u.escapeHtml(role.id) + '" data-moderator="' + String(role.id === moderatorRoleId(conversation)) + '" aria-pressed="' + (target.selected.indexOf(role.id) >= 0) + '" title="' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'tiny mention-avatar') + '<span class="mention-name">' + u.escapeHtml(shortRoleName(role.name)) + '</span></button>'; }).join('') + '</div><button class="auto-role-toggle" type="button" id="autoRoleToggle" role="switch" aria-checked="' + String(target.autoSelectRole) + '" aria-label="自动选择回复角色" title="自动选择回复角色">' + ui.icon('wand-magic-sparkles') + '</button></div>' : '') + '<textarea id="messageInput" rows="1" maxlength="16000" placeholder="把你的想法写在这里…" aria-label="消息内容"></textarea><div class="composer-toolbar"><div class="row composer-tools"><button class="icon-button" type="button" id="imageButton" aria-label="添加图片或视频" title="添加图片或视频">' + ui.icon('paperclip') + '</button><button class="icon-button" type="button" id="micButton" aria-label="语音输入" title="语音输入">' + ui.icon('microphone') + '</button><span class="composer-hint" id="composerHint"></span></div><button type="button" class="icon-button send-button" id="sendButton" aria-label="发送消息">' + ui.icon('arrow-up') + '</button></div></div><div class="composer-footer"><span id="composerStatus" role="status" aria-live="polite"></span><span id="draftStatus"></span></div></div></div></section>';
+    main.innerHTML = '<section class="chat-layout"><div class="message-viewport"><div class="message-list" id="messageList" aria-label="对话消息"><div class="message-list-inner" id="messageListInner"></div></div><div class="message-fade is-top" aria-hidden="true"></div><div class="message-fade is-bottom" aria-hidden="true"></div><button type="button" class="button secondary jump-latest is-hidden" id="jumpLatest">' + ui.icon('arrow-down') + '回到最新</button></div><div class="composer"><div class="composer-inner"><div class="attachment-tray is-hidden" id="attachmentTray"></div><div class="composer-box">' + (conversation.kind === 'group' ? '<div class="composer-recipients"><span class="recipient-at" aria-label="艾特一位角色">@</span><div class="mention-strip" role="group" aria-label="选择本轮回复角色">' + participants.map(function (role) { return '<button class="chip mention-chip" type="button" data-role-toggle="' + u.escapeHtml(role.id) + '" data-moderator="' + String(role.id === moderatorRoleId(conversation)) + '" aria-pressed="' + (target.selected.indexOf(role.id) >= 0) + '" title="' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'tiny mention-avatar') + '<span class="mention-name">' + u.escapeHtml(shortRoleName(role.name)) + '</span></button>'; }).join('') + '</div><button class="auto-role-toggle" type="button" id="autoRoleToggle" role="switch" aria-checked="' + String(target.autoSelectRole) + '" aria-label="自动选择回复角色" title="自动选择回复角色">' + ui.icon('wand-magic-sparkles') + '</button></div>' : '') + '<textarea id="messageInput" rows="1" maxlength="16000" placeholder="把你的想法写在这里…" aria-label="消息内容"></textarea><div class="composer-toolbar"><div class="row composer-tools"><button class="icon-button" type="button" id="imageButton" aria-label="添加图片或视频" title="添加图片或视频">' + ui.icon('paperclip') + '</button><button class="icon-button" type="button" id="micButton" aria-label="语音输入" title="语音输入">' + ui.icon('microphone') + '</button><span class="composer-hint" id="composerHint"></span></div><button type="button" class="icon-button send-button" id="sendButton" aria-label="发送消息">' + ui.icon('arrow-up') + '</button></div></div><div class="composer-footer"><span id="composerStatus" role="status" aria-live="polite"></span><span id="draftStatus"></span></div></div></div></section>';
     ui.hydrateAvatars(main);
-    applyChatBackground(target);
+    // 打开这个对话 = 它就是"最近使用的对话", 全局背景随之换成它的（没有设置就清掉）。
+    rememberConversation(id);
+    applyAppBackground(conversation.background);
     var input = document.getElementById('messageInput'); input.value = target.draft.text || '';
     resizeInput(input);
+    // 输入区浮在消息列表之上（列表铺满整屏）, 所以列表底部留白与下边那条渐隐带都要知道它的真实高度。
+    // 高度是动态的（多行草稿、附件托盘、群聊角色条、朗读状态行都会让它变）, 所以量而不是写死:
+    // ResizeObserver 盯住它, 再加一道窗口尺寸兜底, 结果写回 --chat-composer-h。
+    var composer = main.querySelector('.composer'), layout = main.querySelector('.chat-layout');
+    target.syncComposerInset = function () {
+      if (!composer || !layout || !composer.offsetHeight) return;
+      layout.style.setProperty('--chat-composer-h', composer.offsetHeight + 'px');
+    };
+    target.syncComposerInset();
+    requestAnimationFrame(target.syncComposerInset);
+    if (window.ResizeObserver) { target.composerObserver = new ResizeObserver(target.syncComposerInset); target.composerObserver.observe(composer); }
+    window.addEventListener('resize', target.syncComposerInset);
+    // 点消息列表的空白处 = 把界面上所有控件收掉, 只留背景; 再点一次恢复（用户 2026-09-26:
+    // "点击消息列表的空白位置, 可以隐藏所有控件（包括标题栏和输入框和对话列表。只显示背景）,
+    // 再点一次就恢复显示"）。隐的三块是顶栏 / 消息列表 / 输入区, 视觉与命中全在 CSS 的
+    // .chat-chrome-hidden 里, 这里只负责"什么时候切"。
+    // 判"空白"用一支黑名单选择器: 气泡、头像、消息上的按钮、欢迎面板都长在列表里面,
+    // 点它们不能顺手把界面藏起来。隐掉之后列表与输入区都不吃点击, 于是"再点一次"必然落在
+    // .chat-layout 上 —— 恢复的判据只有一条, 不需要第二套定位逻辑。
+    target.chromeHidden = false;
+    target.chromeRegions = [].slice.call(document.querySelectorAll('#appShell > .topbar, .message-viewport, .composer'));
+    layout.addEventListener('click', function (event) {
+      var node = event.target;
+      if (node && node.nodeType === 1 && node.closest && node.closest('button, a, input, textarea, select, label, img, .avatar, .message-row, .chat-welcome')) return;
+      setChromeHidden(target, !target.chromeHidden);
+    });
     input.addEventListener('input', function () { target.draft.text = input.value; resizeInput(input); queueDraft(target); syncComposer(target); });
     input.addEventListener('keydown', function (event) {
       if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (!currentBusy(target)) send(target); }
@@ -136,6 +164,18 @@
       syncComposer(target); renderMessages(target).catch(showError);
     });
     await session.recover(id, history); await renderDraft(target); await renderMessages(target, true); syncComposer(target);
+  }
+  // 沉浸模式：隐去顶栏 / 消息列表 / 输入区, 只留背景。用 opacity + pointer-events 而不是
+  // display: none —— 列表滚动位置与输入区真实高度（--chat-composer-h）都不用重算, 恢复时界面
+  // 不会跳一下。关掉输入区之前先让它失焦: 键盘跟着一个看不见的输入框留在屏幕上是最糟的样子。
+  function setChromeHidden(target, hidden) {
+    if (!alive(target)) return;
+    target.chromeHidden = Boolean(hidden);
+    if (target.chromeHidden) { var input = document.getElementById('messageInput'); if (input && input === document.activeElement) input.blur(); }
+    document.getElementById('appShell').classList.toggle('chat-chrome-hidden', target.chromeHidden);
+    (target.chromeRegions || []).forEach(function (region) {
+      if (target.chromeHidden) region.setAttribute('aria-hidden', 'true'); else region.removeAttribute('aria-hidden');
+    });
   }
   function showError(error) { ui.toast(u.cleanError(error), 5000); }
   function status(target, text) { if (alive(target)) document.getElementById('composerStatus').textContent = text; }
@@ -583,44 +623,113 @@
         revoke(target.urls); target.urls = [];
         await renderMessages(target, true);
       } });
-      if (command === 'background') return backgroundSettings(target);
+      if (command === 'background') return backgroundSettings(target.conversation.id, target);
       if (command === 'voice') return voiceSettings(target);
       if (command === 'summary') return editSummaries(target);
       if (command === 'export') return app.features.conversations.exportText(conversation.id);
       if (command === 'pin') { conversation.pinned = !conversation.pinned; await store.put('conversations', conversation.id, conversation); target.conversation = conversation; ui.toast(conversation.pinned ? '对话已置顶' : '已取消置顶'); }
-      if (command === 'delete' && await ui.confirm({ title: '删除对话？', message: '消息、压缩内容、草稿和未被其他对话使用的图片将从当前设备删除。', confirmText: '删除对话', danger: true })) { await close(); await store.deleteConversation(conversation.id); await app.navigate('conversations'); ui.toast('对话已删除'); }
+      if (command === 'delete' && await ui.confirm({ title: '删除对话？', message: '消息、压缩内容、草稿和未被其他对话使用的图片将从当前设备删除。', confirmText: '删除对话', danger: true })) { await close(); await store.deleteConversation(conversation.id); await refreshAppBackground(); await app.navigate('conversations'); ui.toast('对话已删除'); }
     })); });
   }
-  // 对话背景：只作用于当前对话。内置若干张，也可以从相册选一张，或者恢复默认。
+  // 对话背景：只作用于当前对话。内置六个色板, 每个色板都备了明亮 / 深色两套渐变,
+  // 按当前主题（app.resolvedTheme(), 显式设置或跟随系统）自动取一套。
+  // 记录里只留色板 id, 换主题时同一个 id 会换成另一套渐变: 旧记录不用迁移,
+  // 也不会出现"浅色主题配着深色背景"的错配。也可以从相册选一张, 或者恢复默认。
   var chatBackgrounds = [
-    { id: 'night', name: '午夜', css: 'radial-gradient(circle at 22% 12%, rgba(122,142,255,.34), rgba(0,0,0,0) 46%), linear-gradient(160deg, #131a30 0%, #262f55 50%, #3d2f66 100%)' },
-    { id: 'dawn', name: '晨曦', css: 'radial-gradient(circle at 78% 8%, rgba(255,214,150,.55), rgba(0,0,0,0) 52%), linear-gradient(165deg, #fdf3e3 0%, #f7d9c4 46%, #e9b7a8 100%)' },
-    { id: 'forest', name: '林中', css: 'radial-gradient(circle at 18% 14%, rgba(196,232,180,.48), rgba(0,0,0,0) 50%), linear-gradient(160deg, #e8f2e2 0%, #c6ddc0 48%, #9dc0a4 100%)' },
-    { id: 'sea', name: '海雾', css: 'radial-gradient(circle at 72% 16%, rgba(200,232,245,.52), rgba(0,0,0,0) 54%), linear-gradient(160deg, #eaf4f8 0%, #c2ddec 48%, #9cc0d8 100%)' },
-    { id: 'sunset', name: '晚霞', css: 'radial-gradient(circle at 30% 82%, rgba(255,170,120,.5), rgba(0,0,0,0) 56%), linear-gradient(150deg, #ffe9d6 0%, #f7bea0 44%, #d98fb0 100%)' },
-    { id: 'paper', name: '宣纸', css: 'radial-gradient(circle at 40% 20%, rgba(255,255,255,.9), rgba(0,0,0,0) 60%), linear-gradient(160deg, #faf6ec 0%, #f2ebdc 55%, #e8dfcc 100%)' }
+    { id: 'night', name: '午夜',
+      light: 'radial-gradient(circle at 24% 16%, rgba(255,255,255,.85), rgba(0,0,0,0) 58%), linear-gradient(160deg, #f4f6fd 0%, #e3e7f7 52%, #d2d6ef 100%)',
+      dark: 'radial-gradient(circle at 22% 12%, rgba(122,142,255,.38), rgba(0,0,0,0) 46%), linear-gradient(160deg, #0d1226 0%, #1e2547 50%, #352a5c 100%)' },
+    { id: 'dawn', name: '晨曦',
+      light: 'radial-gradient(circle at 78% 8%, rgba(255,214,150,.55), rgba(0,0,0,0) 52%), linear-gradient(165deg, #fdf3e3 0%, #f7d9c4 46%, #e9b7a8 100%)',
+      dark: 'radial-gradient(circle at 76% 88%, rgba(255,176,110,.38), rgba(0,0,0,0) 54%), linear-gradient(165deg, #101a2c 0%, #1d2a44 46%, #333a55 100%)' },
+    { id: 'forest', name: '林中',
+      light: 'radial-gradient(circle at 18% 14%, rgba(196,232,180,.48), rgba(0,0,0,0) 50%), linear-gradient(160deg, #e8f2e2 0%, #c6ddc0 48%, #9dc0a4 100%)',
+      dark: 'radial-gradient(circle at 20% 14%, rgba(150,214,160,.30), rgba(0,0,0,0) 52%), linear-gradient(160deg, #0c1a13 0%, #14301f 50%, #1e4a2c 100%)' },
+    { id: 'sea', name: '海雾',
+      light: 'radial-gradient(circle at 72% 16%, rgba(200,232,245,.52), rgba(0,0,0,0) 54%), linear-gradient(160deg, #eaf4f8 0%, #c2ddec 48%, #9cc0d8 100%)',
+      dark: 'radial-gradient(circle at 72% 14%, rgba(150,214,235,.33), rgba(0,0,0,0) 54%), linear-gradient(160deg, #0b1c29 0%, #143143 50%, #1d5063 100%)' },
+    { id: 'sunset', name: '晚霞',
+      light: 'radial-gradient(circle at 30% 82%, rgba(255,170,120,.5), rgba(0,0,0,0) 56%), linear-gradient(150deg, #ffe9d6 0%, #f7bea0 44%, #d98fb0 100%)',
+      dark: 'radial-gradient(circle at 28% 86%, rgba(255,152,96,.46), rgba(0,0,0,0) 56%), linear-gradient(165deg, #1d1029 0%, #402043 48%, #7a3547 100%)' },
+    { id: 'paper', name: '宣纸',
+      light: 'radial-gradient(circle at 40% 20%, rgba(255,255,255,.9), rgba(0,0,0,0) 60%), linear-gradient(160deg, #faf6ec 0%, #f2ebdc 55%, #e8dfcc 100%)',
+      dark: 'radial-gradient(circle at 38% 18%, rgba(180,196,225,.20), rgba(0,0,0,0) 58%), linear-gradient(160deg, #14161c 0%, #22252e 55%, #33363f 100%)' }
   ];
 
-  // 相册图的 dataUrl 绝不能塞进对话记录：store 单条硬上限 63KB（store.js），
-  // 任何一张真实照片的 base64 都会超。走 chataxi 自己的媒体库（IndexedDB），
-  // 记录里只留 mediaId —— 与消息附件、角色头像是同一条路。
-  async function backgroundImageDataUrl(background) {
-    if (!background || background.kind !== 'image' || !background.mediaId) return '';
-    try { return await app.data.media.toDataUrl(background.mediaId) || ''; } catch (_) { return ''; }
+  // 取当前主题对应的那套渐变。主题只认 app.resolvedTheme() 一处（显式设置或跟随系统）,
+  // 不在这里重新读 data-theme / 媒体查询, 免得两处判断走样。
+  function presetCss(item) {
+    if (!item) return '';
+    var theme = app.resolvedTheme ? app.resolvedTheme() : 'light';
+    return (theme === 'dark' ? item.dark : item.light) || item.light || '';
   }
 
+  // 相册背景取图上限。旧实现用 files.pickInline({ maxBytes: 768 * 1024 })，
+  // 而宿主把 pickInline 的 maxBytes 收敛进 1~900KiB 并直接报错，于是随便一张
+  // 手机照片都会撞上「不能超过 768k」。现在改走 files.pickImage：宿主用系统相册
+  // 选择器取图，自己归一化后存成宿主文件，只把 URL 交回来，原图再大也不报错。
+  var BACKGROUND_MAX_BYTES = 10 * 1024 * 1024;
+
+  // 相册背景在对话记录里只留宿主文件库的 URL（/__hermit/files/<id>）与取景参数，
+  // 不存 base64 —— 一张真实照片的 base64 有十几 MB，而 store 单条记录的硬上限是
+  // 63KB（store.js），塞进去必炸。
+  function backgroundPreset(background) {
+    if (!background || background.kind !== 'preset') return null;
+    return chatBackgrounds.filter(function (item) { return item.id === background.id; })[0] || null;
+  }
+  function cssUrl(value) { return 'url("' + String(value || '').replace(/["\\\r\n]/g, '') + '")'; }
+  function backgroundImageUrl(background) {
+    return background && background.kind === 'image' && background.url ? String(background.url) : '';
+  }
+  // 旧版把相册图存在 chataxi 自己的媒体库（IndexedDB）里，记录里只有 mediaId。
+  // 新记录不再写 mediaId，但旧对话仍然要显示得出来。
+  async function legacyBackgroundUrl(background) {
+    if (backgroundImageUrl(background) || !background || background.kind !== 'image' || !background.mediaId) return '';
+    try { return await app.data.media.toDataUrl(background.mediaId) || ''; } catch (_) { return ''; }
+  }
+  async function backgroundUrl(background) { return backgroundImageUrl(background) || await legacyBackgroundUrl(background); }
   async function backgroundStyle(background) {
-    if (!background) return '';
-    if (background.kind === 'image') { var url = await backgroundImageDataUrl(background); return url ? 'url("' + url + '")' : ''; }
-    var preset = chatBackgrounds.filter(function (item) { return item.id === background.id; })[0];
-    return preset ? preset.css : '';
+    var url = await backgroundUrl(background);
+    if (url) return cssUrl(url);
+    var preset = backgroundPreset(background);
+    return preset ? presetCss(preset) : '';
+  }
+
+  // 取景参数 → background-size / background-position。两个值都是百分比，与容器尺寸无关，
+  // 所以在取景框里定好的构图能原样铺到整页上。
+  // elementAspect 是要铺满的那块区域（.app-shell）的真实宽高比：取景框用的是"屏幕减去
+  // 顶部状态栏"，比它略扁，所以缩放要顶到刚好覆盖，否则极端比例的图会在上下露空。
+  function backgroundLayout(layout, elementAspect) {
+    var zoom = Math.max(1, Math.min(4, Number(layout && layout.zoom) || 1));
+    var image = Number(layout && layout.imageAspect) > 0 ? Number(layout.imageAspect) : 1;
+    var frame = Number(layout && layout.frameAspect) > 0 ? Number(layout.frameAspect) : 1;
+    var element = Number(elementAspect) > 0 ? Number(elementAspect) : frame;
+    var ratio = image / frame;
+    var panX = clampUnit(layout && layout.panX), panY = clampUnit(layout && layout.panY);
+    // background-position 的百分比是（容器 − 图片）的比例：50% 居中，越小越靠左上。
+    var position = percent(50 - panX * 50) + ' ' + percent(50 - panY * 50);
+    if (ratio <= 1) return { size: percent(Math.max(zoom, ratio * frame / element) * 100) + ' auto', position: position };
+    return { size: 'auto ' + percent(Math.max(zoom, element / (ratio * frame)) * 100), position: position };
+  }
+
+  function percent(value) { return Math.round(Number(value) * 10000) / 10000 + '%'; }
+  function clampUnit(value) { var number = Number(value) || 0; return Math.max(-1, Math.min(1, number)); }
+  // 背景铺的那块区域是"正常视口"（--viewport-full-height, 由 app.js 维护）, 不是当前的 .app-shell:
+  // 键盘弹起时 .app-shell 会缩, 但背景图层钉在正常高度上。所以取景要按正常宽高比算 ——
+  // 用 shell.clientHeight 会在键盘弹起时算出一个被压扁的比例, 背景一重算照片就跑了。
+  function shellAspect() {
+    var full = parseFloat(document.documentElement.style.getPropertyValue('--viewport-full-height')) || 0;
+    var width = window.innerWidth || 0;
+    if (width > 0 && full > 0) return width / full;
+    var shell = document.getElementById('appShell');
+    if (shell && shell.clientWidth > 0 && shell.clientHeight > 0) return shell.clientWidth / shell.clientHeight;
+    return ui.screenAspect();
   }
 
   // 相册图也要占一格：不占的话，选完相册再开面板 6 个色块全是未选中态，
-  // 用户看不出当前用的是哪张。
-  function backgroundImageSwatch(dataUrl) {
-    if (!dataUrl) return '';
-    return '<button class="background-swatch is-current" type="button" data-background-image="1" aria-pressed="true" title="相册图片" style="background-image:url(\'' + dataUrl + '\')"><span>相册</span></button>';
+  // 用户看不出当前用的是哪张。没有相册背景时先藏着。
+  function backgroundImageSwatch() {
+    return '<button class="background-swatch" type="button" data-background-image="1" aria-pressed="false" title="相册图片" hidden><span>相册</span></button>';
   }
 
   function markBackgroundCurrent(form, background) {
@@ -633,61 +742,171 @@
     if (image) { var imageOn = Boolean(background) && background.kind === 'image'; image.classList.toggle('is-current', imageOn); image.setAttribute('aria-pressed', String(imageOn)); }
   }
 
-  // 背景铺在整个对话页上（顶栏与输入区都透出背景），这样才读作"换了背景"，而不是"贴了一块色纸"。
-  async function applyChatBackground(target) {
-    var shell = document.getElementById('appShell');
+  // 背景是"应用级"的一件事：铺满 .app-shell, 于是顶栏、底栏、卡片、弹窗统统透出它, 读作
+  // "整个应用换了背景", 而不是"对话里贴了一块色纸"。
+  // 玻璃开关挂 <html> 而不是 .app-shell —— 弹窗与 toast 是挂在 body 上的, 不在 .app-shell 里面,
+  // 开关挂错地方它们就继承不到玻璃色 token, 会变成盖在背景上的一堆实心块。
+  // 背景值本身不单独存：它就是"最近使用的对话"那个对话的背景, 见 refreshAppBackground。
+  var appliedBackground = null;
+  async function applyAppBackground(background) {
+    appliedBackground = background || null;
+    var shell = document.getElementById('appShell'), root = document.documentElement;
+    var style = await backgroundStyle(background);
+    root.classList.toggle('has-app-background', Boolean(style));
     if (!shell) return;
-    var style = await backgroundStyle(target.conversation && target.conversation.background);
-    shell.classList.toggle('has-chat-background', Boolean(style));
-    if (style) shell.style.setProperty('--chat-background', style); else shell.style.removeProperty('--chat-background');
+    if (!style) {
+      shell.style.removeProperty('--chat-background');
+      shell.style.removeProperty('--chat-background-size');
+      shell.style.removeProperty('--chat-background-position');
+      return;
+    }
+    shell.style.setProperty('--chat-background', style);
+    // 内置渐变没有取景信息，交给 CSS 的默认值（cover / center）。
+    var layout = backgroundImageUrl(background) ? backgroundLayout(background.layout, shellAspect()) : null;
+    if (layout) { shell.style.setProperty('--chat-background-size', layout.size); shell.style.setProperty('--chat-background-position', layout.position); }
+    else { shell.style.removeProperty('--chat-background-size'); shell.style.removeProperty('--chat-background-position'); }
   }
+
+  // "最近使用的对话"记在 meta 里, 是全局背景的唯一来源。每次打开对话记一笔。
+  var LAST_CONVERSATION_KEY = 'last-conversation';
+  async function rememberConversation(id) {
+    if (!id) return;
+    try { await store.put('meta', LAST_CONVERSATION_KEY, { id: id }); } catch (_) {}
+  }
+
+  // 重读"最近使用的对话"并把它的背景铺上。启动、改完背景、删掉对话之后都走这里 ——
+  // "全局背景 = 最近打开过的那个对话的背景"这条规则因此只有一个实现点。
+  // 内部吞异常：它在首屏渲染之前跑, 背景出错不该让整个应用起不来。
+  async function refreshAppBackground() {
+    try {
+      var remembered = await store.get('meta', LAST_CONVERSATION_KEY);
+      var id = remembered && remembered.id ? remembered.id : '';
+      var conversation = id ? await store.get('conversations', id) : null;
+      await applyAppBackground(conversation ? conversation.background : null);
+    } catch (_) {}
+  }
+
+  // 主题一变, 已经铺着的色板背景要换成另一套渐变: 系统主题走 prefers-color-scheme,
+  // 显式设置走 <html data-theme>, 两条路都要盯。
+  // 背景已经是应用级的, 不再只在对话页 —— 所以这里盯的是"当前铺着的那份背景", 不是 view。
+  // 没有背景（appliedBackground 为空）时没什么可重画的, 直接不动。
+  function repaintAppBackground() {
+    if (appliedBackground) applyAppBackground(appliedBackground).catch(function () {});
+  }
+  var backgroundScheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  if (backgroundScheme) {
+    if (backgroundScheme.addEventListener) backgroundScheme.addEventListener('change', repaintAppBackground);
+    else if (backgroundScheme.addListener) backgroundScheme.addListener(repaintAppBackground);
+  }
+  if (window.MutationObserver) new MutationObserver(repaintAppBackground).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   function backgroundSwatch(item, background) {
     var current = background && background.kind === 'preset' && background.id === item.id;
-    return '<button class="background-swatch' + (current ? ' is-current' : '') + '" type="button" data-background-preset="' + item.id + '" aria-pressed="' + String(Boolean(current)) + '" title="' + u.escapeHtml(item.name) + '" style="background-image:' + item.css + '"><span>' + u.escapeHtml(item.name) + '</span></button>';
+    return '<button class="background-swatch' + (current ? ' is-current' : '') + '" type="button" data-background-preset="' + item.id + '" aria-pressed="' + String(Boolean(current)) + '" title="' + u.escapeHtml(item.name) + '"><span>' + u.escapeHtml(item.name) + '</span></button>';
   }
 
-  async function saveChatBackground(target, background, form) {
-    var next = await store.get('conversations', target.conversation.id);
+  // 宿主 CSP（default-src 'self' data: blob:）挡的是 HTML 里解析出来的 style 属性，
+  // CSSOM 写入（element.style.foo = …）不受它约束 —— 六个色块的渐变只能在这里着色，
+  // 写进 innerHTML 会被静默丢掉，六块全白就是这个原因。
+  async function paintSwatches(form, background) {
+    if (!form) return;
+    chatBackgrounds.forEach(function (item) {
+      var button = form.querySelector('[data-background-preset="' + item.id + '"]');
+      if (button) button.style.backgroundImage = presetCss(item);
+    });
+    var image = form.querySelector('[data-background-image]');
+    if (!image) return;
+    var url = await backgroundUrl(background);
+    image.hidden = !url;
+    image.style.backgroundImage = url ? cssUrl(url) : '';
+  }
+
+  // conversationId 定位记录；target 只在"这个对话正开着"时给出（列表页没有它），
+  // 有它才需要顺手重绘已经打开的那一页。
+  async function saveChatBackground(conversationId, target, background, form) {
+    var next = await store.get('conversations', conversationId);
     if (!next) return;
     var previous = next.background;
     next.background = background; next.updatedAt = Date.now();
-    await store.put('conversations', target.conversation.id, next);
-    target.conversation = next;
-    await applyChatBackground(target);
+    await store.put('conversations', conversationId, next);
+    // 改的不一定是"最近使用的那个对话"（列表页也能进背景设定）, 所以不直接铺, 而是让全局背景
+    // 按 meta 里的记录重算一次 —— 规则仍然只有一个实现点, 也不会把别的对话的背景顶上来。
+    if (target) target.conversation = next;
+    await refreshAppBackground();
     markBackgroundCurrent(form, background);
-    // 换掉或清掉相册图之后，旧的那张不该继续占着媒体库。
-    if (previous && previous.kind === 'image' && previous.mediaId && previous.mediaId !== (background && background.mediaId)) await store.releaseMedia([{ mediaId: previous.mediaId }]).catch(function () {});
+    await paintSwatches(form, background);
+    // 换掉或清掉相册背景之后，旧的那张不该继续占着宿主文件库 / 媒体库。
+    if (previous !== background) await releaseBackground(previous);
   }
 
-  async function backgroundSettings(target) {
-    var conversation = await store.get('conversations', target.conversation.id);
+  // 旧版记录只有 mediaId，新版只有 logicalFileId；两种都要能释放。
+  async function releaseBackground(background) {
+    if (!background) return;
+    if (background.logicalFileId) await store.releaseMedia([{ logicalFileId: background.logicalFileId }]).catch(function () {});
+    if (background.mediaId) await store.releaseMedia([{ mediaId: background.mediaId }]).catch(function () {});
+  }
+
+  // 相册取图。拿不到可持久 URL 的环境（桌面浏览器预览）直接放弃，避免把一个
+  // 刷新即失效的 blob: 地址写进对话记录。
+  async function pickBackgroundImage() {
+    var picked = await ui.pickLocalImage({ maxDimension: 2048, maxBytes: 700 * 1024, emptyMessage: '没有取得可用背景图片' });
+    if (!picked) return null;
+    var url = String(picked.url || '');
+    if (!url || url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
+      if (picked.release) await picked.release();
+      ui.toast('当前环境不能保存相册背景，请在 HermitApp 中选择');
+      return null;
+    }
+    if (Number(picked.size || 0) > BACKGROUND_MAX_BYTES) {
+      if (picked.release) await picked.release();
+      ui.toast('背景原图不能超过 10 MiB', 4500);
+      return null;
+    }
+    return picked;
+  }
+
+  async function backgroundSettings(conversationId, target) {
+    var conversation = await store.get('conversations', conversationId);
     if (!conversation) return;
+    var background = conversation.background;
     var form = ui.openModal({
       title: '对话背景',
       submitText: '完成',
       cancelText: null,
-      html: '<div class="background-sheet"><p class="helper">只改变这个对话的背景，其他对话不受影响。</p><div class="background-grid">' + backgroundImageSwatch(await backgroundImageDataUrl(conversation.background)) + chatBackgrounds.map(function (item) { return backgroundSwatch(item, conversation.background); }).join('') + '</div><div class="menu-list"><button class="menu-item" type="button" data-background-command="pick">' + ui.icon('image') + '<span>从相册选一张</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-background-command="reset">' + ui.icon('rotate-left') + '<span>恢复默认背景</span></button></div></div>',
+      html: '<div class="background-sheet"><p class="helper">背景会铺满整个应用, 并跟随最近打开过的对话。</p><div class="background-grid">' + backgroundImageSwatch() + chatBackgrounds.map(function (item) { return backgroundSwatch(item, background); }).join('') + '</div><div class="menu-list"><button class="menu-item" type="button" data-background-command="pick">' + ui.icon('image') + '<span>从相册选一张</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-background-command="reset">' + ui.icon('rotate-left') + '<span>恢复默认背景</span></button></div></div>',
       onSubmit: function () {}
     });
+    await paintSwatches(form, background);
     form.querySelectorAll('[data-background-preset]').forEach(function (button) {
-      button.addEventListener('click', ui.action(function () { return saveChatBackground(target, { kind: 'preset', id: button.dataset.backgroundPreset }, form); }));
+      button.addEventListener('click', ui.action(function () { return saveChatBackground(conversationId, target, { kind: 'preset', id: button.dataset.backgroundPreset }, form); }));
     });
-    form.querySelector('[data-background-command="reset"]').addEventListener('click', ui.action(function () { return saveChatBackground(target, null, form); }));
+    form.querySelector('[data-background-command="reset"]').addEventListener('click', ui.action(function () { return saveChatBackground(conversationId, target, null, form); }));
     form.querySelector('[data-background-command="pick"]').addEventListener('click', ui.action(async function () {
-      var selected = null;
-      if (app.platform.hermit.available()) selected = await app.platform.hermit.api().files.pickInline({ accept: 'image/*', maxBytes: 768 * 1024 });
-      if (!selected || selected.cancelled) return;
-      var parts = u.dataUrlToParts(selected.dataUrl);
-      if (!parts || !/^image\//i.test(parts.mime)) { ui.toast('所选文件不是有效图片'); return; }
-      var record = await app.data.media.put(u.base64ToBlob(parts.data, parts.mime), { name: selected.name || 'conversation-background.jpg', mime: parts.mime });
-      var background = { kind: 'image', mediaId: record.id, name: selected.name || '' };
-      try { await saveChatBackground(target, background, form); }
-      catch (error) { await app.data.media.remove(record.id).catch(function () {}); throw error; }
-      var grid = form.querySelector('.background-grid'), image = form.querySelector('[data-background-image]');
-      if (!image) { image = document.createElement('button'); image.type = 'button'; image.className = 'background-swatch'; image.setAttribute('data-background-image', '1'); image.innerHTML = '<span>相册</span>'; grid.insertBefore(image, grid.firstChild); }
-      image.style.backgroundImage = "url('" + (await backgroundImageDataUrl(background)) + "')";
-      markBackgroundCurrent(form, background);
+      var picked = await pickBackgroundImage();
+      if (!picked) return;
+      // 取景只记参数，原图留在宿主文件库里：不用重新编码出第二个文件，也不用把
+      // 图片本身塞进对话记录。
+      await ui.cropPicture(picked, {
+        mode: 'framing',
+        aspect: ui.screenAspect(),
+        keepSource: true,
+        maxSourceBytes: BACKGROUND_MAX_BYTES,
+        labels: {
+          title: '调整对话背景', submit: '使用这张背景',
+          help: '拖动图片选择要显示的区域；双指捏合、滚轮或下方按钮可以缩放。',
+          preview: '对话背景取景预览', zoomIn: '放大背景', zoomOut: '缩小背景',
+          notImage: '背景只支持 JPEG、PNG 或 WebP 图片',
+          tooLarge: '背景原图不能超过 10 MiB',
+          unreadable: '背景图片无法读取',
+          failed: '背景处理失败，请换一张图片'
+        },
+        onCropped: async function (layout) {
+          try {
+            await saveChatBackground(conversationId, target, { kind: 'image', url: picked.url, name: picked.name, size: picked.size, logicalFileId: picked.logicalFileId, layout: layout }, form);
+            ui.toast('背景已更新');
+          } catch (error) { if (picked.release) await picked.release(); throw error; }
+        }
+      });
     }));
   }
 
@@ -741,13 +960,19 @@
   }
   async function close() {
     var target = view; if (!target) return;
+    // 沉浸模式必须在这里收干净: 它挂在 #appShell 上, 而 #appShell 是跨页面活着的。
+    // 要在 target.closed = true **之前**收（setChromeHidden 自己会先判活）, 否则从一个"隐着"的
+    // 对话切到列表页, 下一页的顶栏与输入区全是隐形的 —— 界面看起来就是坏了。
+    setChromeHidden(target, false);
     await flushDraft(target);
     session.stop(target.conversation.id);
     target.closed = true; target.unsubscribe();
+    if (target.syncComposerInset) window.removeEventListener('resize', target.syncComposerInset);
+    if (target.composerObserver) { target.composerObserver.disconnect(); target.composerObserver = null; }
     if (target.speechId || target.speechStarting) await app.services.asr.cancelSystem().catch(function () {});
     await app.services.tts.stop().catch(function () {});
     if (target.job) await target.job.catch(function () {});
-    document.getElementById('appShell').classList.remove('has-chat-background');
+    // 背景不清: 它现在是应用级的, 回到列表页也还铺着 —— "继承最近使用的对话"就是这个意思。
     view = null; app.state.activeConversationId = null;
     revoke(target.urls); revoke(target.draftUrls);
     document.getElementById('imagePicker').onchange = null; document.getElementById('videoPicker').onchange = null; document.getElementById('audioPicker').onchange = null;
@@ -756,5 +981,5 @@
   app.events.on('tts:error', function (event) { ui.toast(event.message, 5000); });
   app.events.on('tts:state', function (event) { if (view) { var button = document.getElementById('muteTtsButton'); if (button) { button.classList.toggle('voice-active', Boolean(event.speaking)); button.innerHTML = ui.icon(event.muted ? 'volume-xmark' : 'volume-high'); button.setAttribute('aria-label', event.muted ? '恢复自动朗读' : '静音自动朗读'); button.setAttribute('title', event.muted ? '恢复自动朗读' : '静音自动朗读'); } if (event.preparing) status(view, '正在准备完整朗读音频…'); else if (event.buffering) status(view, '正在生成朗读音频 · 已缓存约 ' + Math.floor(event.bufferedSeconds || 0) + ' 秒'); else if (event.paused) { status(view, '朗读已等待新音频，点击消息上的播放按钮继续'); ensureResumeButton(event.messageId); } else if (event.ready) { status(view, '朗读音频已准备，点击消息上的播放按钮播放'); renderMessages(view).catch(showError); } } });
   app.features = app.features || {};
-  app.features.chat = { render: render, close: close, renderMessages: function () { if (view) view.messageSnapshot = null; return renderMessages(view); } };
+  app.features.chat = { render: render, close: close, backgroundSettings: backgroundSettings, refreshAppBackground: refreshAppBackground, repaintAppBackground: repaintAppBackground, renderMessages: function () { if (view) view.messageSnapshot = null; return renderMessages(view); } };
 })(window.chataxi);

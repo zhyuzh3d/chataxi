@@ -331,18 +331,26 @@
   async function manage(id) {
     var conversation = await store.get("conversations", id);
     if (!conversation) return;
-    var form = ui.openModal({ title: conversation.title, submitText: "完成", cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item" type="button" data-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item danger-text" type="button" data-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var form = ui.openModal({ title: conversation.title, submitText: "完成", cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="background">' + ui.icon('image') + '<span>对话背景</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item" type="button" data-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item danger-text" type="button" data-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.menu;
       if (app.features.chatSession.active(id) && (command === "settings" || command === "delete")) { ui.toast("请先停止本轮回复，再修改对话"); return; }
       ui.closeModal();
       // 常规设定是一个弹窗的三个子 tab：基础设定、个人设定、场景设定都在里面。
       if (command === 'settings') return openConversationSettings(conversation, { tab: 'basic', onSaved: function (next) { conversation = next; } });
+      // 对话背景面板与对话内菜单共用同一个（app.features.chat.backgroundSettings）。
+      // 列表页没有开着的聊天实例，所以只传 id：记录照改。全局背景跟着"最近打开过的对话"走，
+      // 这里不必判断改的是不是当前铺着的那一份 —— 面板自己会按 meta 重算（saveChatBackground）。
+      if (command === 'background') return app.features.chat.backgroundSettings(id);
       if (command === 'export') return exportText(id);
       if (command === 'pin') { conversation.pinned = !conversation.pinned; await store.put("conversations", id, conversation); ui.toast(conversation.pinned ? '对话已置顶' : '已取消置顶'); if (app.state.route === 'conversations') await render(); }
       if (command === 'delete' && await ui.confirm({ title: '删除对话？', message: '“' + conversation.title + '”的消息、草稿和未被其他对话使用的图片将从本机删除，无法撤销。', confirmText: '删除对话', danger: true })) {
         if (app.state.activeConversationId === id) await app.features.chat.close();
-        await store.deleteConversation(id); await app.navigate('conversations'); ui.toast('对话已删除');
+        await store.deleteConversation(id);
+        // 删掉的可能正是"最近使用的对话"，它的背景不该继续铺在整个应用上 —— 重算一次，
+        // meta 里已经没有这条记录了，自然会回到默认背景。
+        await app.features.chat.refreshAppBackground();
+        await app.navigate('conversations'); ui.toast('对话已删除');
       }
     })); });
   }

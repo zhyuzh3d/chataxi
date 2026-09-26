@@ -1,6 +1,9 @@
-.app-shell { width: 100%; height: 100vh; height: var(--viewport-height, 100dvh); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+.app-shell { position: relative; z-index: 0; width: 100%; height: 100vh; height: var(--viewport-height, 100dvh); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
 .app-shell:not(.chat-open) { padding-bottom: calc(68px + var(--safe-bottom)); }
-.topbar { display: flex; align-items: center; gap: var(--space-button-group); min-height: calc(76px + var(--safe-top)); padding: calc(12px + var(--safe-top)) max(20px, var(--safe-right)) 12px max(20px, var(--safe-left)); overflow: hidden; border-bottom: 1px solid var(--border); background: var(--bg); }
+/* 顶栏恒为毛玻璃（用户 2026-09-26 要求）。它压在 .main 上面、底下的内容会从它后面滚过去,
+   所以实色顶栏会"切"出一条硬边; 半透明 + backdrop-filter 才能读作一块浮着的玻璃。
+   不用 --surface 而用 --glass: 顶栏的背景色与内容卡片是两回事, 后者只在设了全局背景时才玻璃化。 */
+.topbar { display: flex; align-items: center; gap: var(--space-button-group); min-height: calc(76px + var(--safe-top)); padding: calc(12px + var(--safe-top)) max(20px, var(--safe-right)) 12px max(20px, var(--safe-left)); overflow: hidden; border-bottom: 1px solid var(--border); background: var(--glass); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
 .brand { display: flex; align-items: center; min-width: 0; flex: 1 1 auto; gap: var(--space-icon-text); overflow: hidden; }
 .brand-mark { display: grid; place-items: center; width: 43px; height: 43px; flex-shrink: 0; border-radius: 13px; background: transparent; color: var(--accent-ink); font-size: 19px; transform: none; overflow: hidden; }
 .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
@@ -15,7 +18,9 @@
 .page { width: 100%; min-width: 0; max-width: 880px; margin: 0 auto; padding-top: 30px; }
 .count-label { white-space: nowrap; font-size: 12px; color: var(--text-soft); }
 .list-count { width: 100%; margin: 10px 0 14px; text-align: center; }
-.bottom-nav { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-icon-text); padding: 8px max(16px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(16px, var(--safe-left)); border-top: 1px solid var(--border); background: var(--surface); }
+/* 底部导航同样恒为毛玻璃, 理由与顶栏一致: 它是浮在 .main 之上的 fixed 条, 底下会滚过内容。
+   注意别动这里的 position/right/bottom/left —— verify.mjs 用它们保证旧 WebView 上首帧就固定住。 */
+.bottom-nav { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-icon-text); padding: 8px max(16px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(16px, var(--safe-left)); border-top: 1px solid var(--border); background: var(--glass); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
 .bottom-nav button { min-height: 52px; display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center; min-width: 0; overflow: hidden; border: 0; border-radius: 15px; background: transparent; color: var(--text-soft); font-size: 11px; font-weight: 650; }
 .bottom-nav button i { font-size: 19px; }
 .bottom-nav button[aria-current="page"] { color: var(--text); background: var(--accent-soft); }
@@ -102,8 +107,20 @@
 .role-color-input { width: 72px !important; padding: 5px !important; }
 .settings-page, .models-page, .my-page { max-width: 760px; }
 .settings-stack { display: grid; gap: 0; }
-.settings-page .card, .my-page .card { border: 0; border-radius: 0; background: transparent; }
-.settings-page .card-body, .my-page .card-body { padding: 24px 0; border-bottom: 1px solid var(--border); }
+/* 设置页与"我的"页的内容块**直接落在背景上**（用户 2026-09-26: "设置-界面、对话、压缩上的组件
+   也不应该有背景（参考设置-系统就是对的）", 以及 "我的-各种组件直接沉浸落在背景上, 不应该有整体
+   背景, 只是输入控件有背景"）。这几个面板原来带 .card + .card-body; 除了填充, 还有两件真机上
+   看得见的事:
+     ① 设了对话背景时, html.has-app-background .card 会给它们补一层 backdrop-filter, 于是在背景
+        图上抹出一块毛玻璃底板 —— 这才是"整体背景"的真正来源。填充其实早就被清成 transparent 了,
+        可**模糊不看填充**: 元素自己透明, 被它折射的背照照样糊出一块矩形, 所以只改 background
+        永远改不掉它;
+     ② .card-body 的 border-bottom 给每个 tab 描了一条分隔线。
+   现在这几个面板与最右边的"系统"面板完全一致: 只有内边距。填充只留给真正的输入控件
+   （.field input/select/textarea、.picker-button、按钮）。标记侧同步: settings.js 的三个 panel
+   与 me.js 的区块都不再带 .card / .card-body, 所以旧的两条"清填充"规则一并删掉, 不留一条只对
+   空气生效的规则。`:not(.system-panel)` 是显式排除, 免得依赖 `.system-panel` 的书写顺序。 */
+.settings-page .settings-panel:not(.system-panel), .my-page .my-panel { padding: 24px 0; }
 .section-helper { margin-top: 6px; }
 .profile-card { padding: 22px; }
 .service-icon { width: 44px; height: 44px; display: grid; place-items: center; background: var(--surface-muted); border-radius: 14px; flex-shrink: 0; color: var(--text-soft); font-size: 17px; }
@@ -124,7 +141,10 @@
 .facts div { display: flex; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .facts dt { color: var(--text-soft); }
 .facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
-.save-status { color: var(--success); text-align: center; font-size: 13px; }
+/* 保存按钮下面的提示行：.settings-stack 是 gap: 0 的网格，不给外边距就贴在按钮上。
+   没保存过的状态下这一行是空的，别让它白占一份空白。 */
+.save-status { margin-top: var(--space-button-group); color: var(--success); text-align: center; font-size: 13px; }
+.save-status:empty { margin-top: 0; }
 .section-tabs { display: flex; flex-wrap: nowrap; gap: 5px; min-width: 0; max-width: 100%; padding: 5px; margin-bottom: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-muted); }
 .section-tabs button { flex: 1 1 0; width: 0; min-width: 0; max-width: 100%; min-height: 46px; padding: 10px 6px; overflow: hidden; border: 0; border-radius: 11px; background: transparent; color: var(--text-soft); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .section-tabs button > span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -207,9 +227,17 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .capability-note { display: grid; gap: 4px; min-width: 0; padding: 4px 0; color: var(--text); }
 .capability-note small { color: var(--muted); line-height: 1.55; }
 .capability-note.is-disabled { opacity: .48; }
-.avatar-editor { display: flex; align-items: center; gap: 0; min-width: 0; overflow: hidden; }
+/* 头像编辑器这层**不许** overflow: hidden（2026-09-26 业主:「我的-头像和小照相机 icon 的底部都有点被裁切」）。
+   .avatar-picker 是个 <button>, 里面的 .avatar 是 inline-flex: 装 <img> 时它的基线落在盒子底边,
+   行盒被撑到 84px（比 72px 的按钮高 12px）⇒ 头像被下推并把底部切掉; 绝对定位的相机角标（bottom: -4px）
+   同样被切。真正需要的只是「长文案别把行撑宽」, 那是 .avatar-copy 的 min-width: 0 的事, 不需要裁切。 */
+.avatar-editor { display: flex; align-items: center; gap: 0; min-width: 0; }
 .avatar-editor > .avatar-picker { margin-right: 16px; }
-.avatar-picker { position: relative; width: 72px; height: 72px; flex: 0 0 72px; padding: 0; border: 0; border-radius: 24px; background: transparent; }
+/* 按钮内部整条链都走 flex: 没有行盒就没有基线, 72×72 的按钮盒与头像盒严格重合。 */
+.avatar-picker { position: relative; display: flex; width: 72px; height: 72px; flex: 0 0 72px; padding: 0; border: 0; border-radius: 24px; background: transparent; }
+/* 预览外层（#avatarPreview / #userAvatarPreview / #conversationAvatarPreview）也必须是 flex 容器,
+   否则它自己又生成一个行盒, 基线问题原样回来。角标是绝对定位, 已被 :not 排除。 */
+.avatar-picker > span:not(.avatar-edit-badge) { display: flex; flex: 1 1 auto; min-width: 0; }
 .avatar-picker .avatar { width: 72px; height: 72px; flex-basis: 72px; border-radius: 24px; }
 .avatar-picker.round, .avatar-picker.round .avatar, .user-profile-avatar { border-radius: 50%; }
 .identity-preview { min-width: 0; padding: 14px 0; border-top: 1px solid var(--border); }
@@ -264,23 +292,109 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .range-field input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; border: 3px solid var(--surface); border-radius: 50%; background: var(--accent-strong); box-shadow: 0 1px 6px #0003; }
 .range-field input[type="range"]::-moz-range-thumb { width: 17px; height: 17px; border: 3px solid var(--surface); border-radius: 50%; background: var(--accent-strong); }
 .is-disabled { opacity: .5; }
-.chat-open { grid-template-rows: auto minmax(0, 1fr); }
-.chat-open .topbar { min-height: calc(70px + var(--safe-top)); }
+/* 对话页顶栏改成"浮在消息上的覆盖层"（用户 2026-09-26 要求）。
+   原来它是 grid 的第一行, 实占一块位置, 消息只能在它下面滚。现在抽出文档流（absolute）浮在
+   .message-list 上层, 消息就一直滚到标题栏底下, 从毛玻璃里透出来。
+   顺带把顶栏做成无条件毛玻璃 —— 之前只在设了对话背景时才玻璃化, 所以没设背景时是一块实色顶栏。
+   --chat-topbar 是这块玻璃的高度: 顶栏自己与消息列表的顶部留白共用它, 一处改两处生效。
+   玻璃本身来自 .topbar 的基础规则（顶栏恒为毛玻璃）, 这里只管定位, 不再重复声明背景。 */
+.chat-open { grid-template-rows: minmax(0, 1fr); --chat-topbar: calc(70px + var(--safe-top)); }
+.chat-open .topbar { position: absolute; z-index: 20; top: 0; left: 0; right: 0; min-height: var(--chat-topbar); }
 .chat-main { padding: 0; overflow: hidden; }
-.chat-layout { height: 100%; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
-.message-viewport { min-height: 0; position: relative; }
-.message-list { height: 100%; min-height: 0; overflow-y: auto; padding: 22px max(20px, var(--safe-right)) 20px max(20px, var(--safe-left)); overflow-anchor: none; }
+/* 沉浸模式：点消息列表的空白处, 把界面上的控件全收掉, 只留背景（用户 2026-09-26:
+   "点击消息列表的空白位置, 可以隐藏所有控件（包括标题栏和输入框和对话列表。只显示背景）,
+   再点一次就恢复显示"）。隐三块: 顶栏 / 消息列表（两条渐隐带是它的子元素, 跟着一起走）/ 输入区。
+   用 opacity + pointer-events, **不用 display: none 或 visibility: hidden**:
+     ① 列表滚动位置与输入区真实高度（--chat-composer-h, ResizeObserver 量的）都不用重算,
+        恢复时界面一个像素都不跳;
+     ② 隐掉的那几层同时不吃点击, 于是"再点一次"必定落到 .chat-layout 上 —— 恢复的判据只有一条。
+   只做透明度过渡, 不做位移: 控件淡出即可, 移出画面会被读成"换了一页"。
+   渐隐带 .message-fade 是 position: fixed, 但它长在 .message-viewport 里面, 所以 viewport 的
+   opacity 一并把它收掉 —— 这层不单独写规则, 否则将来挪动 viewport 就会漏掉它。
+   （"点的是不是空白"由 chat.js 的黑名单选择器判, 这里只管视觉与命中。） */
+.chat-open .topbar, .chat-main .message-viewport, .chat-main .composer { transition: opacity .18s ease; }
+.chat-chrome-hidden .topbar,
+.chat-chrome-hidden .message-viewport,
+.chat-chrome-hidden .composer { opacity: 0; pointer-events: none; }
+/* 消息列表一直铺到屏幕底部, 输入区改成浮在它上面的一层玻璃（用户 2026-09-26:
+   "消息列表底部要到屏幕底部（底部保留现状的渐隐效果）, 不是到输入框组件结束"）。
+   所以这里不再是"两行 grid"（列表一行、输入区一行）, 而是一层铺满 + 一块绝对定位的输入区。
+   --chat-composer-h 由 JS 量出真实高度写回（多行草稿、附件托盘、群聊角色条都会让它变,
+   量不准的话列表底部留白就会多一截或少一截）。 */
+.chat-layout { position: relative; height: 100%; min-height: 0; --chat-composer-h: 0px; }
+.message-viewport { height: 100%; min-height: 0; position: relative; }
+/* 上下两条渐隐带: 顶栏与输入区都是浮在消息上的半透明玻璃, 消息会滚到它们底下去。
+   直接让消息撞上玻璃边缘会看到"被切一刀"的半截气泡, 像两个形状交叉 —— 所以要渐隐。
+   但**渐隐带不能用 mask**（用户 2026-09-26: "气泡的磨砂透明效果也没有了"）:
+   mask 会给整棵子树建一个 backdrop root, 于是气泡的 backdrop-filter 只能采样 .message-list
+   里面的像素, 采样不到页面上那层背景图 ⇒ 磨砂整个失效（探针实测: 有 mask 祖先时气泡里的
+   高频条纹原样清晰, 没有 mask 祖先时被糊成灰面）。
+   改成"自己画一层背景图 + alpha 渐变压上去"(.message-fade): 视觉上与 mask 渐隐等价,
+   但它只是一个背景层, 不建 backdrop root, 气泡的磨砂照常工作。
+   上边带 = 顶栏高度（--chat-topbar）; 下边带 = 输入区真实高度（--chat-composer-h, JS 量出）。
+   列表底部留白要盖过下边带, 否则"滚到底"时最后一条消息正好落在淡出区里 —— 它是常驻可见的那条。
+
+   2026-09-26 修: 这里原来写的是 `composer-h + 18px`, 而**淡出带本身有 --chat-list-fade(56px) 高**
+   ⇒ 留白只盖住了 18px, 剩下 38px 正好把最后一条消息的 .message-meta（时间 + 复制/朗读/编辑/重生成）
+   压在渐变里。探针实测（384×782, composer 169px）: 淡出带 557~613px, 最后那条 meta 落在
+   563~595px, 被背景盖住的比例 **顶 0.12 / 中 0.40 / 底 0.69** —— 看起来就像"这一条的时间与图标
+   没换成纯黑白、描边也没生效", 其实是被淡出层重新画了一遍背景。留白必须按**下边带 + 淡出带**
+   一起算, 末尾再留 12px 呼吸; 否则滚到底时最后一条永远是半糊的。 */
+.message-list { height: 100%; min-height: 0; overflow-y: auto; padding: 22px max(20px, var(--safe-right)) calc(var(--chat-composer-h) + var(--chat-list-fade) + 12px) max(20px, var(--safe-left)); overflow-anchor: none; }
+/* 两条渐隐带画在同一块"正常视口"大小的固定层上, 各自用 alpha 渐变只留下该亮的那一段。
+   取景参数与 .app-shell::before 完全相同（同一个 --chat-background / size / position）,
+   盒子也做成同一个（top: 0 + --viewport-full-height）—— 只有这样两层才严格像素对齐;
+   盒子若不同, 百分比尺寸与位置会各自解析, 渐隐带里那半张照片就和外面的背景错开, 反而更显眼。
+   没设背景时 --chat-background 为空, 兜底是页面底色 --bg, 所以纯主题下这两条带子照样成立。
+   z-index 10 是刻意的一档: 压住气泡, 但被顶栏（20）和输入区（25）压住。
+   **下边带的锚点必须用 --viewport-height, 不能用 100%**：盒高是钉住的"正常视口"（键盘弹起时
+   仍然 780）, 而输入区顶边跟着可视区上移到 560-169=391; 若拿 100% 当锚, 渐隐带会留在
+   555~611, 中间那一百多像素的消息就硬切在输入区上沿 —— 正是这层要消掉的那种"被切一刀"。
+   --viewport-height 缺省时回落到 100%, 也就是与盒同高的老行为。 */
+.message-fade { position: fixed; z-index: 10; top: 0; left: 0; right: 0; height: var(--viewport-full-height, 100%); pointer-events: none; background-color: var(--bg); background-image: var(--chat-background, none); background-size: var(--chat-background-size, cover); background-position: var(--chat-background-position, center); background-repeat: no-repeat; }
+.message-fade.is-top { -webkit-mask-image: linear-gradient(to bottom, #000 0, transparent var(--chat-topbar, 0px)); mask-image: linear-gradient(to bottom, #000 0, transparent var(--chat-topbar, 0px)); }
+.message-fade.is-bottom { -webkit-mask-image: linear-gradient(to bottom, transparent calc(var(--viewport-height, 100%) - var(--chat-composer-h) - var(--chat-list-fade)), #000 calc(var(--viewport-height, 100%) - var(--chat-composer-h)), #000 100%); mask-image: linear-gradient(to bottom, transparent calc(var(--viewport-height, 100%) - var(--chat-composer-h) - var(--chat-list-fade)), #000 calc(var(--viewport-height, 100%) - var(--chat-composer-h)), #000 100%); }
+/* 首条消息要停在玻璃下沿稍下方, 所以消息列表顶上要留出顶栏那块高度（用户要求"最顶部要留空余"）。
+   不留的话, 滚到顶时第一条消息会被浮着的玻璃压住 —— 而且滚定前它就是被切掉半截的。
+   原来这里是 22px 呼吸留白, 改成"顶栏高度 + 18px", 视觉落点差不多同一个位置。 */
+.chat-open .message-list { padding-top: calc(var(--chat-topbar) + 18px); }
 .message-list-inner { width: 100%; max-width: 830px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; gap: 18px; }
-.app-shell.has-chat-background { background-image: var(--chat-background); background-size: cover; background-position: center; }
-.app-shell.has-chat-background .topbar { background: transparent; border-bottom-color: transparent; }
-.app-shell.has-chat-background .composer { background: transparent; }
+/* 全局背景画在一个独立图层上（.app-shell 的 ::before）, 而不是直接做 .app-shell 的 background:
+   非对话页要给背景图加 filter: blur(), 而 background-image 本身不接受 filter。
+   图层用 z-index: -1 压在内容之下, 所以 .app-shell 必须是层叠上下文（上面那条 z-index: 0）——
+   否则负层会掉到 .app-shell 自己的背景后面去, 整块看不见。
+   取景由 --chat-background-size/position 给出（用户裁切时的缩放与平移）, 内置渐变不给这两个变量,
+   走默认的 cover/center。no-repeat 是兜底: 万一尺寸算小了, 也不要让图片平铺成一格一格的。
+   开关挂在 <html> 上（玻璃 token 也重映射在那一层, 见 tokens.css）, 因为弹窗与 toast 是挂在
+   body 上的, 不在 .app-shell 里面。
+   高度不跟 .app-shell（不是 inset/100%）, 而是钉在 --viewport-full-height 上
+   （用户 2026-09-26: 任何窗口变化下背景都要满屏、不能变小）。
+   .app-shell 必须跟着可视区缩 —— 否则键盘一弹, 输入框就被盖住了; 但图层一旦跟着缩,
+   它上面的 background-size / background-position 都是百分比, 会按新容器重算,
+   照片当场缩小、横向也可能覆盖不住。钉住正常高度后, 缩掉的那截由 .app-shell 的
+   overflow: hidden 裁掉, 照片的尺寸与位置一个像素都不动。
+   top 也必须是 0 而不是"居中": 图层保持原位、只被裁掉下缘, 画面在屏幕上不位移;
+   改成居中会让照片在键盘弹起时整体上移。 */
+html.has-app-background .app-shell::before { content: ''; position: absolute; z-index: -1; top: 0; left: 0; right: 0; height: var(--viewport-full-height, 100%); background-image: var(--chat-background); background-size: var(--chat-background-size, cover); background-position: var(--chat-background-position, center); background-repeat: no-repeat; }
+/* 非对话页: 背景图模糊 20px 并压到 80%（用户 2026-09-26）—— 只当底子, 不跟卡片抢注意力。
+   模糊会把图层四边一起柔化, 不放大就会在四周露出一圈主题底色, 所以等比放大把柔化边推到视口外。
+   放大倍数是被算出来的, 不是随手给的: blur(R) 的可见柔化带约 3σ = 3R, 缩放的让边是 (倍数-1)/2 × 视口宽。
+   基准取最窄的支持机型（360px 宽）而不是这台机器的 510px —— 视口越窄让边越小, 而柔化带的绝对宽度不变,
+   所以窄屏才是危险的那一端。R=20 ⇒ 需要 60px, (1.4-1)/2 × 360 = 72px ≈ 3.6σ ✓。
+   （上一版 R=30 时 510px 的 1.3 只有 76px, 3σ=90px 不够, 真机实测在两侧留了一圈底色;
+   换成 360px 基准后 R=30 反而需要 1.5 —— 用户随即把 R 收到 20, 1.4 于是同时满足两件事。）
+   放大只用 transform（等比）, 不能用扩大 inset 的办法: 相册背景的 size/position 多是百分比,
+   而百分比是按盒子尺寸解析的, inset 给两个方向加的是同样的绝对量、比例不同 ⇒ 照片会被拉变形。
+   transform 是等比缩放盒子, 两个方向的百分比同时等比变, 取景框只是"整体放大", 不会变形。
+   另外 .app-shell 是 overflow: hidden, 被推出视口的那圈柔化边正好被裁掉。 */
+html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--page-bg-blur)); opacity: var(--page-bg-opacity); transform: scale(1.4); }
 .background-sheet { display: grid; gap: 16px; }
 .background-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .background-swatch { position: relative; height: 76px; padding: 0; cursor: pointer; overflow: hidden; border: 2px solid transparent; border-radius: 12px; background-size: cover; background-position: center; }
 .background-swatch span { position: absolute; left: 8px; bottom: 6px; padding: 1px 6px; border-radius: 6px; font-size: 12px; color: #2a2a2a; background: rgba(255, 255, 255, .74); }
 .background-swatch.is-current { border-color: var(--accent, #f0c63c); }
 .background-swatch.is-current::after { content: '✓'; position: absolute; right: 6px; top: 5px; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; line-height: 18px; text-align: center; color: #fff; background: var(--accent, #f0c63c); }
-.date-divider { align-self: center; color: var(--text-faint); font-size: 11px; padding: 8px 14px; }
+.date-divider { align-self: center; font-size: 11px; padding: 8px 14px; }
 .history-window-control { align-self: center; display: flex; justify-content: center; width: 100%; }
 .history-window-control .button { max-width: 100%; min-height: 40px; font-size: 12px; }
 .history-window-control .button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -290,9 +404,9 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .chat-welcome-avatar { width: 58px; height: 58px; flex: 0 0 58px; padding: 0; border: 0; border-radius: 20px; background: transparent; }
 .chat-welcome-avatar .avatar { pointer-events: none; }
 .chat-welcome h2 { font-size: 25px; margin-bottom: 10px; }
-.chat-welcome p { color: var(--text-soft); font-size: 14px; max-width: 330px; }
+.chat-welcome p { color: var(--text); font-size: 14px; max-width: 330px; }
 .starter-list { display: block; margin: 27px -6px -12px; text-align: center; }
-.starter { min-height: 44px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 11px 14px; font-size: 13px; color: var(--text-soft); }
+.starter { min-height: 44px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 11px 14px; font-size: 13px; color: var(--text); }
 .starter-list > .starter { margin: 0 6px 12px; }
 .message-row { display: flex; align-items: flex-start; gap: 0; }
 .message-row.assistant > .message-avatar-trigger { margin-right: 7px; }
@@ -307,27 +421,117 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .message-row.system { justify-content: center; }
 .message-block { max-width: min(85%, 660px); min-width: 0; }
 .message-row.system .message-block { width: min(92%, 720px); max-width: 720px; }
-.message-name { margin: 0 0 5px 3px; font-size: 11px; color: var(--text-soft); }
+.message-name { margin: 0 0 5px 3px; font-size: 11px; }
+/* 反色文字阴影（用户 2026-09-26: "白字黑阴影, 黑字白阴影, 字跟着主题变, 阴影也跟着变";
+   同日追加: "对话页面里那些'沉浸'在背景上的元素 —— 名字、时间、气泡操作按钮、屏幕底部提示等 —— 都要加"）。
+   这几处字**直接坐在背景上**, 没有任何玻璃面垫在下面:
+   - .message-name 在气泡上方的空白里;
+   - .message-meta（时间 + 上下文角标 + 复制/朗读/编辑/重生成四个图标按钮）挂在气泡**下方**的 block 上,
+     不在 .message-bubble 里面（见 features/chat.js, meta 是 append 到 block 而不是 bubble）;
+   - .date-divider 是整条居中在空白里的日期;
+   - .composer-footer（本轮完成 / 草稿已保存）在输入框玻璃**下面**, .composer 本身 background: transparent。
+   对话一设背景图, 它们就糊进照片里了 —— 给一层和正文颜色相反的半透明描边当"字幕底"。
+   text-shadow 是可继承属性, 所以只写容器: 里面的时间、图标按钮自动跟着有, 不用逐个列
+   （图标是**字体图标** <i class="fa-solid …">, 因此同样吃 text-shadow —— 换成 SVG 就不吃了）。
+   阴影整体只在 tokens.css 的 --text-halo-shadow 一处定义, 明暗各写一份 --text-halo
+   （浅色主题正文是深色 ⇒ 描边是白的; 深色主题反过来）。
+   形状是向外扩的一圈实心描边, 不是模糊光晕（用户 2026-09-26: "阴影应该是向外扩不向内收缩"）。 */
+/* 名字 / 时间 / 图标 / 日期条 / 底部提示一律用正文色（用户 2026-09-26: "时间和名称、icon 都用黑色
+   或白色, 不要用灰色了"; 同日追加: "对话页面消息列表区域的文字和 icon 都不要用灰色, 就用纯黑白"）。
+   原来这里是 --text-soft / --text-faint, 那点灰压在照片上根本立不住, 加上一层白描边也只是
+   "灰字带白边"。--text 就是本主题的黑/白（浅色 #242820, 深色 #f1f2e8）, 跟着主题走,
+   不必写死 #000/#fff。这几个容器同时吃上面的反色描边, 黑白配起来照片再花也读得出。
+   color 与 text-shadow 都是可继承属性, 所以只写这四个容器: 里面的时间、日期条、
+   .context-badge、.frozen-badge 与复制/朗读/编辑/重生成四个图标（.icon-button 自己不设 color,
+   它从 components.css 拿到的也是 var(--text)）自动跟着有。 */
+.message-name,
+.message-meta,
+.date-divider,
+.composer-footer { color: var(--text); text-shadow: var(--text-halo-shadow); }
+/* 再对**后代**普遍地写一遍（`X *`）。上面四条靠继承, 继承对 <time>/<span>/<i> 够用, 但
+   **原生表单控件不吃继承**: 实测同一个 .message-meta 里 <time> 有描边、<button class="icon-button">
+   算出来是 none（color 倒是继承了）。只针对 .icon-button 补一条已经能解决现在这几个按钮, 可
+   以后只要在这里放一个新控件（下拉、开关、链接式按钮…）就会再踩一次同一个坑, 而且仍然是
+   "代码看着写了、屏上却没有"。所以这一步直接对子树逐个元素落值 —— 后代数量是个位数, 代价可忽略,
+   换来的是"这四个容器里的任何东西都一定有反色描边"这条不再依赖元素类型。 */
+.message-name *,
+.message-meta *,
+.date-divider *,
+.composer-footer * { text-shadow: var(--text-halo-shadow); }
+/* 按钮不吃继承 —— 实测: 同一个 .message-meta 里, <time> 正常继承了 text-shadow,
+   而 <button class="icon-button"> 算出来是 none（color 倒是继承了）。所以复制/朗读/编辑/重生成
+   这四个图标不显式再写一遍就永远没有反色描边, 光靠容器那条是写了个寂寞。
+   图标本身是字体图标 <i class="fa-solid …">, 显式给到祖先按钮上就够, 不用碰 <i>。 */
+.message-meta .icon-button { text-shadow: var(--text-halo-shadow); }
 .message-row.user .message-name { text-align: right; margin-right: 4px; }
 .message-row.system .message-name { margin-left: 0; text-align: center; }
-.message-bubble { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: 6px 16px 16px 16px; padding: 12px 15px; }
+/* min-height = 上下 1px 边框 + 上下 12px 内边距 + 一行 15px/1.65 正文 = 50.75px。
+   这是"气泡至少一行高"的下限（用户 2026-09-26: "避免气泡主体高度小于标准一行高导致小尖尖悬空"）:
+   尖角要从气泡顶往下 26px 才有完整形状, 气泡比一行还矮时它会探出底边吊在空中。
+   正常的文字气泡本来就有 50.75px, 所以这条只会兜住退化情形（空气泡 / 只放得下一个打字指示器）。 */
+.message-bubble { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: 6px 16px 16px 16px; padding: 12px 15px; min-height: calc(26px + 1.65 * 15px); }
 .message-row.system .message-bubble { background: var(--surface-muted); border-radius: 14px; }
-.message-row.assistant .message-bubble::before { content: ""; position: absolute; top: 11px; left: -7px; width: 12px; height: 12px; border: solid var(--border); border-width: 0 0 1px 1px; background: var(--surface); transform: rotate(45deg); }
+/* 尖角重新做回来了（用户 2026-09-26: "气泡上的小尾巴没了…请改进"）。
+   上一版把它整个删掉, 是因为那个 12×12、rotate(45deg) 的小方块**压在气泡边缘上**, 与本体必然重叠;
+   一旦这个对话设了背景, --surface 换成半透明的 --glass, 重叠区就成了"两层半透明叠加",
+   边上浮出一块更亮的菱形补丁（用户说的"透明交叉"）。
+   这次换了构造: **让尖角与本体的盒子零重叠** —— 一个 9×14、整个落在气泡外侧的盒子
+   （left/right: -9px, 靠内侧那条边正好贴住气泡的边）, 形状用 clip-path 裁成三角形。
+   零重叠 ⇒ 不存在叠加补偿问题, 也不需要在半透明上做遮盖（那件事无解）。
+   它自己也吃一次 backdrop-filter: 气泡外面那 9px 也得是玻璃。不给的话尖角就是一块"没糊"的透明片,
+   在条纹 / 照片上与本体的色差读得出来（探针 C 与 D 的对比）。
+   另一条路是把圆角矩形与尖角画成**单一形状**（clip-path: path() 或 9 切片 border-image）:
+   动态宽度下前者要 JS 逐条量尺寸、后者会让 backdrop-filter 的区域退化成整个矩形, 所以都没用。
+
+   2026-09-26 追加（用户: "小尖尖也要和气泡主体一样有很细的描边"）⇒ 零重叠的**单层**三角做不到:
+   描边得贴着斜边画, 而斜边是三角的边界。改成**两层伪元素**:
+     下层 z-index 0 = 只有 1px 宽的环（描边色）; 上层 z-index 1 = 玻璃填充（带 backdrop-filter）。
+   环的做法: clip-path: polygon() 里写【外三角 + **反向缠绕**的内三角】。nonzero 填充规则下反向缠绕
+   会把内三角挖成真的洞, 于是只剩那条 1px 环; 环里是真空的, 上层那 58% 的玻璃不会把边框色透出来。
+   探针实测（2026-09-26 polygon 带孔）: 同向缠绕 → 实心三角; 把环画成实心外三角 → 整片尖角被染上
+   边框色（就是用户说的那种"透明交叉"); 只有反向缠绕得到干净的一条细线。
+   几何（元素盒 12×18; 坐标是元素局部的, 内侧那条边贴住气泡 padding box 的边）:
+     填充内三角 = 旧尖角原样: 底边 y 2..16, 尖 (3,9)   ⇒ 仍是 9 宽 × 14 高, 形状一点没改
+     描边外三角 = 内三角的两条斜边各向外推 1px: 底边 y 0.73..17.27, 尖 (1.37,9)
+   外三角在底边两端各多出约 1.27px, 而填充只中断气泡边框 y 12..26 那一段 ——
+   两截多出来的正好落在气泡自己那条 1px 边框上（同色）, 于是"边框 → 斜边 → 边框"连成一条不断口的轮廓。
+   右尖角是镜像: 同样两个三角, 底边贴 padding box 右沿, 缠绕方向不变（镜像后外/内的符号仍然相反）。 */
 .message-row.user .message-bubble { background: var(--accent-soft); border-color: var(--accent-border); border-radius: 16px 6px 16px 16px; }
-.message-row.user .message-bubble::after { content: ""; position: absolute; top: 11px; right: -7px; width: 12px; height: 12px; border: solid var(--accent-border); border-width: 1px 1px 0 0; background: var(--accent-soft); transform: rotate(45deg); }
+/* top: min(10px, 100% - 16px)（用户 2026-09-26: "避免气泡主体高度小于标准一行高导致小尖尖悬空"）。
+   气泡够高时恒取 10px → 内三角顶落在 12px, 与旧版同一个位置, 也避开顶部那个 6px 圆角;
+   气泡矮下去时跟着上提, 保证内三角的底边永不越过气泡底边 —— 尖角不会吊在空中。
+   min() 里用 100%（= 气泡 padding box 高）而不是写死像素, 所以它会跟着消息内容长。
+   有了 .message-bubble 的 min-height, 正常情况下这一项永远取不到后面的值, 它只是兜底。 */
+.message-row.assistant .message-bubble::before,
+.message-row.user .message-bubble::after { content: ''; position: absolute; z-index: 0; top: min(10px, calc(100% - 16px)); width: 12px; height: 18px; }
+.message-row.assistant .message-bubble::before { left: -12px; background: var(--border); clip-path: polygon(12px 0.73px, 1.37px 9px, 12px 17.27px, 12px 16px, 3px 9px, 12px 2px); }
+.message-row.user .message-bubble::after { right: -12px; background: var(--accent-border); clip-path: polygon(0 0.73px, 10.63px 9px, 0 17.27px, 0 2px, 9px 9px, 0 16px); }
+.message-row.assistant .message-bubble::after,
+.message-row.user .message-bubble::before { content: ''; position: absolute; z-index: 1; top: min(10px, calc(100% - 16px)); width: 12px; height: 18px; -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
+.message-row.assistant .message-bubble::after { left: -12px; background: var(--surface); clip-path: polygon(12px 2px, 3px 9px, 12px 16px); }
+.message-row.user .message-bubble::before { right: -12px; background: var(--accent-soft); clip-path: polygon(0 2px, 9px 9px, 0 16px); }
 .message-text { position: relative; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; user-select: text; -webkit-user-select: text; }
-.message-meta { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; overflow: hidden; color: var(--text-faint); font-size: 11px; min-height: 32px; }
+/* 这里**不能**有 overflow: hidden（用户 2026-09-26: "气泡下面的 icon 也要加反色阴影"）。
+   反色阴影本身就是"向元素盒子外面扩散"的绘制, 而 overflow: hidden 会沿着 padding box 把它裁掉 ——
+   时间与四个图标和容器同高(32px), 上下两圈的描边正好整段落在盒子外, 于是这一行字和图标等于
+   完全没有阴影, 而其它地方(名字、日期条)看起来是有的 —— 很难从代码上看出差别, 只能靠这条注释拦住。
+   内容最宽时约 250px(时间 38 + 徽章 62 + 四个 32px 图标 + 间隙), .message-block 至少有 326px
+   （手机 384px 的 85%）, 本来就不会溢出, 去掉裁剪是安全的。 */
+.message-meta { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; font-size: 11px; min-height: 32px; }
 .message-meta time { margin-right: 2px; }
 .message-meta .icon-button { width: 32px; min-height: 32px; font-size: 12px; }
 .message-row.user .message-meta { justify-content: flex-end; }
 .message-row.system .message-meta { justify-content: center; }
-.context-badge { font-size: 10px; color: var(--text-soft); }
+.context-badge { font-size: 10px; }
 /* 已压缩进概要的历史消息：整条淡化、退掉一点颜色，看起来像被「冻结」的旧记录。
    只降透明度、不隐藏内容 —— 用户仍然需要能回看原文，只是不能再单独改写。 */
 .message-row.is-frozen .message-bubble, .message-row.is-frozen .message-name { opacity: .6; }
 .message-row.is-frozen .message-bubble { filter: saturate(.5); }
 .message-row.is-frozen > .message-avatar-trigger { opacity: .6; }
-.frozen-badge { display: inline-flex; align-items: center; min-height: 22px; margin-right: 2px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); color: var(--text-soft); font-size: 10px; }
+/* 「已压缩」徽章也坐在背景上（它挂在 .message-meta 里, 不在气泡内）, 所以同样走黑白 + 反色阴影
+   （用户 2026-09-26: "时间和压缩提示文字要黑白色反色阴影"）。它自己有玻璃底, 但不影响 ——
+   字色跟着 --text 走, 主题一换就换。 */
+.frozen-badge { display: inline-flex; align-items: center; min-height: 22px; margin-right: 2px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); color: var(--text); font-size: 10px; }
 .frozen-badge i { margin-right: 3px; font-size: 9px; }
 /* 冻结消息上的铅笔/重新生成：保留按钮可见但呈禁用态，点击只给提示。 */
 .message-meta .icon-button.is-disabled { cursor: not-allowed; }
@@ -341,17 +545,22 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .message-video-card > i { flex: 0 0 auto; color: var(--accent-strong); }
 .message-video-card span, .message-video-card small { min-width: 0; overflow-wrap: anywhere; }
 .typing-bubble { display: flex; align-items: center; gap: 5px; height: 24px; min-width: 45px; }
-.typing-bubble span { width: 6px; height: 6px; background: var(--text-soft); border-radius: 50%; animation: typing 1.3s infinite; }
+.typing-bubble span { width: 6px; height: 6px; background: var(--text); border-radius: 50%; animation: typing 1.3s infinite; }
 .typing-bubble span:nth-child(2) { animation-delay: .15s; } .typing-bubble span:nth-child(3) { animation-delay: .3s; }
 .routing-indicator { align-self: center; display: flex; align-items: center; justify-content: center; width: 72px; min-height: 42px; padding: 8px 13px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 3px 14px #1d24110a; }
 .routing-indicator .typing-bubble { justify-content: center; }
 @keyframes typing { 0%, 65%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-.jump-latest { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); box-shadow: 0 5px 20px #1c24152b; font-size: 12px; }
-.composer { background: var(--bg); padding: 12px max(16px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(16px, var(--safe-left)); }
+.jump-latest { position: absolute; z-index: 15; bottom: calc(var(--chat-composer-h) + 14px); left: 50%; transform: translateX(-50%); box-shadow: 0 5px 20px #1c24152b; font-size: 12px; }
+/* 输入区整条不留底色：底色会把毛玻璃"糊"成一块实色 —— 在实色上做 backdrop-filter 看不出任何效果，
+   所以留空，让对话背景（设了就是背景图，没设就是 --bg）透上来，玻璃才有东西可糊。
+   absolute + z-index 25：它现在浮在消息列表之上（列表铺满整屏）, 且要压过渐隐带（z-index 10）。 */
+.composer { position: absolute; z-index: 25; right: 0; bottom: 0; left: 0; background: transparent; padding: 12px max(16px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(16px, var(--safe-left)); }
 .composer-inner { max-width: 830px; margin: 0 auto; }
-.composer-box { border: 1px solid var(--border-strong); border-radius: 21px; background: var(--surface); box-shadow: 0 3px 15px #1d241105; overflow: hidden; }
+/* 输入框本体就是毛玻璃，不再用实色 --surface：半透明 --glass + backdrop-filter。
+   这一条无条件生效（原来只在设了对话背景时才玻璃化，所以没设背景时是一块实白）。 */
+.composer-box { border: 1px solid var(--glass-edge); border-radius: 21px; background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); box-shadow: 0 3px 15px #1d241105; overflow: hidden; }
 .composer-box:focus-within { border-color: var(--border-strong); }
-.composer-recipients { display: flex; align-items: center; gap: 0; min-width: 0; max-width: 100%; overflow: hidden; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.composer-recipients { display: flex; align-items: center; gap: 0; min-width: 0; max-width: 100%; overflow: hidden; padding: 8px 10px; border-bottom: 1px solid var(--glass-edge); }
 .composer-recipients > .recipient-at { margin-right: 6px; }
 .recipient-at { flex: 0 0 auto; display: inline; min-width: 16px; margin-right: 6px; background: transparent; color: var(--text-soft); font-size: 17px; font-weight: 700; }
 .mention-strip { display: flex; flex: 1 1 auto; align-items: center; gap: 5px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: none; overscroll-behavior-inline: contain; }
@@ -367,8 +576,8 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .composer-toolbar .row { gap: 8px; }
 .composer .send-button { background: var(--accent); color: var(--accent-ink); border-radius: 14px; }
 .composer-hint { color: var(--text-faint); font-size: 11px; margin-left: 18px; }
-.composer-footer { display: flex; justify-content: space-between; gap: 12px; min-height: 24px; padding: 7px 4px 0; font-size: 11px; color: var(--text-soft); }
-#draftStatus { flex-shrink: 0; color: var(--text-faint); }
+.composer-footer { display: flex; justify-content: space-between; gap: 12px; min-height: 24px; padding: 7px 4px 0; font-size: 11px; }
+#draftStatus { flex-shrink: 0; }
 .attachment-tray { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; max-width: 100%; padding: 4px 2px 12px; }
 .attachment { width: 82px; height: 82px; flex-shrink: 0; position: relative; border-radius: 14px; background: var(--surface-muted); }
 .attachment img { width: 100%; height: 100%; object-fit: cover; border-radius: 14px; }
@@ -410,17 +619,42 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
   .message-row.user .message-block { max-width: calc(100% - 51px); }
   .message-bubble { padding: 12px 14px; }
 }
-@media (max-height: 520px) { .chat-open .topbar { min-height: 54px; padding-top: 5px; padding-bottom: 5px; } .chat-open .brand-copy span, .composer-hint { display: none; } .composer { padding-top: 6px; padding-bottom: max(4px, var(--safe-bottom)); } .composer textarea { max-height: 80px; min-height: 44px; } .composer-footer { min-height: 18px; padding-top: 2px; } }
+@media (max-height: 520px) { .chat-open { --chat-topbar: calc(54px + var(--safe-top)); } .chat-open .topbar { padding-top: 5px; padding-bottom: 5px; } .chat-open .brand-copy span, .composer-hint { display: none; } .composer { padding-top: 6px; padding-bottom: max(4px, var(--safe-bottom)); } .composer textarea { max-height: 80px; min-height: 44px; } .composer-footer { min-height: 18px; padding-top: 2px; } }
 
-/* 磨砂玻璃：设了对话背景时，顶栏 / 消息气泡 / 底部输入框都变成半透明毛玻璃，浮在背景图上。
-   放在文件末尾是有意的 —— .message-bubble 等同权重选择器靠顺序取胜，排前面压不住。
-   只用标准 backdrop-filter（这台 Android 11 / Chrome 83 WebView 实测 CSS.supports 为真）；
-   万一哪个环境不支持，会退化成半透明色块，文字依然可读，不会崩。 */
-.app-shell.has-chat-background .topbar { background: var(--glass); border-bottom-color: transparent; backdrop-filter: blur(18px) saturate(1.6); }
-.app-shell.has-chat-background .composer-box { background: var(--glass); border-color: var(--glass-edge); backdrop-filter: blur(20px) saturate(1.6); }
-.app-shell.has-chat-background .composer-recipients { border-bottom-color: var(--glass-edge); }
-.app-shell.has-chat-background .message-bubble { background: var(--glass); border-color: var(--glass-edge); backdrop-filter: blur(16px) saturate(1.5); }
-.app-shell.has-chat-background .message-row.assistant .message-bubble::before { background: var(--glass); border-color: var(--glass-edge); }
-.app-shell.has-chat-background .message-row.user .message-bubble { background: var(--glass-accent); border-color: var(--glass-edge); }
-.app-shell.has-chat-background .message-row.user .message-bubble::after { background: var(--glass-accent); border-color: var(--glass-edge); }
-.app-shell.has-chat-background .message-row.system .message-bubble { background: var(--glass-muted); }
+/* 全局毛玻璃（统一配置）。开关只有一处: <html>.has-app-background —— 就是"最近使用的对话设了背景"。
+   分工是刻意的:
+   - "实色面变玻璃色"这一步不在这里, 在 tokens.css 的 :root.has-app-background —— 把 --surface /
+     --surface-raised / --surface-muted / --accent-soft 指到 --glass 系列, 于是卡片、弹窗、输入框、
+     气泡、胶囊、开关这些用 token 的组件全部一起玻璃化, 不用逐个列举, 也不会漏。
+   - 这里只管 token 管不到的两件事:
+     ① 给"大块面"补一次 backdrop-filter。模糊是每层单独付代价的, chip / badge / 输入框这些小控件
+        不值得, 它们靠半透明色叠在"已经模糊过的"卡片上, 读起来同样是一块玻璃;
+     ② toast 的底色是写死的深色, 不吃 token, 只能单独换掉。
+   顶栏 / 底栏 / 输入框体（.topbar / .bottom-nav / .composer-box）不在这里 —— 它们无条件就是玻璃,
+   见各自本体那几条: 这三块是"外框", 不管有没有背景都浮在内容之上。
+   放在文件末尾是有意的: .message-bubble 等同权重选择器靠顺序取胜, 排前面压不住。
+   只用标准 backdrop-filter（这台 Android 11 / Chrome 83 WebView 实测 CSS.supports 为真）;
+   万一哪个环境不支持, 会退化成半透明色块, 文字依然可读, 不会崩。 */
+html.has-app-background .message-bubble,
+html.has-app-background .card,
+html.has-app-background .welcome-card,
+html.has-app-background .search-field,
+html.has-app-background .starter,
+html.has-app-background .choice-card,
+html.has-app-background .role-choice,
+html.has-app-background .role-template-card,
+html.has-app-background .asr-transcript,
+html.has-app-background .section-tabs,
+html.has-app-background .modal-sheet { -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
+html.has-app-background .toast { border: 1px solid var(--border); background: var(--glass); color: var(--text); }
+
+/* 到这里, 非对话页不再有任何"清掉填充"的规则了。
+   曾经有过一条"分段标签条不许有底"的收窄规则, 2026-09-26 当天就被撤回 ——
+   当时的理由是"容器填一层会和选中那一格的填充重复表达同一件事", 真机上看到的却是几个按钮各自
+   浮着、不成组。用户的要求是"按钮组（tab按钮组）整体的也要加半透明背景（覆盖到未激活的按钮）"。
+   现在 .section-tabs 与卡片同等对待: 容器吃 --surface-muted（开关下重映射成 --glass-muted 的
+   半透明填充）, 并且补进上面那组 backdrop-filter, 于是它是一块真的玻璃底板, 未激活的按钮就"坐"在
+   这块板上, 选中的那一格再用 --surface（= --glass）叠出一块更亮的拇指。
+   .card / .search-field 在 backdrop-filter 组里; .picker-button 与 .field input|select|textarea
+   吃 --surface（= --glass 的半透明填充）—— 它们浮在"已经模糊过的"卡片上, 再各付一次模糊没有
+   视觉收益, 只吃玻璃色就够了。所以本文件里"非对话页"这个作用域下一条清填充的规则都没有。 */

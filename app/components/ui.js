@@ -34,15 +34,21 @@
       } catch (_) { node.removeAttribute("data-avatar-loaded"); }
     }));
   }
-  async function pickLocalImage() {
+  // 相册取图：宿主用系统照片选择器返回持久化的 HermitFile（url + logicalFileId），
+  // 不返回也不持久化 Base64。maxDimension / maxBytes 会被宿主收敛到 [320, 2048] 与
+  // [64KiB, 700KiB]（宿主 pickStoredImage），所以这里只是表达偏好，不是硬上限；
+  // 真正超限的相册原图由宿主自己降采样，不会像 pickInline 那样直接报错。
+  async function pickLocalImage(options) {
+    var settings = options || {};
     if (app.platform.hermit.available()) {
       var files = app.platform.hermit.api().files;
-      var picked = await files.pickImage({ maxDimension: 2000, maxBytes: 700 * 1024 });
+      var picked = await files.pickImage({ maxDimension: Number(settings.maxDimension) || 2000, maxBytes: Number(settings.maxBytes) || 700 * 1024 });
       if (!picked || picked.cancelled) return null;
-      if (!picked.url) { if (picked.logicalFileId && files.delete) await files.delete({ logicalFileId: picked.logicalFileId }).catch(function () {}); throw new Error("没有取得可用头像图片"); }
+      if (!picked.url) { if (picked.logicalFileId && files.delete) await files.delete({ logicalFileId: picked.logicalFileId }).catch(function () {}); throw new Error(settings.emptyMessage || "没有取得可用头像图片"); }
       var released = false;
       return {
         url: picked.url, type: picked.mime || "", size: Number(picked.size || 0), name: picked.name || "avatar.jpg",
+        logicalFileId: String(picked.logicalFileId || ""),
         release: function () {
           if (released) return Promise.resolve(); released = true;
           if (!picked.logicalFileId || !files.delete) return Promise.resolve();
@@ -52,47 +58,94 @@
     }
     return new Promise(function (resolve) { var input = document.createElement("input"); input.type = "file"; input.accept = "image/jpeg,image/png,image/webp"; input.addEventListener("change", function () { resolve(input.files && input.files[0] || null); }, { once: true }); input.click(); });
   }
-  function cropGeometry(imageWidth, imageHeight, frameSize, zoom, offsetX, offsetY) {
-    var width = Number(imageWidth), height = Number(imageHeight), size = Math.max(1, Number(frameSize || 320));
-    if (!(width > 0) || !(height > 0)) throw new Error("头像图片尺寸无效");
-    var safeZoom = Math.max(1, Math.min(4, Number(zoom || 1))), baseScale = size / Math.min(width, height);
-    var renderedWidth = width * baseScale * safeZoom, renderedHeight = height * baseScale * safeZoom;
-    var limitX = Math.max(0, (renderedWidth - size) / 2), limitY = Math.max(0, (renderedHeight - size) / 2);
-    var x = Math.max(-limitX, Math.min(limitX, Number(offsetX || 0))), y = Math.max(-limitY, Math.min(limitY, Number(offsetY || 0)));
-    var scale = baseScale * safeZoom, sourceSize = Math.min(width, height, size / scale);
-    var sourceX = Math.max(0, Math.min(width - sourceSize, width / 2 - x / scale - sourceSize / 2));
-    var sourceY = Math.max(0, Math.min(height - sourceSize, height / 2 - y / scale - sourceSize / 2));
-    return { zoom: safeZoom, x: x, y: y, baseWidth: width * baseScale, baseHeight: height * baseScale, renderedWidth: renderedWidth, renderedHeight: renderedHeight, sourceX: sourceX, sourceY: sourceY, sourceSize: sourceSize };
+  // 裁切框的宽高比 = 页面可用区，也就是对话背景实际要盖住的那块区域：
+  // 页面本身已经排在状态栏下面，若宿主把状态栏压进页面，则用 --safe-top 扣掉顶部状态栏。
+  function screenAspect() {
+    var shell = document.getElementById("appShell");
+    var width = (shell && shell.clientWidth) || document.documentElement.clientWidth || window.innerWidth || 0;
+    var height = (shell && shell.clientHeight) || document.documentElement.clientHeight || window.innerHeight || 0;
+    if (!(width > 0) || !(height > 0)) return 9 / 19.5;
+    var inset = 0;
+    try { inset = parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0; } catch (_) { inset = 0; }
+    var usable = height - (inset > 0 && inset < height / 4 ? inset : 0);
+    return Math.min(1.4, Math.max(0.3, width / Math.max(1, usable)));
   }
-  async function cropAvatar(source, onCropped) {
+  // 矩形取景几何：方形是 frameWidth === frameHeight 的特例，cropGeometry 保持旧签名不变。
+  function cropGeometryRect(imageWidth, imageHeight, frameWidth, frameHeight, zoom, offsetX, offsetY) {
+    var width = Number(imageWidth), height = Number(imageHeight);
+    var frameW = Math.max(1, Number(frameWidth || 320)), frameH = Math.max(1, Number(frameHeight || 320));
+    if (!(width > 0) || !(height > 0)) throw new Error("图片尺寸无效");
+    var safeZoom = Math.max(1, Math.min(4, Number(zoom || 1))), baseScale = Math.max(frameW / width, frameH / height);
+    var renderedWidth = width * baseScale * safeZoom, renderedHeight = height * baseScale * safeZoom;
+    var limitX = Math.max(0, (renderedWidth - frameW) / 2), limitY = Math.max(0, (renderedHeight - frameH) / 2);
+    var x = Math.max(-limitX, Math.min(limitX, Number(offsetX || 0))), y = Math.max(-limitY, Math.min(limitY, Number(offsetY || 0)));
+    var scale = baseScale * safeZoom;
+    var sourceWidth = Math.min(width, frameW / scale), sourceHeight = Math.min(height, frameH / scale);
+    var sourceX = Math.max(0, Math.min(width - sourceWidth, width / 2 - x / scale - sourceWidth / 2));
+    var sourceY = Math.max(0, Math.min(height - sourceHeight, height / 2 - y / scale - sourceHeight / 2));
+    return { zoom: safeZoom, x: x, y: y, limitX: limitX, limitY: limitY, baseWidth: width * baseScale, baseHeight: height * baseScale, renderedWidth: renderedWidth, renderedHeight: renderedHeight, sourceX: sourceX, sourceY: sourceY, sourceWidth: sourceWidth, sourceHeight: sourceHeight, sourceSize: sourceWidth };
+  }
+  function cropGeometry(imageWidth, imageHeight, frameSize, zoom, offsetX, offsetY) {
+    return cropGeometryRect(imageWidth, imageHeight, frameSize, frameSize, zoom, offsetX, offsetY);
+  }
+  // 统一的取景弹窗，头像与对话背景共用。
+  //   mode "blob"    交出裁好的 JPEG（头像）；mode "framing" 交出缩放与平移量（背景，原图不动）。
+  //   keepSource     成功后保留源文件（背景要把这个 HermitFile 直接存进对话记录）。
+  async function cropPicture(source, options) {
+    var settings = options || {}, labels = settings.labels || {};
     var blob = source instanceof Blob ? source : null, mime = blob ? blob.type || "" : source && source.type || "", size = blob ? blob.size : Number(source && source.size || 0);
     var managedUrl = !blob && source && source.url ? String(source.url) : "", sourceUrl = blob ? URL.createObjectURL(blob) : managedUrl;
+    var aspect = Number(settings.aspect) > 0 ? Number(settings.aspect) : 1;
+    var framing = settings.mode === "framing", quality = Number(settings.quality) || 0.88, outputWidth = Number(settings.outputWidth) || 320;
     var released = false, cleanup = [];
     function release() {
       if (released) return; released = true; cleanup.forEach(function (fn) { fn(); });
       if (blob && sourceUrl) URL.revokeObjectURL(sourceUrl);
       if (!blob && source && typeof source.release === "function") Promise.resolve(source.release()).catch(function () {});
     }
-    if (!sourceUrl || !/^image\/(jpeg|png|webp)$/i.test(mime)) { release(); throw new Error("头像只支持 JPEG、PNG 或 WebP 图片"); }
-    if (size > 20 * 1024 * 1024) { release(); throw new Error("头像原图不能超过 20 MiB"); }
+    if (!sourceUrl || !/^image\/(jpeg|png|webp)$/i.test(mime)) { release(); throw new Error(labels.notImage); }
+    var maxSourceBytes = Number(settings.maxSourceBytes) || 20 * 1024 * 1024;
+    if (size > maxSourceBytes) { release(); throw new Error(labels.tooLarge); }
     var image;
-    try { image = await new Promise(function (resolve, reject) { var value = new Image(); value.onload = function () { resolve(value); }; value.onerror = function () { reject(new Error("头像图片无法读取")); }; value.src = sourceUrl; }); }
+    try { image = await new Promise(function (resolve, reject) { var value = new Image(); value.onload = function () { resolve(value); }; value.onerror = function () { reject(new Error(labels.unreadable)); }; value.src = sourceUrl; }); }
     catch (error) { release(); throw error; }
     var state = { zoom: 1, x: 0, y: 0 }, pointers = {}, gesture = null;
-    var form = openSubsheet({ title: "调整头像", submitText: "使用头像", html: '<p class="helper crop-help">拖动图片对准蓝色正方形；双指捏合、滚轮或下方按钮可以缩放。</p><div class="crop-stage" data-crop-stage><canvas id="cropCanvas" aria-label="头像裁切预览"></canvas><span class="crop-frame" aria-hidden="true"><i class="crop-handle crop-handle-tl"></i><i class="crop-handle crop-handle-tr"></i><i class="crop-handle crop-handle-bl"></i><i class="crop-handle crop-handle-br"></i></span></div><div class="crop-toolbar"><button class="icon-button" type="button" data-crop-zoom="-0.15" aria-label="缩小头像">' + icon("minus") + '</button><output data-crop-output aria-live="polite">100%</output><button class="icon-button" type="button" data-crop-zoom="0.15" aria-label="放大头像">' + icon("plus") + '</button></div>', onDismiss: release, onSubmit: async function () {
-      var geometry = cropGeometry(image.naturalWidth, image.naturalHeight, stage.getBoundingClientRect().width || 320, state.zoom, state.x, state.y);
-      var canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 320;
-      canvas.getContext("2d").drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceSize, geometry.sourceSize, 0, 0, 320, 320);
-      var output = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/jpeg", 0.88); }); if (!output) throw new Error("头像裁切失败，请换一张图片"); return output;
-    }, onSuccess: async function (output) { release(); await onCropped(output); } });
+    var form = openSubsheet({ title: labels.title, submitText: labels.submit, html: '<p class="helper crop-help">' + utils.escapeHtml(labels.help || "") + '</p><div class="crop-stage" data-crop-stage><canvas id="cropCanvas" aria-label="' + utils.escapeHtml(labels.preview || "") + '"></canvas><span class="crop-frame" aria-hidden="true"><i class="crop-handle crop-handle-tl"></i><i class="crop-handle crop-handle-tr"></i><i class="crop-handle crop-handle-bl"></i><i class="crop-handle crop-handle-br"></i></span></div><div class="crop-toolbar"><button class="icon-button" type="button" data-crop-zoom="-0.15" aria-label="' + utils.escapeHtml(labels.zoomOut || "") + '">' + icon("minus") + '</button><output data-crop-output aria-live="polite">100%</output><button class="icon-button" type="button" data-crop-zoom="0.15" aria-label="' + utils.escapeHtml(labels.zoomIn || "") + '">' + icon("plus") + '</button></div>', onDismiss: release, onSubmit: async function () {
+      var frame = stageFrame(), geometry = cropGeometryRect(image.naturalWidth, image.naturalHeight, frame.width, frame.height, state.zoom, state.x, state.y);
+      if (framing) {
+        // 只交出与容器无关的参数：两个宽高比 + 归一化到 ±1 的平移量。
+        // 百分比形式的 background-size / background-position 与元素尺寸无关，
+        // 所以在取景框里定好的构图，铺到整页背景上能原样还原。
+        return {
+          zoom: geometry.zoom,
+          imageAspect: image.naturalWidth / image.naturalHeight,
+          frameAspect: frame.width / frame.height,
+          panX: geometry.renderedWidth > frame.width ? geometry.x / geometry.limitX : 0,
+          panY: geometry.renderedHeight > frame.height ? geometry.y / geometry.limitY : 0
+        };
+      }
+      var width = Math.max(1, Math.round(outputWidth)), height = Math.max(1, Math.round(width / (frame.width / frame.height)));
+      var canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+      var context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
+      context.drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceWidth, geometry.sourceHeight, 0, 0, width, height);
+      var output = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/jpeg", quality); }); if (!output) throw new Error(labels.failed); return output;
+    }, onSuccess: async function (output) { if (!settings.keepSource) release(); cleanup.forEach(function (fn) { fn(); }); released = true; await settings.onCropped(output); } });
     var stage = form.querySelector("[data-crop-stage]"), preview = form.querySelector("#cropCanvas");
-    function stageSize() { var width = stage.getBoundingClientRect().width; return width > 0 ? width : Math.min(420, Math.max(240, (document.documentElement.clientWidth || 364) - 44)); }
+    function stageFrame() {
+      var available = stage.parentElement ? stage.parentElement.clientWidth : 0;
+      var maxWidth = Math.max(140, Math.min(420, (available || (document.documentElement.clientWidth || 364)) - 44));
+      var maxHeight = Math.max(160, Math.min(460, Math.round((window.innerHeight || 640) * 0.46)));
+      var width = maxWidth, height = width / aspect;
+      if (height > maxHeight) { height = maxHeight; width = height * aspect; }
+      return { width: Math.max(120, Math.round(width)), height: Math.max(120, Math.round(height)) };
+    }
     function paint() {
-      var size = stageSize(), geometry = cropGeometry(image.naturalWidth, image.naturalHeight, size, state.zoom, state.x, state.y), ratio = Math.max(1, Number(window.devicePixelRatio || 1));
+      var frame = stageFrame(), geometry = cropGeometryRect(image.naturalWidth, image.naturalHeight, frame.width, frame.height, state.zoom, state.x, state.y), ratio = Math.max(1, Number(window.devicePixelRatio || 1));
       state.zoom = geometry.zoom; state.x = geometry.x; state.y = geometry.y;
-      preview.width = Math.round(size * ratio); preview.height = Math.round(size * ratio);
-      var context = preview.getContext("2d"); context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, size, size);
-      context.drawImage(image, (size - geometry.renderedWidth) / 2 + state.x, (size - geometry.renderedHeight) / 2 + state.y, geometry.renderedWidth, geometry.renderedHeight);
+      stage.style.width = frame.width + "px"; stage.style.height = frame.height + "px";
+      preview.width = Math.round(frame.width * ratio); preview.height = Math.round(frame.height * ratio);
+      var context = preview.getContext("2d"); context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, frame.width, frame.height);
+      context.drawImage(image, (frame.width - geometry.renderedWidth) / 2 + state.x, (frame.height - geometry.renderedHeight) / 2 + state.y, geometry.renderedWidth, geometry.renderedHeight);
       form.querySelector("[data-crop-output]").textContent = Math.round(state.zoom * 100) + "%";
     }
     function pointerList() { return Object.keys(pointers).map(function (key) { return pointers[key]; }); }
@@ -117,6 +170,22 @@
     stage.addEventListener("wheel", function (event) { event.preventDefault(); state.zoom += event.deltaY < 0 ? 0.12 : -0.12; paint(); }, { passive: false });
     form.querySelectorAll("[data-crop-zoom]").forEach(function (button) { button.addEventListener("click", function () { state.zoom += Number(button.dataset.cropZoom); paint(); }); });
     var repaint = function () { if (!released && stage.isConnected) paint(); }; window.addEventListener("resize", repaint); cleanup.push(function () { window.removeEventListener("resize", repaint); }); paint(); if (window.requestAnimationFrame) window.requestAnimationFrame(repaint);
+  }
+  // 头像就是方形取景 + 320×320 JPEG 输出，文案与背景那套分开，避免读到"背景"字样。
+  function cropAvatar(source, onCropped) {
+    return cropPicture(source, {
+      aspect: 1, outputWidth: 320, quality: 0.88,
+      labels: {
+        title: "调整头像", submit: "使用头像",
+        help: "拖动图片对准蓝色正方形；双指捏合、滚轮或下方按钮可以缩放。",
+        preview: "头像裁切预览", zoomIn: "放大头像", zoomOut: "缩小头像",
+        notImage: "头像只支持 JPEG、PNG 或 WebP 图片",
+        tooLarge: "头像原图不能超过 20 MiB",
+        unreadable: "头像图片无法读取",
+        failed: "头像裁切失败，请换一张图片"
+      },
+      onCropped: onCropped
+    });
   }
   function toast(message, duration) {
     var root = document.getElementById("toastRoot");
@@ -287,5 +356,5 @@
   function search(placeholder) {
     return '<label class="search-field">' + icon("magnifying-glass") + '<input type="search" id="listSearch" aria-label="' + utils.escapeHtml(placeholder) + '" placeholder="' + utils.escapeHtml(placeholder) + '"></label>';
   }
-  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropGeometry: cropGeometry, toast: toast, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
+  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropPicture: cropPicture, cropGeometry: cropGeometry, cropGeometryRect: cropGeometryRect, screenAspect: screenAspect, toast: toast, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
 })(window.chataxi);
