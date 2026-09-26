@@ -3,11 +3,21 @@
   var catalog = app.services.catalog;
 
   function families(kind) {
-    return catalog[kind === "llm" ? "llmFamilies" : kind === "tts" ? "ttsFamilies" : "asrFamilies"];
+    return catalog[kind === "llm" ? "llmFamilies" : kind === "tts" ? "ttsFamilies" : kind === "asr" ? "asrFamilies" : "imageFamilies"] || [];
   }
 
+  // 兜底要三层：指定 id → "custom" 家族 → 列表第一项。第三层是给绘图用的 —— imageFamilies
+  // 里没有 "custom"，少了它 family() 会返回 undefined，随后读 definition.models 就炸。
   function family(kind, id) {
-    return families(kind).find(function (item) { return item.id === id; }) || families(kind).find(function (item) { return item.id === "custom"; });
+    var list = families(kind);
+    return list.find(function (item) { return item.id === id; }) || list.find(function (item) { return item.id === "custom"; }) || list[0] || {};
+  }
+
+  // CVP 插件地址归一化：允许用户填到 /cvp 或旧名 /vibedraw 为止，客户端都退回它前面的根。
+  // 与 vibedraw/plans/cvp-spec.md 的客户端约定一致（规范承诺路径不变，这里的容错只为省心）。
+  function cvpBase(endpoint) {
+    var value = String(endpoint || "").replace(/\/+$/, ""), marker = value.search(/\/(?:cvp|vibedraw)(?:\/|$)/i);
+    return marker > 0 ? value.slice(0, marker) : value;
   }
 
   function unique(items) {
@@ -607,6 +617,49 @@
     return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
   }
 
+  // 绘图（CVP）：一次 /cvp/info 就够 —— 它公开、不带密码也会返回（密码对不对由 auth.authorized 说），
+  // 而且同时给出能力清单、每项能力的输入需求 / 忽略字段 / 默认值 / 允许画幅。chataxi 把每个
+  // category 含 "render" 的能力映射成一张单模型卡片（卡片 = 能力，不是 checkpoint 文件名）。
+  // 只收 "render"：它才是"重画成品图"，与"在对话里画一张照片"这件事对得上；
+  // quick / inpaint / upscale 是画布工具，本轮不做（见 plans 的「明确不做」）。
+  //
+  // 不保存原始 /cvp/info：能力里已经带上画幅 / 步数 / 默认值与模型挂载点，draw.js 从
+  // modelDefinition("image", …) 就能拿到全部要用的东西，省得再存一份可能超 63 KB 的记录。
+  async function discoverImage(service, definition) {
+    var base = cvpBase(service.endpoint);
+    if (!base) throw new Error("请填写 CVP 插件的地址（ComfyUI 的地址，插件装在里面）");
+    var headers = authHeaders("image", service);
+    Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
+    var result = await app.platform.network.requestJson({ url: base + "/cvp/info", method: "GET", headers: headers, timeoutMs: 30000 });
+    var document = result.data || {};
+    if (!document.spec) throw new Error("这个地址不是 CVP 服务：请在 ComfyUI 中确认已安装 VibeDraw 插件并重启");
+    var auth = document.auth || {};
+    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 VibeDraw 配置节点里核对密码");
+    var capabilities = (document.capabilities || []).filter(function (item) { return item && item.id && (item.category || []).indexOf("render") >= 0; });
+    if (!capabilities.length) throw new Error("插件没有提供成品图（category: render）能力，请升级插件");
+    service.plugin = document.plugin || {};
+    var models = capabilities.map(function (item) {
+      var label = item.label || {}, description = item.description || {};
+      return {
+        id: String(item.id),
+        name: label.zh || label.en || String(item.id),
+        description: app.i18n.pick(description.zh || description.en || "", description.en || description.zh || ""),
+        aliases: (item.aliases || []).map(String),
+        ready: item.ready !== false,
+        roles: (item.models || []).map(function (entry) { return { role: String(entry.role || ""), name: String(entry.name || ""), ready: entry.ready !== false }; }),
+        promptLanguage: (item.prompt || {}).language || "",
+        needs: item.needs || {},
+        ignores: (item.ignores || []).map(String),
+        defaults: item.defaults || {},
+        sizes: ((item.values || {}).size || []).map(function (pair) { return [Number(pair[0]), Number(pair[1])]; }),
+        steps: ((item.values || {}).steps || []).map(Number),
+        typicalSeconds: Number(item.typical_seconds || 0),
+        capabilitySource: "capability-directory"
+      };
+    });
+    return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
+  }
+
   function settle(value) {
     if (!value) return Promise.resolve({ status: "skipped", value: null });
     return Promise.resolve(value).then(function (result) { return { status: "fulfilled", value: result }; }, function (reason) { return { status: "rejected", reason: reason }; });
@@ -627,10 +680,11 @@
     var definition = family(kind, service.family || service.type);
     var urls = discoveryUrls(kind, service), headers = authHeaders(kind, service), result;
     Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
-    if (kind === "tts") result = await discoverTts(service, definition, urls, headers);
+    if (kind === "image") result = await discoverImage(service, definition);
+    else if (kind === "tts") result = await discoverTts(service, definition, urls, headers);
     else if (kind === "asr") result = await discoverAsr(service, definition, urls, headers);
     else result = await discoverLlm(service, definition, urls, headers);
-    if (kind === "llm" || kind === "asr") {
+    if (kind === "llm" || kind === "asr" || kind === "image") {
       service.models = result.models;
       service.modelsDiscovered = result.discovered;
     }
@@ -703,6 +757,7 @@
     models: models,
     voices: voices,
     allVoices: allVoices,
+    cvpBase: cvpBase,
     voiceCompatibility: voiceCompatibility,
     recordTtsVerification: recordTtsVerification,
     serviceStatus: serviceStatus,

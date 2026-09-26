@@ -1,6 +1,6 @@
 (function (global) {
   "use strict";
   global.chataxi = global.chataxi || {};
-  global.chataxi.version = "0.7.25";
+  global.chataxi.version = "0.7.34";
   global.chataxi.state = { route: "conversations", activeConversationId: null, modelsTab: "llm" };
 })(window);

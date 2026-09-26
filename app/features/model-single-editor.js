@@ -1,7 +1,19 @@
 (function (app) {
   "use strict";
   var u = app.utils, ui = app.components, store = app.data.store;
-  var labels = { llm: "对话模型", tts: "朗读模型", asr: "语音输入模型" };
+  var labels = { llm: "对话模型", tts: "朗读模型", asr: "语音输入模型", image: "绘图模型" };
+  // 新建卡片时预选的服务商：绘图只有 CVP 一家，其余沿用 openai。
+  var defaultFamilies = { llm: "openai", tts: "openai", asr: "openai", image: "cvp" };
+
+  // CVP 插件的默认地址：插件装在 ComfyUI 里，所以主机就是跑 ComfyUI 的那台机器（A1X 掌机）。
+  // 只写到「主机 : 端口」这一层 —— 换机器时用户只改 IP，端口与 /cvp 路径都不用碰
+  //（model-services.js 的 cvpBase 会把 /cvp 或 /vibedraw 后缀吃掉，写不写都对）。
+  //
+  // 默认值放在这里，而不是 catalog.js 的 imageFamilies.endpoint：那个字段代表「服务商预设」，
+  // 填了它输入框清空就会自动变回默认值，validateConnection 的「请填写服务地址」守卫也就
+  // 永远触发不了。默认值只放在卡片初值这一层，唯一权威、可清空、可校验。
+  var CVP_DEFAULT_ENDPOINT = "http://192.168.124.31:8189";
+  function defaultEndpoint(kind) { return kind === "image" ? CVP_DEFAULT_ENDPOINT : ""; }
 
   function collection(kind) { return kind + "-profiles"; }
   function definition(kind, profile) { return app.services.modelServices.family(kind, profile.family || profile.type); }
@@ -15,7 +27,7 @@
     return '<label class="field"><span>' + u.escapeHtml(label) + '</span><input name="' + name + '" value="' + u.escapeHtml(value || "") + '" ' + (attrs || "") + '></label>';
   }
   function secretField(service, family) {
-    var label = family.auth === "aws-sigv4" ? "Secret Access Key" : family.auth === "azure" ? "Speech Key" : "API Key", value = service.apiKey || "";
+    var label = family.protocol === "cvp" ? "访问密码" : family.auth === "aws-sigv4" ? "Secret Access Key" : family.auth === "azure" ? "Speech Key" : "API Key", value = service.apiKey || "";
     return '<div class="field"><span data-main-secret-label>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : family.keyOptional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-paste" type="button" data-paste-key aria-label="从剪贴板粘贴' + label + '">' + ui.icon("paste") + '<span>粘贴</span></button><button class="icon-button secret-visibility" type="button" data-toggle-secret aria-label="显示' + label + '" aria-pressed="false">' + ui.icon("eye") + '</button></div></div>';
   }
   function auxiliarySecretField(name, label, value, optional) {
@@ -29,7 +41,7 @@
     return [profile.family, profile.endpoint, profile.apiStyle, profile.region, profile.workspaceId, profile.resourceEndpoint, profile.apiKey, profile.accessKeyId, profile.sessionToken, profile.customHeaders, profile.externalModelId, profile.modelFamilyId].join("\n");
   }
   function modelItems(kind, models, service) {
-    var groupNames = { recommended: "推荐用于" + labels[kind], possible: "可能可用", unknown: "未知能力" };
+    var groupNames = kind === "image" ? { recommended: "插件提供的能力", possible: "可能可用", unknown: "未知能力" } : { recommended: "推荐用于" + labels[kind], possible: "可能可用", unknown: "未知能力" };
     return app.services.modelServices.selectionGroups(kind, models, service).map(function (model) {
       var suffix = model.id === (model.name || model.id) ? "" : " · " + model.id;
       return { id: model.id, name: (model.name || model.id) + suffix, group: groupNames[model.selectionGroup], unknown: model.selectionGroup === "unknown" };
@@ -40,7 +52,7 @@
   }
 
   function open(kind, existing, onSaved) {
-    var editing = Boolean(existing), initialFamily = existing ? existing.family || existing.type || "custom" : "openai";
+    var editing = Boolean(existing), initialFamily = existing ? existing.family || existing.type || "custom" : defaultFamilies[kind] || "openai";
     var initialDefinition = app.services.modelServices.family(kind, initialFamily);
     var service = existing || { id: u.id(kind), family: initialFamily, name: "", enabled: true, models: [], voices: [] };
     var sourceMode = app.services.modelRegistry.sourceMode(service), modelId = service.externalModelId || service.model || service.defaultModelId || "";
@@ -49,7 +61,14 @@
     var catalogReady = catalogModels.length > 0;
     var selected = modelId, testedIdentity = service.validationState === "verified" ? identity(Object.assign({}, service, { externalModelId: modelId })) : "", testPassed = service.validationState === "verified";
     var familyHtml = kind === "llm" ? '<div data-model-family>' + ui.picker("modelFamilyId", "模型系列", "", "聚合与本地模型会自动推荐；如识别错误可以修改") + '</div>' : '';
-    var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + secretField(service, initialDefinition) +
+    // CVP 跑在局域网里 ⇒ 地址必须放在主区域。塞进折叠的「更多设置」里的话，
+    // 用户打开卡片只会看到一个「获取模型列表」按钮，不知道该去哪儿填地址。
+    // 地址预填一个能直接用的默认值（见 CVP_DEFAULT_ENDPOINT），用户换机器时只改 IP。
+    var endpointField = field("endpoint", kind === "image" ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(kind), kind === "image" ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
+    var noteHtml = kind === "image"
+      ? '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>这里只选择用插件里的哪个绘图能力；画幅按 9:16 竖幅在插件公布的尺寸里取最接近的一张, 步数与参考强度沿用插件自报的默认值, 都不需要配置。</span></div>'
+      : '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>目录只用于选择模型；角色的最大输出、采样、推理、音色与发音参数在角色设置中配置。</span></div>';
+    var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + (kind === "image" ? endpointField : "") + secretField(service, initialDefinition) +
       '<div data-extra="accessKeyId">' + auxiliarySecretField("accessKeyId", "Access Key ID", service.accessKeyId || "", false) + '</div>' +
       '<div data-extra="sessionToken">' + auxiliarySecretField("sessionToken", "Session Token", service.sessionToken || "", true) + '</div>' +
       '<div data-extra="region">' + field("region", "区域", service.region || "", 'maxlength="80"') + '</div>' +
@@ -58,8 +77,8 @@
       '<button class="button secondary full" type="button" data-fetch-models>' + ui.icon("cloud-arrow-down") + '获取模型列表</button><p class="connection-status" id="catalogStatus" role="status"></p>' +
       '<div data-model-choice>' + ui.picker("externalModelId", "具体模型", "", "一个模型卡片只保存这里选择的一个模型") + '</div>' + familyHtml +
       '<button class="button secondary full" type="button" data-test-model>' + ui.icon("plug") + (editing ? '重新连接并测试' : '连接并测试') + '</button><p class="connection-status" id="connectionStatus" role="status"></p>' +
-      '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>目录只用于选择模型；角色的最大输出、采样、推理、音色与发音参数在角色设置中配置。</span></div>' +
-      '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + field("endpoint", "完整请求地址", service.endpoint || initialDefinition.endpoint || "", 'type="url"') + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
+      noteHtml +
+      '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + (kind === "image" ? "" : endpointField) + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
       '<label class="switch-row"><span><strong>启用模型</strong><small>停用后保留设置，但不会被角色或对话调用</small></span><input name="enabled" type="checkbox"' + (service.enabled !== false ? ' checked' : '') + '></label></div>';
     var form = ui.openModal({
       title: (editing ? "编辑" : "添加") + labels[kind], submitText: catalogReady ? "保存设置" : "获取模型列表", html: html,
@@ -145,13 +164,13 @@
     function syncProvider(reset) {
       var familyId = value("family"), family = app.services.modelServices.family(kind, familyId), mode = app.services.modelRegistry.sourceMode({ family: familyId });
       form.querySelector("#providerDescription").textContent = family.description || "";
-      var mainSecretLabel = form.querySelector("[data-main-secret-label]"); if (mainSecretLabel && mainSecretLabel.firstChild) mainSecretLabel.firstChild.textContent = family.auth === "aws-sigv4" ? "Secret Access Key " : family.auth === "azure" ? "Speech Key " : "API Key ";
+      var mainSecretLabel = form.querySelector("[data-main-secret-label]"); if (mainSecretLabel && mainSecretLabel.firstChild) mainSecretLabel.firstChild.textContent = family.protocol === "cvp" ? "访问密码 " : family.auth === "aws-sigv4" ? "Secret Access Key " : family.auth === "azure" ? "Speech Key " : "API Key ";
       show('[data-extra="accessKeyId"]', family.accessKeyField === true); show('[data-extra="sessionToken"]', family.sessionTokenField === true);
       show('[data-extra="region"]', family.regionField === true); show('[data-extra="workspaceId"]', family.workspaceField === true); show('[data-extra="resourceEndpoint"]', family.resourceEndpointField === true);
       show('[data-extra="apiStyle"]', kind === "llm" && family.editableProtocol === true); show('[data-model-family]', kind === "llm" && mode !== "official");
       if (reset) {
         service.credentialRef = "";
-        form.elements.namedItem("endpoint").value = family.endpoint || ""; form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
+        form.elements.namedItem("endpoint").value = family.endpoint || defaultEndpoint(kind); form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
         ["accessKeyId", "sessionToken", "region", "workspaceId", "resourceEndpoint", "manualModelId", "customHeaders"].forEach(function (name) { if (form.elements.namedItem(name)) form.elements.namedItem(name).value = ""; });
         form.querySelectorAll(".secret-mask").forEach(function (mask) { mask.textContent = ""; });
         apiStylePicker.setItems(app.services.catalog.apiStyles.map(function (item) { return { id: item.id, name: item.name }; }), family.apiStyle || "");
@@ -200,6 +219,15 @@
           if (!definition(kind, profile).voiceOptional && !voice) throw new Error("所选模型没有可用音色，请刷新目录或检查账号权限");
           profile.defaultVoiceId = voice && voice.id || ""; profile.voice = profile.defaultVoiceId;
           var verified = await app.services.tts.testService(profile); baseline.voiceId = verified.voiceId || profile.defaultVoiceId;
+        } else if (kind === "image") {
+          // 绘图能力的测试就是再读一次 /cvp/info：它同时回答"地址通不通""密码对不对""能力在不在"
+          // "插件为这个能力选好模型没有"。比另造一个测试请求更准，也不需要插件加接口。
+          if (chosen.ready === false) throw new Error("插件的“" + (chosen.name || chosen.id) + "”能力还没有选好模型，请在 ComfyUI 的 VibeDraw 配置节点里设置");
+          await app.services.modelServices.discover("image", profile, { persist: false });
+          profile.validationState = "verified"; profile.validatedAt = Date.now(); profile.validationBaseline = baseline;
+          service = Object.assign(service, profile);
+          await new Promise(function (resolve) { setTimeout(resolve, 0); });
+          service.validationState = "verified"; service.validatedAt = profile.validatedAt; form.dataset.modelValidation = "verified"; testedIdentity = identity(readDraft()); testPassed = true; status.textContent = "连接成功，插件确认提供这个绘图能力。"; return;
         } else {
           profile.validationState = "catalog-only"; profile.catalogState = "fetched";
           status.textContent = "目录连接成功。保存后请使用模型卡片上的“录音测试”验证识别。";

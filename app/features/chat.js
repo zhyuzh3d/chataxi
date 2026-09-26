@@ -7,6 +7,70 @@
   var MESSAGE_RENDER_STEP = 100;
   function revoke(urls) { urls.splice(0).forEach(function (url) { URL.revokeObjectURL(url); }); }
   function alive(target) { return view === target && !target.closed; }
+
+  // ── 消息列表里的缩略图：进视口才取地址、才加载（业主 2026-09-27 第五轮）────────────────
+  // 之前是**渲染时就把每一张图的地址都取回来**：displayUrl 对每条 media 都要读一次库，
+  // 整条渲染链又是串联的 ⇒ 进对话要等 O(N) 次读库才画出第一屏，紧接着所有 <img> 一起开抢。
+  // 现在分两步：渲染时只摆一个 9:16 的占位盒（尺寸写死在 styles/app.css 的 [data-media-pending]），
+  // 等它快进视口（上下各留 600px 余量）才解析地址、赋 src。可见的那两三张照旧立刻出来。
+  var LAZY_ROOT_MARGIN = "600px 0px";
+  // 按钮 → 这条 media。用 WeakMap 而不是把 media 挂在 DOM 上：节点被丢掉时引用跟着走，
+  // 不需要额外清理（这也是下面观察器不 retain 按钮的原因）。
+  var lazyMedia = new WeakMap();
+  var lazyObserver = null;
+
+  // 观察器是**单例**：一个对话里同时只可能有一份列表。
+  // 注意没有 IntersectionObserver 时返回 null **且不缓存** —— 老引擎上必须先退化成"立刻加载"，
+  // 否则图片永远不出来；而同一个进程里后来有了这个能力（测试环境就是这种情形）还得能建起来。
+  function imageLazy() {
+    if (lazyObserver || typeof IntersectionObserver !== "function") return lazyObserver;
+    lazyObserver = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i += 1) {
+        var target = entries[i].target;
+        // 节点已经被下一次渲染换掉了 —— 顺手摘掉，别让观察器攥着一个下线的按钮不放。
+        if (!target.isConnected) { lazyObserver.unobserve(target); continue; }
+        if (entries[i].isIntersecting) loadThumb(target);
+      }
+    }, { rootMargin: LAZY_ROOT_MARGIN });
+    return lazyObserver;
+  }
+
+  // 真正去取这一张。只做一次：第一次相交时观察器就把它摘掉了，重复调用会被 pending 挡住。
+  function loadThumb(button) {
+    if (lazyObserver) lazyObserver.unobserve(button);
+    if (button.dataset.mediaPending !== "1") return;
+    button.dataset.mediaPending = "2";
+    var media = lazyMedia.get(button), image = button.querySelector("img");
+    app.data.media.displayUrl(media).catch(function () { return ""; }).then(function (src) {
+      // 地址是异步来的，回来时这一格可能已经下线了（用户退出对话、或列表重画）——安静收手。
+      if (!button.isConnected || button.dataset.mediaPending !== "2") return;
+      if (!src && media && media.url && u.isAllowedImageUrl(media.url)) src = media.url;
+      if (!src) { unavailableThumb(button); return; }
+      image.src = src;
+    });
+  }
+
+  // 取不到地址（旧记录、文件已释放）时保持原来的样子：一行说明，而不是一个永远转不出来的灰块。
+  // 这件事从"渲染时"挪到了"进视口时"，所以在列表里是随着滚动才出现的 —— 那是符合直觉的：
+  // 没看到的那几张，用户本来也不知道它们坏没坏。
+  function unavailableThumb(button) {
+    var missing = document.createElement('p'); missing.className = 'helper'; missing.textContent = '图片不可用，文字记录仍保留';
+    if (button.parentNode) button.parentNode.replaceChild(missing, button);
+    button.removeAttribute('data-media-pending');
+  }
+
+  // 渲染完成后把这一批缩略图交给观察器。**放在 appendChild 之后**：让引擎按它们"现在在哪儿"
+  // 一次算完，比一边建节点一边逐个 observe（每个都各自量一次）便宜得多。
+  // 缓存命中的节点是同一个 DOM 节点，重复 observe 没有副作用；已经加载完的则不再带
+  // data-media-pending，天然不会被选中。
+  function watchThumbs(root) {
+    var observer = imageLazy(), thumbs = root.querySelectorAll('.message-image[data-media-pending="1"]');
+    for (var i = 0; i < thumbs.length; i += 1) {
+      if (observer) observer.observe(thumbs[i]);
+      else loadThumb(thumbs[i]);
+    }
+  }
+
   function currentBusy(target) { return Boolean(session.active(target.conversation.id)); }
   function shortRoleName(name) { var characters = Array.from(String(name || "")); return characters.length <= 5 ? characters.join("") : characters.slice(0, 4).join("") + "..."; }
   function moderatorRoleId(conversation) { return conversation.moderatorRoleId && conversation.roleIds.indexOf(conversation.moderatorRoleId) >= 0 ? conversation.moderatorRoleId : conversation.roleIds[0]; }
@@ -78,20 +142,46 @@
     requestAnimationFrame(target.syncComposerInset);
     if (window.ResizeObserver) { target.composerObserver = new ResizeObserver(target.syncComposerInset); target.composerObserver.observe(composer); }
     window.addEventListener('resize', target.syncComposerInset);
-    // 点消息列表的空白处 = 把界面上所有控件收掉, 只留背景; 再点一次恢复（用户 2026-09-26:
-    // "点击消息列表的空白位置, 可以隐藏所有控件（包括标题栏和输入框和对话列表。只显示背景）,
-    // 再点一次就恢复显示"）。隐的三块是顶栏 / 消息列表 / 输入区, 视觉与命中全在 CSS 的
-    // .chat-chrome-hidden 里, 这里只负责"什么时候切"。
+    // 沉浸模式：把界面上所有控件收掉, 只留背景。隐的三块是顶栏 / 消息列表 / 输入区, 视觉与命中
+    // 全在 CSS 的 .chat-chrome-hidden 里, 这里只负责"什么时候切"。
+    //
+    // **不对称的手势**（业主 2026-09-27 第二轮: "点按空白隐藏 UI 控件, 改为长按空白处隐藏,
+    // 恢复显示只要点击不需长按"）:
+    //   * 藏起来 = 长按 500ms。原来是一点就藏, 于是滚动时手指落下的那一下、想点气泡边缘却点空
+    //     的那一下都会把界面收掉; 按住半秒才是"我真的要沉浸"。
+    //   * 恢复 = 轻点。隐着的时候列表与输入区都不吃点击（pointer-events: none）, 所以恢复的那次
+    //     点击必然落在 .chat-layout 上 —— 判据仍然只有一条, 不需要第二套定位逻辑。
     // 判"空白"用一支黑名单选择器: 气泡、头像、消息上的按钮、欢迎面板都长在列表里面,
-    // 点它们不能顺手把界面藏起来。隐掉之后列表与输入区都不吃点击, 于是"再点一次"必然落在
-    // .chat-layout 上 —— 恢复的判据只有一条, 不需要第二套定位逻辑。
+    // 点它们不能顺手把界面藏起来。
+    // **没有背景图时这一整套不存在**（业主 2026-09-27）: 那一条件在 setChromeHidden 里判,
+    // 这里照常把"想藏"的意图递过去就行, 免得两处判据漂掉。
     target.chromeHidden = false;
     target.chromeRegions = [].slice.call(document.querySelectorAll('#appShell > .topbar, .message-viewport, .composer'));
-    layout.addEventListener('click', function (event) {
-      var node = event.target;
-      if (node && node.nodeType === 1 && node.closest && node.closest('button, a, input, textarea, select, label, img, .avatar, .message-row, .chat-welcome')) return;
-      setChromeHidden(target, !target.chromeHidden);
+    var LONG_PRESS_MS = 500, PRESS_SLOP = 12, pressTimer = 0, pressOrigin = null;
+    function isBlank(node) { return !(node && node.nodeType === 1 && node.closest && node.closest('button, a, input, textarea, select, label, img, .avatar, .message-row, .chat-welcome')); }
+    function cancelPress() { if (pressTimer) { clearTimeout(pressTimer); pressTimer = 0; } pressOrigin = null; }
+    layout.addEventListener('pointerdown', function (event) {
+      cancelPress();
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (!isBlank(event.target)) return;
+      pressOrigin = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
+      pressTimer = setTimeout(function () { pressTimer = 0; pressOrigin = null; setChromeHidden(target, true); }, LONG_PRESS_MS);
     });
+    // 手指挪动超过一丁点就当滚动/拖拽, 不再是长按 —— 否则滑动列表时界面会莫名其妙地消失。
+    layout.addEventListener('pointermove', function (event) {
+      if (!pressOrigin) return;
+      if (Math.abs((Number(event.clientX) || 0) - pressOrigin.x) > PRESS_SLOP || Math.abs((Number(event.clientY) || 0) - pressOrigin.y) > PRESS_SLOP) cancelPress();
+    });
+    layout.addEventListener('pointerup', function () {
+      var pending = Boolean(pressTimer);
+      cancelPress();
+      // 轻点只在"已经隐着"的时候有用（= 恢复）。长按已经把它藏好了, 那一次抬手不该再切回去。
+      if (pending && target.chromeHidden) setChromeHidden(target, false);
+    });
+    layout.addEventListener('pointercancel', cancelPress);
+    // 长按空白不该顺带弹出系统的文字选择 / 上下文菜单 —— 那个菜单会跟"控件收掉了"的画面叠在一起。
+    // 只挡空白处: 消息气泡上的长按仍然留给系统的复制/选择。
+    layout.addEventListener('contextmenu', function (event) { if (isBlank(event.target)) event.preventDefault(); });
     input.addEventListener('input', function () { target.draft.text = input.value; resizeInput(input); queueDraft(target); syncComposer(target); });
     input.addEventListener('keydown', function (event) {
       if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (!currentBusy(target)) send(target); }
@@ -129,6 +219,13 @@
       if (event.phase === 'accepted') {
         rememberMessage(target, event.message);
         target.draft = { id: id, messageId: u.id('message'), text: '', media: [] }; input.value = ''; resizeInput(input); renderDraft(target).catch(showError);
+      }
+      if (event.phase === 'removed') {
+        // 正文为空、只带绘图动作的那一轮：文本消息被撤掉，只留图片消息。
+        // 直接从快照与缓存里摘掉它，别让用户看见一条空消息闪一下。
+        if (target.messageSnapshot) target.messageSnapshot = target.messageSnapshot.filter(function (item) { return item.id !== event.messageId; });
+        if (target.messageCache[event.messageId]) { revoke((target.messageCache[event.messageId].urls || []).slice()); delete target.messageCache[event.messageId]; }
+        renderMessages(target).catch(showError); syncComposer(target); return;
       }
       if (event.phase === 'delta') {
         var deltaMessage = target.messageSnapshot && target.messageSnapshot.find(function (message) { return message.id === event.messageId; }); if (deltaMessage) deltaMessage.text = event.text;
@@ -170,7 +267,12 @@
   // 不会跳一下。关掉输入区之前先让它失焦: 键盘跟着一个看不见的输入框留在屏幕上是最糟的样子。
   function setChromeHidden(target, hidden) {
     if (!alive(target)) return;
-    target.chromeHidden = Boolean(hidden);
+    // 这套机制**只对"有背景图"的对话存在**（业主 2026-09-27: "如果对话界面没有背景图片, 点击空地
+    // 就不要隐藏 UI 元素"）。没有背景图时可看的只有一块空色块, 点空地什么都不该发生。
+    // 判据放在这里而不是监听器里, 是因为"恢复"与"清理"两条路径传的都是 false —— 无论有没有
+    // 背景图, 它们都必须能成立, 否则离开对话时会把隐形状态带到下一页。
+    var next = Boolean(hidden) && hasBackgroundImage();
+    target.chromeHidden = next;
     if (target.chromeHidden) { var input = document.getElementById('messageInput'); if (input && input === document.activeElement) input.blur(); }
     document.getElementById('appShell').classList.toggle('chat-chrome-hidden', target.chromeHidden);
     (target.chromeRegions || []).forEach(function (region) {
@@ -285,6 +387,7 @@
     var fragment = document.createDocumentFragment(); nodes.forEach(function (node) { fragment.appendChild(node); });
     inner.textContent = ''; inner.appendChild(fragment);
     ui.hydrateAvatars(inner);
+    watchThumbs(inner);
     if (forceBottom || target.follow) requestAnimationFrame(function () { scrollBottom(target); }); else list.scrollTop = top;
   }
   async function messageElement(message, target, urls, state) {
@@ -301,12 +404,14 @@
     var block = document.createElement('div'); block.className = 'message-block';
     var name = document.createElement('div'); name.className = 'message-name'; name.textContent = system ? '系统' : user ? target.userProfile.name || '我' : role ? role.name : message.roleName || 'AI'; block.appendChild(name);
     var bubble = document.createElement('div'); bubble.className = 'message-bubble';
+    // 画图中的占位：图片还没出来，先用一个方块占住位置（出图后原地替换，列表不会跳）。
+    if (message.status === 'drawing') {
+      var skeleton = document.createElement('div'); skeleton.className = 'message-draw';
+      var skeletonText = document.createElement('span'); skeletonText.textContent = '正在绘制图片…';
+      skeleton.appendChild(skeletonText); bubble.appendChild(skeleton);
+    }
     for (var i = 0; i < (message.media || []).length; i += 1) {
-      var media = message.media[i], src = '';
-      try {
-        if (media.mediaId) { var record = await app.data.media.get(media.mediaId); if (record) { src = URL.createObjectURL(record.blob); urls.push(src); } }
-        else if (u.isAllowedImageUrl(media.url)) src = media.url;
-      } catch (_) {}
+      var media = message.media[i];
       var mediaKind = media.kind || (/^video\//i.test(media.mime || '') ? 'video' : 'image');
       if (mediaKind === 'video') {
         var videoCard = document.createElement('div'); videoCard.className = 'message-video-card';
@@ -314,24 +419,80 @@
         var videoCopy = document.createElement('span'); videoCopy.innerHTML = ui.icon('video') + '<span><strong>' + u.escapeHtml(media.name || '视频') + '</strong><small>' + (media.size ? Math.ceil(media.size / 1024 / 1024) + ' MiB' : '视频附件') + '</small></span>'; videoCard.appendChild(videoCopy);
         bubble.appendChild(videoCard); continue;
       }
-      if (!src) { var missing = document.createElement('p'); missing.className = 'helper'; missing.textContent = '图片不可用，文字记录仍保留'; bubble.appendChild(missing); continue; }
+      // 图片**不在这里取地址**（业主 2026-09-27 第五轮：进视口才加载）。
+      // 原来这里是 `await app.data.media.displayUrl(media)`，它对每一条 media 都要读一次库，
+      // 而且整条渲染链是串联的 ⇒ 进对话时要等 O(N) 次读库才画出第一屏，接着所有缩略图一起开抢。
+      // 现在只摆一个 9:16 的占位盒（尺寸在 styles/app.css 的 [data-media-pending] 上），
+      // 地址与 src 都留到它快进视口时再说（loadThumb）。
       var imageButton = document.createElement('button'); imageButton.type = 'button'; imageButton.className = 'message-image'; imageButton.setAttribute('aria-label', '查看完整图片');
-      var image = document.createElement('img'); image.alt = media.alt || '对话图片'; image.referrerPolicy = 'no-referrer'; image.src = src;
-      image.onload = function () { if (target.follow) scrollBottom(target); };
-      image.onerror = function () { this.alt = '图片加载失败'; this.parentNode.setAttribute('aria-label', '图片加载失败'); };
+      imageButton.dataset.mediaPending = '1';
+      var image = document.createElement('img'); image.alt = media.alt || '对话图片'; image.referrerPolicy = 'no-referrer'; image.decoding = 'async';
+      // 图到位就把占位尺寸摘掉，宽度交回给图片自身的比例（非 9:16 的用户照片仍然占满 213px 高）。
+      image.onload = function () { this.parentNode.removeAttribute('data-media-pending'); if (target.follow) scrollBottom(target); };
+      image.onerror = function () { this.alt = '图片加载失败'; this.parentNode.removeAttribute('data-media-pending'); this.parentNode.setAttribute('aria-label', '图片加载失败'); };
       imageButton.appendChild(image);
-      imageButton.addEventListener('click', function (event) { var selected = event.currentTarget.querySelector('img'); ui.openModal({ title: '查看图片', cancelText: null, submitText: '关闭', html: '<img class="image-preview" referrerpolicy="no-referrer" src="' + u.escapeHtml(selected.src) + '" alt="完整对话图片">', onSubmit: function () {} }); }); bubble.appendChild(imageButton);
+      // 闭包必须**按条**捕获 media: 这个 for 循环里 `media` 与 `i` 都是 var（函数作用域）, 直接在
+      // 监听器里引用的话所有图片按钮都会拿到最后一条。原来的监听器只读 event.currentTarget,
+      // 所以这个坑一直没露头; 现在要把 media 交给全屏看图的下载 / 设为背景, 就得用 IIFE 定住。
+      imageButton.addEventListener('click', (function (entry) {
+        return function (event) { openImageViewer(entry, event.currentTarget.querySelector('img')); };
+      })(media));
+      lazyMedia.set(imageButton, media);
+      bubble.appendChild(imageButton);
+    }
+    // 绘图消息在图片下面回显提示词：用户能看出这张图是照哪句话画的。
+    if (message.draw && message.draw.prompt && message.status !== 'drawing') {
+      var caption = document.createElement('p'); caption.className = 'message-caption';
+      if (message.draw.reference) { var reference = document.createElement('span'); reference.className = 'context-badge'; reference.textContent = '参考定妆照'; caption.appendChild(reference); }
+      caption.appendChild(document.createTextNode(message.draw.prompt)); bubble.appendChild(caption);
     }
     if (message.status === 'pending') { var typing = document.createElement('div'); typing.className = 'typing-bubble'; typing.setAttribute('aria-label', '正在生成回复'); typing.innerHTML = '<span></span><span></span><span></span>'; bubble.appendChild(typing); }
     if (message.text) { var text = document.createElement('div'); text.className = 'message-text'; text.textContent = displayText(message.text); bubble.appendChild(text); }
     if (message.status === 'error' || message.status === 'cancelled') {
       var error = document.createElement('p'); error.className = 'message-error'; error.textContent = message.error || '生成失败'; bubble.appendChild(error);
-      var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button ghost'; retry.textContent = '重试这条回复'; retry.disabled = currentBusy(target);
-      retry.addEventListener('click', function () { run(target, { retryId: message.id }); }); bubble.appendChild(retry);
+      var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button ghost'; retry.disabled = currentBusy(target);
+      if (message.draw) {
+        // 图片消息的重试是「重新绘制」：绘图要求已经存在消息里，不需要再问模型一遍。
+        retry.textContent = '重新绘制这张图';
+        // 会话 id 只能从 target 上取：这个函数的作用域里没有 id（:290 那个 id 属于 forEach 回调），
+        // 写裸 id 会在点击时抛 ReferenceError，按钮看起来在、点下去却报「id is not defined」。
+        retry.addEventListener('click', ui.action(function () { return session.retryDraw(target.conversation.id, message.id); }));
+      } else {
+        retry.textContent = '重试这条回复';
+        retry.addEventListener('click', function () { run(target, { retryId: message.id }); });
+      }
+      bubble.appendChild(retry);
     }
     block.appendChild(bubble);
     var meta = document.createElement('div'); meta.className = 'message-meta';
     var time = document.createElement('time'); time.textContent = u.formatTime(message.createdAt); meta.appendChild(time);
+    // 正在生成 / 正在绘图的这一条：气泡下面给一个「停止」（业主 2026-09-27：两条都要有）。
+    // 两条路径各有各的开关，不能互相顶替：文本生成挂在这个对话的 tasks[id] 上（session.stop
+    // 顺手把自动朗读也停掉），绘图是**分离的**任务、跟对话没关系（见 chat-session.js 文件头的
+    // drawTasks 注释）⇒ session.cancelDraw。而且两者**可以同时在跑**：正文还在流式输出时，
+    // 上一轮那张图已经在画了，一个按钮不该顺手把另一条也掐掉。
+    //
+    // 位置选 .message-meta（时间旁边）而不是气泡里：流式的增量走 applyMessageDelta，它会把新建的
+    // .message-text 追加到气泡末尾 —— 按钮若在气泡里，正文会长到它下面去。
+    // 这也正是"气泡下面"的样子：meta 就在气泡下方，和「重试」按钮同一层语义。
+    // **不挂 ghost**（业主 2026-09-27：「气泡下面那个停止按钮不要有轮廓」）：那一行里另外几个
+    // icon-button 都是无框的轻量动作，只有它一个带框会看着像另一个物种。.button 自带的
+    // `border: 1px solid transparent` 仍然在，所以行高逐像素不变、消息完成时列表不跳。
+    if (message.status === 'pending' || message.status === 'drawing') {
+      var stop = document.createElement('button'); stop.type = 'button'; stop.className = 'button message-stop'; stop.dataset.stopGeneration = message.status;
+      stop.setAttribute('aria-label', '停止生成'); stop.innerHTML = ui.icon('stop') + '<span>停止</span>';
+      stop.addEventListener('click', ui.action(function () {
+        if (message.status === 'drawing') {
+          // 绘图可能刚好在这一帧之前画完了（drawTasks 已经摘掉）—— 那就说清楚，别让按钮变成哑巴。
+          if (session.cancelDraw(target.conversation.id)) status(target, '正在停止绘制…');
+          else status(target, '这次绘制已经停下，可以重新绘制这一条');
+          return;
+        }
+        session.stop(target.conversation.id);
+        status(target, '已停止后续回复；已发出的服务请求可能仍计费');
+      }));
+      meta.appendChild(stop);
+    }
     if (message.contextTrimmed) { var note = document.createElement('span'); note.className = 'context-badge'; note.textContent = message.contextCompressed ? '含压缩上下文' : '仅最近 N 条'; note.title = message.contextCompressed ? '这次请求使用了压缩历史和最近完整消息' : '更早消息没有包含在这次请求中'; meta.appendChild(note); }
     if (frozen) { var frozenBadge = document.createElement('span'); frozenBadge.className = 'context-badge frozen-badge'; frozenBadge.innerHTML = ui.icon('compress') + '<span>已压缩</span>'; frozenBadge.title = '这条消息已经压缩进概要，不再按原文参与上下文，也不能单独修改'; meta.appendChild(frozenBadge); }
     if (assistant && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
@@ -343,23 +504,87 @@
     // 点一下只提示去「压缩概要」改延续上下文 —— 直接把旧消息改掉会让概要与原文对不上。
     // 注意不能用 disabled 属性：那会吃掉点击，提示也就弹不出来。
     if (state !== 'none') {
-      var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button' + (frozen ? ' is-disabled' : ''); edit.setAttribute('aria-label', '编辑这条消息'); edit.innerHTML = ui.icon('pencil');
+      // 图片消息的铅笔改的是**绘图提示词**（消息里那段文字就是提示词，定妆照注入的身份约束
+      // 只存在于请求体上、不落在消息里，所以这里改不到它）。
+      var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button' + (frozen ? ' is-disabled' : ''); edit.setAttribute('aria-label', message.draw ? '修改绘图提示词' : '编辑这条消息'); edit.innerHTML = ui.icon('pencil');
       if (frozen) { edit.setAttribute('aria-disabled', 'true'); edit.title = '历史已被压缩，请修改压缩概要'; }
       edit.addEventListener('click', ui.action(function () { return frozen ? frozenHistoryNotice() : editMessage(target, message); })); meta.appendChild(edit);
     }
     if (assistant && state !== 'none') {
-      var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button' + (frozen ? ' is-disabled' : ''); regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right');
+      // 图片消息的「重新生成」就是**重新发起绘图**（业主 2026-09-27）：提示词与当初那张卡片都
+      // 存在消息里，不需要再问一次模型，也不该删掉后面的消息 —— 只是这一张重画。
+      var redraw = Boolean(message.draw);
+      var regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.className = 'icon-button' + (frozen ? ' is-disabled' : ''); regenerate.dataset.regenerateMessage = message.id; regenerate.setAttribute('aria-label', redraw ? '重新生成这张图' : '重新生成这条回复'); regenerate.innerHTML = ui.icon('rotate-right');
       if (frozen) { regenerate.setAttribute('aria-disabled', 'true'); regenerate.title = '历史已被压缩，请修改压缩概要'; }
-      regenerate.addEventListener('click', ui.action(function () { return frozen ? frozenHistoryNotice() : regenerateMessage(target, message); })); meta.appendChild(regenerate);
+      regenerate.addEventListener('click', ui.action(function () {
+        if (frozen) return frozenHistoryNotice();
+        return redraw ? session.retryDraw(target.conversation.id, message.id) : regenerateMessage(target, message);
+      })); meta.appendChild(regenerate);
     }
     block.appendChild(meta); row.appendChild(block); if (user) row.appendChild(await messageAvatar(target.userProfile, 'message-avatar user-message-avatar', target, 'user')); return row;
+  }
+  // ── 全屏看图的三个动作（业主 2026-09-27 第二轮）────────────────────────────────
+  // 传的是**这条消息自己的 media 记录**: 下载要用它的宿主文件标识, 设为背景要用它的 mediaId。
+  function openImageViewer(media, image) {
+    app.components.imageViewer.open({
+      src: String(image && image.src || ''), alt: String(image && image.alt || ''),
+      onDownload: ui.action(function () { return exportMediaImage(media); }),
+      onSetBackground: ui.action(function () { return useMediaAsBackground(media); })
+    });
+  }
+  // 生成图的字节在宿主文件库里, 页面手上只有 mediaId ⇒ 先把记录取回来拿 logicalFileId。
+  // 旧记录（字节还在 IndexedDB 里）没有 logicalFileId, 那种就明说导不出来, 不要静默失败。
+  async function mediaLogicalFileId(media) {
+    if (!media) return '';
+    if (media.logicalFileId) return String(media.logicalFileId);
+    if (!media.mediaId) return '';
+    var record = await app.data.media.get(media.mediaId).catch(function () { return null; });
+    return record && record.logicalFileId ? String(record.logicalFileId) : '';
+  }
+  // 「下载」走宿主文件库的导出: files.export 让用户自己挑保存位置, 字节由宿主直接写, 不经过页面
+  // （一张 1MP 的图 base64 之后远超"单条消息 256 KiB"的上限, 走页面必然失败）。
+  async function exportMediaImage(media) {
+    var logicalFileId = await mediaLogicalFileId(media);
+    if (!logicalFileId) throw new Error('这张图片没有可导出的文件');
+    var api = app.platform.hermit.available() ? app.platform.hermit.api() : null;
+    if (!api || !api.files || typeof api.files.export !== 'function') throw new Error('当前环境不支持保存到设备');
+    var result = await api.files.export({ logicalFileId: logicalFileId });
+    if (result && result.cancelled) return;
+    ui.toast('图片已保存到设备');
+  }
+  // 「设为背景」复用对话背景那条唯一路径（写进对话记录 → 重算全局背景）。
+  //
+  // **只记 mediaId, 不写 url**, 两条理由:
+  //   1. 消息上的媒体记录本来就长这样（chat-session.js 与 chat.js 都只放 `{ mediaId, mime, alt }`）;
+  //   2. applyAppBackground 一看到 url 就去算取景参数, 而没有取景参数时它按 1:1 假设推 ——
+  //      一张 9:16 的图会被放大过头。只给 mediaId 时 size / position 两个变量都不写,
+  //      直接落到 CSS 的 cover / center: 铺满、居中, 正是"设为背景"该有的样子。
+  // 图片文件不会被误删: store.releaseMedia 按引用计数, 消息还引用着它就删不掉。
+  async function useMediaAsBackground(media) {
+    var target = view;
+    if (!alive(target)) throw new Error('对话当前没有打开');
+    if (!media || !media.mediaId) throw new Error('这张图片不能设为背景');
+    // 「设为背景」改的是**对话设置**，而且一设就铺满整个界面 —— 在看图时误触一次，用户得再进对话
+    // 设置里换回来。所以先确认（业主 2026-09-27 第三轮）。
+    // 取消就什么都不做：看图这一层照旧开着，用户接着看他的图。
+    // 这个确认框开在看图**上面**，靠的是 .image-viewer 压在弹窗之下（见 styles/app.css 的
+    // z-index 阶梯），不是把弹窗抬到看图之上 —— 弹窗是系统层，它对任何内容层都该在上面。
+    var confirmed = await ui.confirm({
+      title: '设为对话背景？',
+      message: '这张图片会成为当前对话的背景, 铺满整个界面。',
+      confirmText: '设为背景'
+    });
+    if (!confirmed) return;
+    await saveChatBackground(target.conversation.id, target, { kind: 'image', mediaId: media.mediaId, name: String(media.name || ''), size: Number(media.size || 0), layout: null }, null);
+    ui.toast('已设为对话背景');
+    app.components.imageViewer.close();
   }
   async function messageAvatar(profile, className, target, owner) {
     profile = profile || {};
     var name = profile.name || (owner === 'user' ? '我' : '角色'), source = '';
     if (profile.avatarMediaId) {
       if (Object.prototype.hasOwnProperty.call(target.avatarSources, profile.avatarMediaId)) source = target.avatarSources[profile.avatarMediaId];
-      else try { source = await app.data.media.toDataUrl(profile.avatarMediaId) || ''; target.avatarSources[profile.avatarMediaId] = source; } catch (_) { target.avatarSources[profile.avatarMediaId] = ''; }
+      else try { source = await app.data.media.displayUrl(profile.avatarMediaId) || ''; target.avatarSources[profile.avatarMediaId] = source; } catch (_) { target.avatarSources[profile.avatarMediaId] = ''; }
     }
     var holder = document.createElement('div'); holder.innerHTML = ui.avatar(name, '', className);
     var avatar = holder.firstElementChild;
@@ -487,13 +712,13 @@
     if (!alive(target)) return;
     var paint = ++revision, fragment = document.createDocumentFragment(), urls = [];
     for (var i = 0; i < target.draft.media.length; i += 1) {
-      var media = target.draft.media[i], record = media.mediaId ? await app.data.media.get(media.mediaId) : null;
+      var media = target.draft.media[i], src = await app.data.media.displayUrl(media).catch(function () { return ''; });
       var item = document.createElement('div'); item.className = 'attachment';
       if ((media.kind || '').toLowerCase() === 'video') {
         item.classList.add('video-attachment');
         if (media.previewDataUrl) { var thumb = document.createElement('img'); thumb.src = media.previewDataUrl; thumb.alt = ''; item.appendChild(thumb); }
         var label = document.createElement('span'); label.innerHTML = ui.icon('video') + '<small>' + u.escapeHtml(media.name || '视频') + '</small>'; item.appendChild(label);
-      } else if (record) { var image = document.createElement('img'); image.src = URL.createObjectURL(record.blob); urls.push(image.src); image.alt = '待发送图片 ' + (i + 1); item.appendChild(image); }
+      } else if (src) { var image = document.createElement('img'); image.src = src; image.alt = '待发送图片 ' + (i + 1); item.appendChild(image); }
       else item.textContent = '媒体丢失';
       var remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-button'; remove.dataset.mediaKey = mediaKey(media); remove.setAttribute('aria-label', '移除待发送附件'); remove.innerHTML = ui.icon('xmark');
       remove.addEventListener('click', ui.action(async function (event) { if (currentBusy(target)) return; var key = event.currentTarget.dataset.mediaKey, removed = target.draft.media.filter(function (entry) { return mediaKey(entry) === key; }); target.draft.media = target.draft.media.filter(function (entry) { return mediaKey(entry) !== key; }); await flushDraft(target); await store.releaseMedia(removed); await renderDraft(target); syncComposer(target); })); item.appendChild(remove); fragment.appendChild(item);
@@ -504,10 +729,26 @@
   }
   async function applyMessageEdit(target, message, text) {
     await app.services.tts.invalidate(message.id);
-    message.text = text; message.editedAt = Date.now();
+    // 图片消息改的是绘图提示词：气泡下面回显的那段文字就是发给绘图模型的那一段。
+    // 定妆照注入的身份约束句只加在请求体上（见 draw.js），不落在消息里，所以改不到它。
+    if (message.draw) message.draw.prompt = text; else message.text = text;
+    message.editedAt = Date.now();
     await store.putMessage(message);
     target.messageSnapshot = null; await session.refreshPreview(target.conversation.id); await renderMessages(target, false);
-    ui.toast('消息已保存');
+    ui.toast(message.draw ? '绘图提示词已保存' : '消息已保存');
+  }
+  // 删除单条消息（业主 2026-09-27）：入口在编辑弹窗底部，先确认再删。只删这一条 ——
+  // 后面消息的上下文因此出现断层，是用户的决定，不替他补、也不替他删别的。
+  // store.removeMessage 会一并释放这条消息**未被其他地方引用**的媒体（recovery 边界见 store.js）。
+  async function deleteMessage(target, original) {
+    if (currentBusy(target)) { ui.toast('请先停止当前回复'); return; }
+    await app.services.tts.invalidate(original.id);
+    var removed = await store.removeMessage(original);
+    if (!removed) throw new Error('这条消息已经不存在了');
+    target.messageSnapshot = null;
+    await session.refreshPreview(target.conversation.id);
+    await renderMessages(target, false);
+    ui.toast('消息已删除');
   }
   // 已压缩的历史消息不能再单独改写：统一提示到「压缩概要」这个唯一可改的入口。
   function frozenHistoryNotice() { ui.toast('历史已被压缩，请修改压缩概要', 4200); }
@@ -518,11 +759,34 @@
     var editable = await app.services.context.editable(messages, target.conversation.id);
     if (!editable[original.id]) throw new Error('这条消息已经进入压缩历史，不能再修改');
     var system = original.kind === 'system';
-    ui.openModal({ title: system ? '编辑场景开场白' : original.kind === 'user' ? '编辑我的消息' : '编辑角色回复', submitText: '保存', html: '<div class="form-grid"><label class="field"><span>消息内容</span><textarea name="text" maxlength="16000">' + u.escapeHtml(original.text || '') + '</textarea></label><p class="helper">这里只保存消息内容，不会自动重新生成或删除后续消息。' + (system ? '这条场景消息仍会按普通历史参与压缩。' : original.kind === 'user' ? '' : '角色回复可在保存后使用气泡下方的重新生成按钮。') + '</p></div>', onSubmit: async function (form) {
-      var text = u.formValue(form, 'text');
-      if (!text && !(original.media || []).length) throw new Error('消息内容不能为空');
-      await applyMessageEdit(target, Object.assign({}, original), text); return true;
-    } });
+    // 图片消息走到这里改的是提示词（业主 2026-09-27），不是正文 —— 它的 text 恒为空。
+    var drawing = Boolean(original.draw);
+    var value = drawing ? String(original.draw.prompt || '') : String(original.text || '');
+    var label = drawing ? '绘图提示词' : '消息内容';
+    var hint = drawing
+      ? '这里改的就是发给绘图模型的提示词；定妆照那类参考图不在文字里，不在这里改。保存后用气泡下方的重新生成按钮重新画一张。'
+      : '这里只保存消息内容，不会自动重新生成或删除后续消息。' + (system ? '这条场景消息仍会按普通历史参与压缩。' : original.kind === 'user' ? '' : '角色回复可在保存后使用气泡下方的重新生成按钮。');
+    ui.openModal({
+      title: drawing ? '编辑绘图提示词' : system ? '编辑场景开场白' : original.kind === 'user' ? '编辑我的消息' : '编辑角色回复',
+      submitText: '保存',
+      html: '<div class="form-grid"><label class="field"><span>' + label + '</span><textarea name="text" maxlength="16000">' + u.escapeHtml(value) + '</textarea></label>' +
+        '<p class="helper">' + hint + '</p>' +
+        // 删除放在编辑弹窗底部（业主 2026-09-27）。必须 type="button"：这是表单里的按钮，
+        // 默认 type 是 submit，点一下会变成"保存并关闭"，删除就再也弹不出来了。
+        // 删前一律确认 —— 它不可撤销。
+        '<div class="message-delete"><button class="button danger" type="button" data-delete-message>删除这条消息</button><p class="helper">只删除这一条，从当前设备永久移除，无法撤销。</p></div></div>',
+      onSubmit: async function (form) {
+        var text = u.formValue(form, 'text');
+        if (!text && !(original.media || []).length) throw new Error('消息内容不能为空');
+        await applyMessageEdit(target, Object.assign({}, original), text); return true;
+      }
+    });
+    document.querySelector('#modalForm [data-delete-message]').addEventListener('click', ui.action(async function () {
+      var confirmed = await ui.confirm({ title: '删除这条消息？', message: '这一条消息会从当前设备永久删除，无法撤销。', confirmText: '删除消息', danger: true });
+      if (!confirmed) return;
+      ui.closeModal(true);
+      await deleteMessage(target, original);
+    }));
   }
   async function regenerateMessage(target, original) {
     if (currentBusy(target)) { ui.toast('请先停止当前回复'); return; }
@@ -681,11 +945,16 @@
   function backgroundImageUrl(background) {
     return background && background.kind === 'image' && background.url ? String(background.url) : '';
   }
+  // "有没有背景图" = 当前铺着的那份背景是一条**图片**记录（含旧版只剩 `mediaId` 的形式）。
+  // 内置渐变**不算** —— 那一档没有照片可看, 把控件全收掉只剩一块空色块（业主 2026-09-27）。
+  // 它是"切沉浸模式"的前置条件, 见 setChromeHidden。
+  function hasBackgroundImage() { return Boolean(appliedBackground && appliedBackground.kind === 'image'); }
   // 旧版把相册图存在 chataxi 自己的媒体库（IndexedDB）里，记录里只有 mediaId。
-  // 新记录不再写 mediaId，但旧对话仍然要显示得出来。
+  // 新记录不再写 mediaId，但旧对话仍然要显示得出来 —— displayUrl 会在读取时把那条旧记录
+  // 顺手搬进宿主文件库（引用 id 不变）。
   async function legacyBackgroundUrl(background) {
     if (backgroundImageUrl(background) || !background || background.kind !== 'image' || !background.mediaId) return '';
-    try { return await app.data.media.toDataUrl(background.mediaId) || ''; } catch (_) { return ''; }
+    try { return await app.data.media.displayUrl(background.mediaId) || ''; } catch (_) { return ''; }
   }
   async function backgroundUrl(background) { return backgroundImageUrl(background) || await legacyBackgroundUrl(background); }
   async function backgroundStyle(background) {
@@ -965,6 +1234,8 @@
     // 对话切到列表页, 下一页的顶栏与输入区全是隐形的 —— 界面看起来就是坏了。
     setChromeHidden(target, false);
     await flushDraft(target);
+    // 只收这一轮的**文本与朗读**。绘图（action）不受对话控制: 它自己在后台跑完并把结果落库,
+    // 下次打开这个对话照样看得见（业主 2026-09-27）。stop() 里已经不碰 drawTasks, 别在这里补一刀。
     session.stop(target.conversation.id);
     target.closed = true; target.unsubscribe();
     if (target.syncComposerInset) window.removeEventListener('resize', target.syncComposerInset);

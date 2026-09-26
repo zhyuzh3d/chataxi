@@ -3,7 +3,7 @@
 
   var VERSION = "2026.09.15.1";
   var AGGREGATORS = { openrouter: true, siliconflow: true, together: true, fireworks: true };
-  var LOCAL = { ollama: true, lmstudio: true, vllm: true, sglang: true, llmserver: true, "vllm-omni": true, "fish-tts": true };
+  var LOCAL = { ollama: true, lmstudio: true, vllm: true, sglang: true, llmserver: true, "vllm-omni": true, "fish-tts": true, cvp: true };
   var FIXED_LLM_FAMILIES = {
     openai: "openai", anthropic: "anthropic", gemini: "gemini", xai: "xai",
     deepseek: "deepseek", qwen: "qwen", kimi: "kimi", glm: "glm",
@@ -41,7 +41,7 @@
     return "official";
   }
   function transportCodec(kind, service) {
-    var id = providerId(service), definition = app.services.catalog && app.services.catalog[kind === "llm" ? "llmFamilies" : kind === "tts" ? "ttsFamilies" : "asrFamilies"].find(function (item) { return item.id === id; }) || {};
+    var id = providerId(service), definition = app.services.catalog && app.services.catalog[kind === "llm" ? "llmFamilies" : kind === "tts" ? "ttsFamilies" : kind === "asr" ? "asrFamilies" : "imageFamilies"].find(function (item) { return item.id === id; }) || {};
     if (kind === "llm") return service && service.apiStyle || definition.apiStyle || "openai-chat";
     return service && service.protocol || definition.protocol || definition.type || id;
   }
@@ -81,6 +81,18 @@
   }
   function groupModels(kind, items, service) {
     var ranks = { recommended: 0, possible: 1, unknown: 2 };
+    // 绘图模型不走对话模型那套家族 / 专家规则：LLM_FAMILIES 与 SPECIALIST 是给对话模型用的，
+    // 而 "render" / "quick" 这种能力名什么都匹配不上，family 又会退化成服务商 id（不是 "unknown"）
+    // ⇒ 整列会被判成 llm 而 excluded。绘图卡片的模型是插件自报的能力目录，
+    // 插件说什么就是什么，所以直接全部归入 recommended。
+    if (kind === "image") return (items || []).map(function (item) {
+      return Object.assign({}, item, {
+        selectionGroup: "recommended",
+        modelFamilySuggestion: providerId(service),
+        classificationSource: "capability-directory",
+        classificationVersion: VERSION
+      });
+    }).sort(function (left, right) { return String(left.name || left.id).localeCompare(String(right.name || right.id), "zh-CN"); });
     return (items || []).map(function (item) { return classify(kind, item, service); }).filter(function (item) { return item.selectionGroup !== "excluded"; }).sort(function (left, right) {
       return ranks[left.selectionGroup] - ranks[right.selectionGroup] || String(left.name || left.id).localeCompare(String(right.name || right.id), "zh-CN");
     });

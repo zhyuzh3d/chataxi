@@ -7,7 +7,7 @@ chataxi 是运行在 [Hermit](https://hermit.airen.life/) 宿主里的个人 AI 
 > 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://hermit.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.25`(versionCode `104`,见 `hermit.json`)
+- 当前源码版本：`0.7.34`(versionCode `113`,见 `hermit.json`)
 - 形态：HermitApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点

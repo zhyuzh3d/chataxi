@@ -1,6 +1,26 @@
 (function (app) {
   "use strict";
 
+  // 画出来的图片**不以字节进上下文**：字节是几 MB, 塞进每一轮请求既慢又没用。
+  // 只留一行"这里有一张已生成的图 + 它的画面描述", 模型照样知道上一轮画了什么。
+  //
+  // **这一行绝不能写成模型自己说过的话。** 原来写的是
+  //     「发送了一个图片：<prompt>, 文件地址是：/__hermit/files/<id>」
+  // 它进的是 assistant 的历史, 模型看到的是"我上一次发图时说的就是这句话",
+  // 于是下一轮要图时照抄这句话 —— 用户收到的是一段文字加一个地址, 而不是图。
+  // 业主 2026-09-27 的现场就是这一句：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……
+  // 还带文件地址 /hermit/…」。所以现在两件事一起改：
+  //   1. 用方括号标明这是**系统附注**, 不是模型说的话；提示词里也明说这个句式不许照搬
+  //      （见 draw-prompt.js 规则 5, 那边点名禁掉了同样的几种写法）。
+  //   2. **不给地址。** `/__hermit/files/<id>` 这个 URL 形态本身就是被抄走的那半截, 而模型
+  //      并没有任何事需要用它 —— 它需要知道的只是"上一轮有张图、画的是什么", 提示词已经说全。
+  // 两处是同一件事的两半: 这里断掉样板, draw-prompt.js 那边明文禁止模仿。
+  function drawNote(message) {
+    var prompt = String(message && message.draw && message.draw.prompt || "").trim();
+    if (!prompt) return "";
+    return "[系统附注] 你的上一条回复附了一张已生成的图片, 画面：" + prompt;
+  }
+
   async function hydrateMessages(messages, settings, activeRole, service, profile, task) {
     var hydrated = [];
     for (var index = 0; index < messages.length; index += 1) {
@@ -24,6 +44,10 @@
           if ((prepared.kind || "").toLowerCase() === "video") output.videos.push(prepared);
           else output.images.push(prepared);
         }
+      } else {
+        // 绘图消息改写成文字形态（图片本体不进上下文）。
+        var drawn = drawNote(message);
+        if (drawn) output.text = (activeHistory ? "" : "其他角色「" + (message.roleName || "未命名角色") + "」的历史发言（仅作上下文参考，禁止模仿、代替或续写该角色）：\n") + drawn;
       }
       hydrated.push(output);
     }
@@ -223,7 +247,8 @@
         if (update.delta) {
           text += update.delta; emitted = true;
           if (task && task.onDelta) {
-            try { task.onDelta({ delta: update.delta, text: partialText(text, role.name, participantRoles) }); }
+            // 动作块对用户不可见：流式阶段只要看见哨兵（含半个哨兵）就整段遮住。
+            try { task.onDelta({ delta: update.delta, text: app.services.actions.visible(partialText(text, role.name, participantRoles)) }); }
             catch (error) { if (error.speakerMismatch && task.controller) task.controller.abort(); throw error; }
           }
         }
@@ -253,6 +278,19 @@
     var hydrated = routeTurn(await hydrateMessages(selected, settings, role, service, profile, task), role);
     if (task && task.cancelled) { var stopped = new Error("本轮已停止"); stopped.cancelled = true; throw stopped; }
     var appliedRole = app.services.context.applyToRole(role, participantRoles, userProfile);
+    // 只有确实配置了可用的绘图卡片时才教角色写动作块 —— 否则它会写一个永远不会被执行的动作。
+    // applyToRole 返回的是新对象，直接挂到它的 systemPrompt 上；流式失败回退重编译时同样生效。
+    var drawing = null;
+    if (app.services.draw && app.services.drawPrompt) drawing = await app.services.draw.available();
+    if (drawing) appliedRole.systemPrompt += "\n\n" + app.services.drawPrompt.instruction(Boolean(role.portraitMediaId));
+    // 正文与动作块分离。动作块交给 chat-session 去执行，正文照常存库、朗读、进下一轮上下文。
+    function settle(value) {
+      var cut = app.services.actions.split(value.text);
+      value.text = cut.text;
+      value.action = cut.action || null;
+      value.actionBroken = Boolean(cut.invalid);
+      return value;
+    }
     var request = app.services.middleware.compileLlm(profile, appliedRole, hydrated, { stream: profile.streaming !== false });
     var bodyText = JSON.stringify(request.body);
     var bodyBytes = new TextEncoder().encode(bodyText).length;
@@ -295,9 +333,10 @@
       parsed = app.services.providers.parse(profile, result.data);
       parsed.streamed = false;
       parsed.text = removeRoleEcho(parsed.text, role.name, participantRoles);
+      settle(parsed);
       if (task && task.onDelta && parsed.text) task.onDelta({ delta: parsed.text, text: parsed.text, fallback: true });
     }
-    if (parsed.streamed) parsed.text = removeRoleEcho(parsed.text, role.name, participantRoles);
+    if (parsed.streamed) { parsed.text = removeRoleEcho(parsed.text, role.name, participantRoles); settle(parsed); }
     if (parsed.providerState) parsed.providerState = Object.assign({}, parsed.providerState, {
       serviceId: service.id,
       connectionRevision: service.connectionRevision || "",

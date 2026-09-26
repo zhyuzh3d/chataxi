@@ -40,7 +40,7 @@ const PROMPT_LENGTH = 60;
 
 // 这两个模块主要在拼装发给模型的提示词，其中的中文不会出现在 DOM 里，
 // 因此归入复核区，不参与门禁。同文件里的报错文案已单独覆盖。
-const PROMPT_FILES = new Set(["app/services/context.js", "app/services/llm.js"]);
+const PROMPT_FILES = new Set(["app/services/context.js", "app/services/llm.js", "app/services/draw-prompt.js"]);
 
 const ATTRIBUTE = /(?:aria-label|title|placeholder|alt)="([^"]*)(?:"|$)/g;
 

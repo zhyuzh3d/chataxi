@@ -165,6 +165,17 @@
     window.addEventListener('hashchange', routeFromHash);
     try {
       await app.data.store.init();
+      // 旧媒体（存在 IndexedDB 里的头像 / 个人头像 / 对话头像 / 历史图片）一次性搬进宿主文件库。
+      // 这是"导出备份 → 换实例恢复后图片还在"的前提：宿主备份边界不含 IndexedDB。
+      // 不 await —— 它是后台维护，不该挡首屏；单条被读到时的惰性搬迁在 media.get 里兜底。
+      // 失败要说话：不能静默让人以为已经进了备份。
+      app.data.media.migrate().then(function (result) {
+        if (result && result.failed) ui.toast('有 ' + result.failed + ' 张旧图片没能搬进宿主文件库，它们暂时不会进入备份', 6000);
+      }).catch(function () {});
+      // 绘图卡片的画幅目录是"发现当时"的快照: 插件升级后不重读就还在用旧清单挑画幅
+      // （详见 draw.js 的 refreshCatalogs）。不 await、失败静默 —— 它是自愈, 不该挡首屏,
+      // 也不该把"插件没开"变成一条用户看不懂的报错。
+      app.services.draw.refreshCatalogs().catch(function () {});
       var settings = await app.data.store.get('meta', 'settings');
       applyTheme(settings.theme);
       app.i18n.setPreference(settings.uiLanguage, { silent: true });

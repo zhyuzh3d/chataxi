@@ -34,12 +34,13 @@
     }
     if (selected.indexOf("roles") >= 0) {
       var roles = await store.list("roles"), roleMedia = [];
-      for (var roleIndex = 0; roleIndex < roles.length; roleIndex += 1) { if (roles[roleIndex].avatarMediaId) roleMedia.push(roles[roleIndex].avatarMediaId); await store.remove("roles", roles[roleIndex].id); }
+      for (var roleIndex = 0; roleIndex < roles.length; roleIndex += 1) { if (roles[roleIndex].avatarMediaId) roleMedia.push(roles[roleIndex].avatarMediaId); if (roles[roleIndex].portraitMediaId) roleMedia.push(roles[roleIndex].portraitMediaId); await store.remove("roles", roles[roleIndex].id); }
       await store.releaseMedia(roleMedia);
     }
     if (selected.indexOf("models") >= 0) {
-      for (var collectionIndex = 0; collectionIndex < 3; collectionIndex += 1) {
-        var collection = ["llm-profiles", "tts-profiles", "asr-profiles"][collectionIndex], profiles = await store.list(collection);
+      var profileCollections = ["llm-profiles", "tts-profiles", "asr-profiles", "image-profiles"];
+      for (var collectionIndex = 0; collectionIndex < profileCollections.length; collectionIndex += 1) {
+        var collection = profileCollections[collectionIndex], profiles = await store.list(collection);
         for (var profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) if ((profiles[profileIndex].family || profiles[profileIndex].type) !== "system") await store.remove(collection, profiles[profileIndex].id);
       }
       var currentSettings = await store.get("meta", "settings"); currentSettings.defaultTtsProfileId = "system-tts"; currentSettings.defaultAsrProfileId = "system-asr"; await store.put("meta", "settings", currentSettings);
@@ -55,8 +56,8 @@
   function openClearData() {
     var form = ui.openModal({ title: "清除本机数据", submitText: "清除所选数据", danger: true, html: '<div class="form-grid"><p class="helper">所选数据会从当前 chataxi 实例永久删除，无法撤销。未选择的分类保持不变。</p>' +
       toggle("conversations", "全部对话数据", "删除全部对话、消息、摘要、草稿和对应附件", true) +
-      toggle("roles", "全部角色数据", "删除角色档案、模型选择、发音设置和角色头像", true) +
-      toggle("models", "全部模型配置", "删除第三方对话、朗读和语音输入服务及密钥；保留 Android 系统服务", true) +
+      toggle("roles", "全部角色数据", "删除角色档案、模型选择、发音设置和角色头像、定妆照", true) +
+      toggle("models", "全部模型配置", "删除第三方对话、朗读、语音输入与绘图服务及密钥；保留 Android 系统服务", true) +
       toggle("profile", "我的个人设定", "清除名称、头像和自我介绍，恢复默认名称“我”", true) + '</div>', onSubmit: clearSelectedData,
       onSuccess: async function () { ui.toast("所选本机数据已清除"); app.state.settingsTab = "system"; await render(); }
     });

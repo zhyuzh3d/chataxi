@@ -279,6 +279,302 @@ assert.equal((await app.data.store.messages(id)).at(-1).status, 'cancelled');
 assert.equal(document.querySelector('#messageListInner').textContent.includes('迟到的结果'), false);
 console.log('passed: enabled retry after error, stable message nodes, UI stop with late response');
 
+// ── 绘图永远独立占一条消息：超时或失败都不许并进那条原始文字消息（业主 2026-09-27） ──
+// 这一段跑的是**真实点击路径**。静态门禁只能证明写法，证明不了"点下去不炸"：曾经那个缺陷
+// 就是按钮看着正常、点下去抛 ReferenceError: id is not defined（会话 id 取了作用域里不存在的 id）。
+const drawCard = { profile: { id: 'cvp-fixture' }, modelId: 'render' };
+// 重新绘制走的是另一条路：resolveCard 只认消息里记下的那张卡片（它的兜底 available 是模块内部的，桩打不到），
+// 所以这里必须把 resolveCard 也一起接管，否则"重新绘制"会以为卡片没了、直接失败。
+const originalDrawAvailable = app.services.draw.available, originalDrawResolveCard = app.services.draw.resolveCard, originalDrawGenerate = app.services.draw.generate, originalDrawMediaPut = app.data.media.put;
+const drawBlob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+let drawCalls = 0, lastDrawPrompt = '';
+// failure 给第几次调用就第几次抛（模拟插件请求超时），不给就一路成功。
+const drawingStub = failure => { app.services.draw.generate = async options => { drawCalls += 1; lastDrawPrompt = options.prompt; if (failure === drawCalls) throw Error('绘图插件请求超时'); return { blob: drawBlob, mime: 'image/png', job: { id: 'job-' + drawCalls } }; }; };
+app.services.draw.available = async () => drawCard;
+app.services.draw.resolveCard = async () => drawCard;
+app.data.media.put = async () => ({ id: 'draw-media-fixture' });
+app.services.llm.complete = async () => ({ text: '给你看看我现在的样子。', images: [], action: { type: 'draw', prompt: '雨夜的旧车站, 少女侧身站在灯下' } });
+drawingStub(1);
+type('#messageInput', '发张你的照片看看'); click('#sendButton');
+await until(() => drawCalls === 1, 'the drawing action reaches the drawing client');
+await until(() => !app.features.chatSession.drawing(id) && !app.features.chatSession.active(id), 'the failed drawing releases its slot');
+await app.features.chat.renderMessages(); await tick();
+const afterFailedDraw = await app.data.store.messages(id), drawMessage = afterFailedDraw.at(-1), replyMessage = afterFailedDraw.at(-2);
+assert.notEqual(drawMessage.id, replyMessage.id, 'the drawing is its own message; it is never merged into the reply that asked for it');
+assert.equal(drawMessage.kind, 'assistant'); assert.equal(drawMessage.text, '');
+assert.equal(drawMessage.status, 'error', 'a timeout leaves the drawing message in its own failed state');
+assert.equal(drawMessage.draw.prompt, '雨夜的旧车站, 少女侧身站在灯下');
+assert.equal(replyMessage.status, 'done', 'a failed drawing must not damage the reply that asked for it');
+assert.equal(replyMessage.text, '给你看看我现在的样子。');
+assert.equal(replyMessage.media.length, 0, 'the drawing result never gets attached to the reply message');
+assert.equal(replyMessage.draw, undefined, 'the reply message carries no drawing record');
+assert.equal(replyMessage.error, '');
+const drawRow = document.querySelector('[data-message-id="' + drawMessage.id + '"]');
+assert.ok(drawRow, 'the failed drawing gets its own bubble');
+assert.match(drawRow.querySelector('.message-error').textContent, /绘图插件请求超时/);
+const redraw = drawRow.querySelector('.message-bubble .button');
+assert.equal(redraw.textContent, '重新绘制这张图'); assert.equal(redraw.disabled, false);
+// 这一击就是原缺陷的现场：游离的 id 会在这里抛 ReferenceError，按钮看着在、其实什么也不会发生。
+redraw.click();
+await until(() => drawCalls === 2, '重新绘制这张图 must really start another drawing');
+await until(() => !app.features.chatSession.drawing(id), 'the redraw finishes');
+const afterRedraw = await app.data.store.messages(id);
+assert.equal(afterRedraw.length, afterFailedDraw.length, '重新绘制 reuses the same image message instead of appending a record');
+assert.equal(afterRedraw.at(-1).id, drawMessage.id);
+assert.equal(afterRedraw.at(-1).status, 'done'); assert.equal(afterRedraw.at(-1).media.length, 1);
+assert.equal(afterRedraw.at(-2).id, replyMessage.id, 'the reply that asked for the image stays exactly where it was');
+assert.equal(lastDrawPrompt, '雨夜的旧车站, 少女侧身站在灯下', 'the redraw reuses the prompt stored on the message instead of asking the model again');
+// 正文为空、只带绘图动作的那一轮：绘图依然独占一条消息，那条空的文本消息不许留下。
+const beforeActionOnlyList = await app.data.store.messages(id), beforeActionOnlyTurn = beforeActionOnlyList.length;
+// 历史里本来就有一条被用户停止的助手消息（text 被清空），所以判据只能是"空正文消息没有变多"。
+const emptyAssistantCount = list => list.filter(message => message.kind === 'assistant' && !message.text && !message.draw).length;
+app.services.llm.complete = async () => ({ text: '', images: [], action: { type: 'draw', prompt: '一只趴在窗台的橘猫' } });
+drawingStub();
+type('#messageInput', '画只猫'); click('#sendButton');
+await until(() => drawCalls === 3, 'the action-only turn also reaches the drawing client');
+await until(() => !app.features.chatSession.drawing(id) && !app.features.chatSession.active(id), 'the action-only drawing finishes');
+const actionOnlyTurn = await app.data.store.messages(id), addedByActionOnlyTurn = actionOnlyTurn.slice(beforeActionOnlyTurn);
+assert.equal(addedByActionOnlyTurn.length, 2, 'an action-only turn adds the user message plus exactly one drawing message');
+assert.equal(addedByActionOnlyTurn[0].kind, 'user'); assert.equal(addedByActionOnlyTurn[0].text, '画只猫');
+assert.equal(addedByActionOnlyTurn[1].kind, 'assistant'); assert.equal(addedByActionOnlyTurn[1].text, '');
+assert.equal(addedByActionOnlyTurn[1].draw.prompt, '一只趴在窗台的橘猫');
+assert.equal(addedByActionOnlyTurn[1].status, 'done'); assert.equal(addedByActionOnlyTurn[1].media.length, 1);
+assert.equal(emptyAssistantCount(actionOnlyTurn), emptyAssistantCount(beforeActionOnlyList), 'an action-only turn removes its own empty text message instead of leaving it behind');
+
+// ── 生成中那一条下面的「停止」：生图消息与角色消息各一个（业主 2026-09-27） ──────────────
+// 两条任务的生命周期不同 —— 绘图**不占** tasks[id]（见 chat-session.js 文件头的 drawTasks 注释）,
+// 所以两个按钮必须各走各的开关（cancelDraw / stop）。这一段跑真实点击, 证明"按下去真的停、
+// 状态真的落地、按钮自己会消失", 而不是只证明代码里写了两个函数名。
+let drawCancelled = false;
+// 假插件：只有拿到 task.cancelled 才收手 —— 与真 draw.js 的轮询同构, 否则这个测试会自己骗自己。
+app.services.draw.generate = options => new Promise((resolve, reject) => {
+  drawCalls += 1; lastDrawPrompt = options.prompt;
+  const poll = () => {
+    if (options.task.cancelled) { drawCancelled = true; const error = Error('本轮已停止'); error.cancelled = true; reject(error); return; }
+    setTimeout(poll, 10);
+  };
+  poll();
+});
+app.services.llm.complete = async () => ({ text: '', images: [], action: { type: 'draw', prompt: '一张要中途停下的图' } });
+type('#messageInput', '画一张, 我中途喊停'); click('#sendButton');
+await until(() => app.features.chatSession.drawing(id), 'the drawing task is running');
+await until(() => document.querySelector('[data-stop-generation="drawing"]'), '生图中的消息下面必须有停止按钮');
+assert.equal(document.querySelector('[data-stop-generation="drawing"]').textContent.trim(), '停止');
+document.querySelector('[data-stop-generation="drawing"]').click();
+await until(() => drawCancelled, 'the stop button must really cancel the drawing, not just redraw the screen');
+await until(() => !app.features.chatSession.drawing(id), 'the cancelled drawing releases its slot');
+await until(() => !document.querySelector('[data-stop-generation="drawing"]'), '停掉之后按钮必须跟着走了');
+await tick();
+const stoppedDraw = (await app.data.store.messages(id)).at(-1);
+assert.equal(stoppedDraw.status, 'cancelled', '被停掉的绘图要落成 cancelled, 不能永远挂在"正在绘制图片…"');
+assert.equal(stoppedDraw.error, '本轮已停止');
+// 「action 不受对话控制」的可执行判据：先起一张在跑的图, 再让正文进入生成, 然后按**正文**那一条
+// 的停止 —— 绘图必须还活着。这正是把两个按钮分成两条路径的理由。
+let drawStillAlive = false;
+app.services.draw.generate = options => new Promise((resolve, reject) => {
+  drawStillAlive = true;
+  const poll = () => { if (options.task.cancelled) { const error = Error('本轮已停止'); error.cancelled = true; reject(error); return; } setTimeout(poll, 10); };
+  poll();
+});
+app.services.llm.complete = async () => ({ text: '', images: [], action: { type: 'draw', prompt: '这一张不许被对话停掉' } });
+type('#messageInput', '再画一张'); click('#sendButton');
+await until(() => drawStillAlive && Boolean(app.features.chatSession.drawing(id)), 'a detached drawing is running again');
+let enteredReply, releaseReply;
+const replyStarted = new Promise(resolve => { enteredReply = resolve; });
+app.services.llm.complete = async () => { enteredReply(); return new Promise(resolve => { releaseReply = resolve; }); };
+type('#messageInput', '绘图还在跑的时候停正文'); click('#sendButton');
+await replyStarted;
+await until(() => document.querySelector('[data-stop-generation="pending"]'), '角色生成中的消息下面必须有停止按钮');
+document.querySelector('[data-stop-generation="pending"]').click();
+await until(() => !app.features.chatSession.active(id), 'the reply-level stop button must stop the turn');
+assert.equal(Boolean(app.features.chatSession.drawing(id)), true, '对话级的停止不许把绘图一起掐掉: action 不受对话控制');
+releaseReply({ text: '迟到的回复', images: [] }); await tick(); await tick();
+assert.equal((await app.data.store.messages(id)).at(-1).status, 'cancelled', '被停掉的正文落成 cancelled');
+app.features.chatSession.cancelDraw(id);
+await until(() => !app.features.chatSession.drawing(id), 'clean up the detached drawing before restoring the stubs');
+app.services.draw.available = originalDrawAvailable; app.services.draw.resolveCard = originalDrawResolveCard; app.services.draw.generate = originalDrawGenerate; app.data.media.put = originalDrawMediaPut;
+console.log('passed: drawing is always its own message and 重新绘制这张图 really redraws');
+
+// ── 全屏看图：基线是高度充满，手机的系统返回只关掉看图这一层（业主 2026-09-27） ──────────
+// 跑的是真实事件路径。静态门禁只能证明"写了 popstate"，证明不了"按返回真的会关掉、而且只关这一层"。
+// 基线（scale = 1）现在表示"图片高度等于屏幕高"，缩放数值本身在无布局的测试环境里量不出来，
+// 但"打开时就是基线、返回后整层消失、自己关掉时把压进去的那一格历史收回来"这三件事是可判定的。
+const backPressed = history.back.bind(history);
+let historyBacks = 0;
+history.back = () => { historyBacks += 1; return backPressed(); };
+const opened = app.components.imageViewer.open({ src: '/__hermit/files/viewer-fixture', alt: '测试图', onDownload: () => {}, onSetBackground: () => {} });
+await tick();
+assert.ok(document.querySelector('.image-viewer'), '点图片必须打开全屏看图');
+// 底部那条工具栏是**唯一**的动作出口（业主 2026-09-27: 右上角那个单独的关闭按钮、以及底部的
+// 提示词都撤掉了, 三个动作收进一条磨砂工具栏）。所以这里同时核对"三个都在, 且就这三个"。
+assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]')).map(node => node.dataset.viewerAction), ['download', 'background', 'close'], '看图底部必须有 下载 / 设为背景 / 关闭 三个动作, 且只有这三个');
+assert.equal(document.querySelector('.image-viewer-caption'), null, '底部不再显示提示词');
+assert.equal(document.querySelector('.image-viewer-close'), null, '右上角那个单独的关闭按钮已经撤掉');
+assert.equal(document.querySelector('.image-viewer img').style.transform, 'translate(0px,0px) scale(1)', '一打开就停在基线（高度充满），不是缩进屏幕里');
+assert.equal(history.state.chataxiImageViewer, true, '打开看图必须压一格带标记的历史记录');
+assert.equal(document.body.style.overflow, 'hidden', '看图期间要锁住页面滚动');
+window.dispatchEvent(new window.Event('popstate'));
+await opened; await tick();
+assert.equal(document.querySelector('.image-viewer'), null, '系统返回（含侧滑）必须关掉看图');
+assert.equal(document.body.style.overflow, '', '关闭后必须还原页面滚动');
+// 自己关掉（这里走工具栏的「关闭」）时要把那一格历史收回来，否则它会吞掉用户的下一次返回。
+historyBacks = 0;
+const reopened = app.components.imageViewer.open({ src: '/__hermit/files/viewer-fixture', alt: '测试图' });
+await tick();
+// 没给回调的两个动作必须自己藏起来 —— 摆在那里点了没反应是最糟的样子。
+assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]:not([hidden])')).map(node => node.dataset.viewerAction), ['close'], '没有下载 / 设为背景回调时, 那两个按钮必须隐藏, 只留关闭');
+document.querySelector('[data-viewer-action="close"]').click();
+await reopened; await tick();
+assert.equal(document.querySelector('.image-viewer'), null, '工具栏上的「关闭」照常关掉看图');
+assert.equal(historyBacks, 1, '自己关掉时要调一次 history.back() 收掉压进去的那一格');
+history.back = backPressed;
+console.log('passed: full-screen viewer fills the height and the back gesture only closes the viewer');
+
+// ── 图片消息：改提示词 / 重新生成 / 删除（业主 2026-09-27） ────────────────────────────
+// 三条都是"看起来行、点下去才知道"的东西，所以全部走真实点击路径：重新生成要真的再提交一次
+// 绘图任务、铅笔打开的是提示词编辑器（不是那条恒为空的正文）、删除必须先确认。
+const fireSubmit = node => node.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+// 画布上的假图片：这一段要真的点开气泡里的缩略图，所以得让 displayUrl 认得桩出来的那个 mediaId。
+// **必须赶在这一段的第一次 renderMessages 之前装上** —— renderMessages 按消息签名做节点缓存
+// （chat.js:313），签名不变就复用旧节点；等渲染完了再装桩，缩略图那一格仍然是"图片不可用"。
+const renderedDisplayUrl = app.data.media.displayUrl;
+app.data.media.displayUrl = async value => String((value && value.mediaId) || value || '') === 'draw-media-fixture' ? '/__hermit/files/draw-fixture' : '';
+await app.features.chat.renderMessages(); await tick();
+const drawnMessage = actionOnlyTurn.at(-1);
+const drawnRow = () => document.querySelector('[data-message-id="' + drawnMessage.id + '"]');
+assert.ok(drawnRow(), 'the drawn image message is on screen');
+assert.ok(drawnRow().querySelector('[aria-label="修改绘图提示词"]'), '图片消息的铅笔要说清改的是绘图提示词');
+assert.equal(drawnRow().querySelector('[data-regenerate-message]').getAttribute('aria-label'), '重新生成这张图');
+
+// 1) 重新生成 = 重新发起绘图：沿用同一条消息，不新增记录，也不动提示词。
+let redrawCalls = 0;
+app.services.draw.available = async () => drawCard;
+app.services.draw.resolveCard = async () => drawCard;
+app.data.media.put = async () => ({ id: 'draw-media-fixture' });
+app.services.draw.generate = async () => { redrawCalls += 1; return { blob: drawBlob, mime: 'image/png', job: { id: 'job-redraw' } }; };
+const beforeRedraw = (await app.data.store.messages(id)).length;
+drawnRow().querySelector('[data-regenerate-message]').click();
+await until(() => redrawCalls === 1 && !app.features.chatSession.drawing(id), 'the regenerate button really starts another drawing');
+const afterRedrawTurn = await app.data.store.messages(id);
+assert.equal(afterRedrawTurn.length, beforeRedraw, '重新生成图片不能新增消息');
+// 不能再用 .at(-1) 认这条消息：后面的段落（见「生成中那一条下面的停止」）还会往这个对话里加消息。
+// "没有新增记录"由上面那句 lengths 相等来判，这里按 id 取那一条。
+const redrawnMessage = afterRedrawTurn.filter(message => message.id === drawnMessage.id)[0];
+assert.ok(redrawnMessage, '重新生成沿用同一条图片消息');
+assert.equal(redrawnMessage.status, 'done');
+assert.equal(redrawnMessage.draw.prompt, '一只趴在窗台的橘猫', '重新生成原样沿用消息里的提示词');
+// 这条消息必须记着当初用的是哪张卡片、哪个模型，否则重新生成就只能猜（业主 2026-09-27）。
+assert.equal(redrawnMessage.draw.profileId, 'cvp-fixture', '图片消息要记下生图用的卡片');
+assert.equal(redrawnMessage.draw.modelId, 'render', '图片消息要记下生图用的模型');
+app.services.draw.available = originalDrawAvailable; app.services.draw.resolveCard = originalDrawResolveCard; app.services.draw.generate = originalDrawGenerate; app.data.media.put = originalDrawMediaPut;
+await app.features.chat.renderMessages(); await tick();
+
+// 2) 铅笔改的是绘图提示词，不是那条恒为空的正文。
+drawnRow().querySelector('[aria-label="修改绘图提示词"]').click();
+await until(() => document.querySelector('#modalForm [name="text"]'), 'the drawing prompt editor opens');
+assert.equal(document.querySelector('#modalTitle').textContent, '编辑绘图提示词');
+assert.equal(document.querySelector('#modalForm [name="text"]').value, '一只趴在窗台的橘猫', '编辑器里装的是消息里的提示词');
+const deleteEntry = document.querySelector('#modalForm [data-delete-message]');
+assert.ok(deleteEntry, '编辑弹窗底部必须有删除入口');
+assert.equal(deleteEntry.getAttribute('type'), 'button', '删除按钮不能是提交按钮，否则点它等于保存并关闭');
+field('text', '雨夜的车站, 少女撑着伞侧身站着'); fireSubmit(document.querySelector('#modalForm'));
+await until(() => !document.querySelector('#modalForm'), 'the prompt editor closes');
+const afterPromptEdit = (await app.data.store.messages(id)).filter(message => message.id === drawnMessage.id)[0];
+assert.equal(afterPromptEdit.draw.prompt, '雨夜的车站, 少女撑着伞侧身站着');
+assert.equal(afterPromptEdit.text, '', '图片消息的正文仍然为空 —— 改的是提示词');
+assert.equal(afterPromptEdit.media.length, 1, '改提示词不能把已经画好的图弄丢');
+assert.equal(document.querySelector('#toastRoot .toast').textContent, '绘图提示词已保存');
+await app.features.chat.renderMessages(); await tick();
+assert.match(drawnRow().querySelector('.message-caption').textContent, /雨夜的车站/, '气泡下面回显的必须换成新提示词');
+
+// 4) 「设为背景」必须先确认（业主 2026-09-27 第三轮）：它改的是**对话设置**，而且一设就铺满整个
+//    界面 —— 在看图时误触一次，用户得再进对话设置里换回来。静态门禁只能证明"confirm 写在 save
+//    之前"，这里要证明的是两条路径各自的**后果**：取消什么都不写、确认才落库、落库只记 mediaId。
+//    顺便盯住"看图自己收起来"：设完背景还留着那一层，用户会以为没生效。
+const viewerThumb = drawnRow().querySelector('.message-image');
+assert.ok(viewerThumb, '画好的图片要能在气泡里点开（这一段要用它进全屏看图）');
+viewerThumb.click(); await tick();
+assert.ok(document.querySelector('.image-viewer'), '点缩略图打开全屏看图');
+const backgroundBefore = (await app.data.store.get('conversations', id)).background;
+document.querySelector('[data-viewer-action="background"]').click();
+await until(() => document.querySelector('#modalForm'), '「设为背景」必须先弹确认');
+assert.equal(document.querySelector('#modalTitle').textContent, '设为对话背景？');
+click('.modal-backdrop');
+await until(() => !document.querySelector('#modalForm'), '点遮罩关掉确认框');
+await tick();
+assert.ok(document.querySelector('.image-viewer'), '取消之后看图这一层照旧开着 —— 用户接着看他的图');
+assert.deepEqual((await app.data.store.get('conversations', id)).background, backgroundBefore, '取消就必须什么都不写');
+document.querySelector('[data-viewer-action="background"]').click();
+await until(() => document.querySelector('#modalForm'), '确认框要能再开一次（在途闸不能把它锁死）');
+submit();
+await until(() => !document.querySelector('#modalForm'), '确认之后确认框关闭');
+await until(() => !document.querySelector('.image-viewer'), '设为背景之后看图自己收起来');
+const backgroundAfter = (await app.data.store.get('conversations', id)).background;
+assert.equal(backgroundAfter && backgroundAfter.kind, 'image', '确认之后才真的写进对话背景');
+assert.equal(backgroundAfter && backgroundAfter.mediaId, 'draw-media-fixture', '背景只登记 mediaId');
+assert.equal(backgroundAfter && backgroundAfter.url, undefined, '不许写 url：没有取景参数时它按 1:1 推，竖图会被放大过头');
+assert.match(document.querySelector('#toastRoot').textContent, /已设为对话背景/);
+// 这一段故意把背景设上了（那正是它的终点），但后面有"没有背景图时长按空地也不许收控件"的段落，
+// 前提是**当前对话没有背景** —— 不还原就会在别处炸，而且报的是那一段的错，查起来很容易跑偏。
+const restoredConversation = await app.data.store.get('conversations', id);
+if (backgroundBefore === undefined) delete restoredConversation.background; else restoredConversation.background = backgroundBefore;
+await app.data.store.put('conversations', id, restoredConversation);
+await app.features.chat.refreshAppBackground();
+app.data.media.displayUrl = renderedDisplayUrl;
+await app.features.chat.renderMessages(); await tick();
+
+// 5) 缩略图懒加载（业主 2026-09-27 第五轮）：没进视口的图片，**地址根本不去取**。
+//    这条只能靠运行时证明 —— 静态门禁能看到"地址挪进了 loadThumb"，看不到"真的没提前取"。
+//    沙箱里本来没有 IntersectionObserver（走的是"立刻加载"的降级路），所以这里补一个假的，
+//    数 displayUrl 被调了几次。
+const ioSeen = []; let ioCallback = null, ioAuto = false;
+context.IntersectionObserver = function (callback) {
+  ioCallback = callback;
+  this.observe = node => { if (ioAuto) { callback([{ target: node, isIntersecting: true }]); return; } ioSeen.push(node); };
+  this.unobserve = node => { const at = ioSeen.indexOf(node); if (at >= 0) ioSeen.splice(at, 1); };
+  this.disconnect = () => { ioSeen.length = 0; };
+};
+// 上面那几轮已经把这张缩略图加载过了（那时还没有 IntersectionObserver，走的是降级路），
+// 它的占位标记已是 "2"、观察器不会再选它 ⇒ 必须先让记录真的变一次。renderMessages 按消息签名
+// 复用节点，签名变了才会重建出一个待取的新缩略图。updatedAt 不参与任何渲染（消息列表只按
+// createdAt 排序与分组），改它不会影响别处的断言。
+const lazyMessage = (await app.data.store.messages(id)).filter(message => (message.media || []).length)[0];
+assert.ok(lazyMessage, '这一段需要一条带图片的消息');
+lazyMessage.updatedAt = Date.now();
+await app.data.store.putMessage(lazyMessage);
+let thumbResolves = 0;
+app.data.media.displayUrl = async () => { thumbResolves += 1; return '/__hermit/files/draw-fixture'; };
+await app.features.chat.renderMessages(); await tick();
+assert.ok(ioSeen.length, '有图片的消息必须把缩略图交给观察器，而不是渲染时就去取地址');
+assert.equal(document.querySelectorAll('.message-image[data-media-pending="1"]').length, ioSeen.length, '每一张待取的缩略图都要带占位标记（CSS 靠它给出 9:16 的尺寸）');
+assert.equal(thumbResolves, 0, '还没进视口就解析地址 ⇒ 这次优化等于没做');
+// 进视口之后才取。假观察器不会自己触发，这里手动喂一次相交。
+const lazyThumb = ioSeen[0];
+ioCallback([{ target: lazyThumb, isIntersecting: true }]);
+await until(() => thumbResolves === 1, '相交之后必须真的去解析地址');
+assert.equal(ioSeen.includes(lazyThumb), false, '取过一次就要把它摘掉，否则每次滚动都会重新取一遍');
+assert.equal(lazyThumb.dataset.mediaPending, '2', '地址在途时仍要占着位（图还没到，占位盒不能先塌掉）');
+// 收拾：后面还有段落要渲染图片列表，让假观察器从此"立即相交"，等价于恢复原来的行为。
+ioAuto = true;
+ioSeen.slice().forEach(node => ioCallback([{ target: node, isIntersecting: true }]));
+app.data.media.displayUrl = renderedDisplayUrl;
+
+// 6) 删除：入口在编辑弹窗底部，而且必须先确认（确认层会叠在编辑弹窗上面）。
+drawnRow().querySelector('[aria-label="修改绘图提示词"]').click();
+await until(() => document.querySelector('#modalForm [data-delete-message]'), 'the editor reopens for deletion');
+document.querySelector('#modalForm [data-delete-message]').click();
+await until(() => document.querySelector('.subsheet form'), 'deleting asks for confirmation first');
+assert.equal(document.querySelector('.subsheet .modal-head h2').textContent, '删除这条消息？');
+const beforeDelete = (await app.data.store.messages(id)).length;
+fireSubmit(document.querySelector('.subsheet form'));
+await until(() => !document.querySelector('.subsheet') && !document.querySelector('#modalForm'), 'confirming deletes the message and closes both layers');
+const afterDelete = await app.data.store.messages(id);
+assert.equal(afterDelete.length, beforeDelete - 1, '只删掉这一条');
+assert.equal(afterDelete.some(message => message.id === drawnMessage.id), false, '这条消息必须从库里消失');
+assert.equal(document.querySelector('[data-message-id="' + drawnMessage.id + '"]'), null, '删掉的消息不再渲染');
+assert.equal(document.querySelector('#toastRoot .toast').textContent, '消息已删除');
+console.log('passed: editing a drawing prompt, re-drawing that image and deleting a message after confirmation');
+
 await app.navigate('settings');
 const general = document.querySelector('#generalForm'); assert.ok(general);
 assert.equal(general.querySelector('[name="recentFullMessages"]'), null, 'the retained-N count is derived from characters, so no message-count control exists anywhere');
@@ -420,7 +716,7 @@ const escape = new window.Event('keydown', { bubbles: true, cancelable: true });
 assert.equal(escaped, false);
 await Promise.all([app.navigate('roles'), app.navigate('models', { modelsTab: 'asr' })]);
 assert.equal(app.state.route, 'models'); assert.equal(document.querySelector('#modelsContent').getAttribute('aria-labelledby'), 'models-tab-asr');
-assert.deepEqual(Array.from(document.querySelectorAll('.section-tabs button')).map(button => button.textContent), ['对话模型', '朗读模型', '语音输入']);
+assert.deepEqual(Array.from(document.querySelectorAll('.section-tabs button')).map(button => button.textContent), ['对话模型', '朗读模型', '语音输入', '绘图模型']);
 assert.equal(document.querySelector('.section-tabs i'), null, 'model category tabs have no icons');
 assert.equal(document.querySelector('[data-edit-service="system-asr"]'), null, 'unavailable system ASR must not expose an editor');
 assert.equal(document.querySelector('[data-test-service="system-asr"]'), null, 'unavailable system ASR must not expose a recording test');
@@ -563,26 +859,66 @@ const editedSummary = await app.data.store.get('summaries', id);
 assert.equal(editedSummary.text, '手工修订后的概要'); assert.equal(editedSummary.throughMessageId, boundaryMessage.id); assert.ok(editedSummary.editedAt > 0);
 assert.equal(document.querySelector('#toastRoot .toast').textContent, '压缩概要已更新');
 assert.equal(app.services.context.requestMessages({ summary: editedSummary, recent: [] })[0].text, '手工修订后的概要', 'the edited summary replaces the frozen history in the next request');
-// ── 沉浸模式：点消息列表的空白处收掉全部控件, 只留背景; 再点一次恢复 ──────────
-// 这里跑的是**真实点击路径**（事件从列表气泡/空白冒泡到 .chat-layout 上那一个监听器）,
-// 静态门禁只能证明写法, 证明不了"点哪儿算空白、点完能不能回来"。
-// 用 dispatchEvent 而不是 node.click(), 因为被测的监听器挂在祖先上 —— 判据是冒泡真的到得了。
-const tap = node => { assert.ok(node, 'the tap target must exist'); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
+// ── 沉浸模式：**只有设了背景图**的对话才有这套机制, 而且手势是不对称的 ────────────
+// 业主 2026-09-27 两轮原话: ①"如果对话界面没有背景图片, 点击空地就不要隐藏 UI 元素";
+// ②"点按空白隐藏 UI 控件, 改为长按空白处隐藏, 恢复显示只要点击不需长按"。
+// 所以要验四件事: 没有背景图 ⇒ 长按也不发生; 有背景图 ⇒ **长按**才藏; 轻点就恢复;
+// 手指挪动（在滚动）与长按消息都不算。
+// 事件从列表气泡/空白冒泡到 .chat-layout 上那一组监听器, 所以必须 dispatchEvent ——
+// 判据是"冒泡真的到得了祖先", node.click() 证明不了。
+const LEFT_PRESS_MS = 500;
+function pointer(node, type, x, y) {
+  assert.ok(node, 'the pointer target must exist');
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  // linkedom 里没有 PointerEvent, 用 Event 补上被测代码真正读的那两个坐标。
+  // 用 defineProperty 而不是直接赋值: 属性若在原型上是只读访问器, 严格模式下赋值会抛。
+  Object.defineProperty(event, 'clientX', { value: x, configurable: true });
+  Object.defineProperty(event, 'clientY', { value: y, configurable: true });
+  node.dispatchEvent(event);
+}
+async function longPress(node, x = 40, y = 40) {
+  pointer(node, 'pointerdown', x, y);
+  await new Promise(resolve => setTimeout(resolve, LEFT_PRESS_MS + 80));
+  pointer(node, 'pointerup', x, y);
+  await tick();
+}
+async function tap(node, x = 40, y = 40) { pointer(node, 'pointerdown', x, y); pointer(node, 'pointerup', x, y); await tick(); }
 const shellNode = document.getElementById('appShell');
 const hiddenRegions = ['.topbar', '.message-viewport', '.composer'];
 const hiddenState = () => shellNode.classList.contains('chat-chrome-hidden');
 assert.equal(hiddenState(), false, 'the chat page opens with every control visible');
-tap(document.querySelector('.message-list-inner'));
-assert.equal(hiddenState(), true, 'a tap on the blank area of the message list hides the chrome');
+await longPress(document.querySelector('.message-list-inner'));
+assert.equal(hiddenState(), false, '没有背景图的时候, 长按空地也不许收控件');
+await tap(document.querySelector('.chat-layout'));
+assert.equal(hiddenState(), false, '没有背景图时也不存在"再点一次恢复"这回事');
+// 给它设一张背景图 —— 这才是"只显示背景"这件事有意义的前提。
+const withBackground = Object.assign({}, await app.data.store.get('conversations', id), { background: { kind: 'image', url: 'https://example.test/background.png' } });
+await app.data.store.put('conversations', id, withBackground);
+await app.features.chat.refreshAppBackground();
+assert.equal(document.documentElement.classList.contains('has-app-background'), true, '设了背景图之后背景层才会铺上');
+// ① 轻点**不**藏 —— 这正是要改掉"一点就藏"的原因（滚动起手、想点气泡边缘却点空都会误触）。
+await tap(document.querySelector('.message-list-inner'));
+assert.equal(hiddenState(), false, '轻点空白不藏: 只有按住半秒才算"我要沉浸"');
+// ② 长按才藏。
+await longPress(document.querySelector('.message-list-inner'));
+assert.equal(hiddenState(), true, '设了背景图之后, 长按空白处才收掉全部控件');
 hiddenRegions.forEach(selector => assert.equal(document.querySelector(selector).getAttribute('aria-hidden'), 'true', selector + ' must leave the accessibility tree with it'));
-tap(document.querySelector('.chat-layout'));
-assert.equal(hiddenState(), false, 'the second tap brings the chrome back');
+// ③ 恢复只要轻点, 不需要长按。
+await tap(document.querySelector('.chat-layout'));
+assert.equal(hiddenState(), false, '轻点一下就把控件显示回来');
 hiddenRegions.forEach(selector => assert.equal(document.querySelector(selector).getAttribute('aria-hidden'), null, selector + ' must be exposed again'));
-// 点在消息上不算空白（用户说的是"空白位置"）: 那是消息自己的区域, 不能顺手把界面藏起来。
-tap(document.querySelector('.message-row .message-bubble'));
-assert.equal(hiddenState(), false, 'a tap on a message bubble is not a blank-area tap');
+// ④ 长按到一半手指挪走 = 用户在滚动列表, 不能把界面收掉。
+pointer(document.querySelector('.message-list-inner'), 'pointerdown', 40, 40);
+pointer(document.querySelector('.message-list-inner'), 'pointermove', 40, 120);
+await new Promise(resolve => setTimeout(resolve, LEFT_PRESS_MS + 80));
+pointer(document.querySelector('.message-list-inner'), 'pointerup', 40, 120);
+await tick();
+assert.equal(hiddenState(), false, '手指挪动超过容差就当滚动, 长按必须取消');
+// ⑤ 长按消息不算空白（用户说的是"空白位置"）: 那是消息自己的区域。
+await longPress(document.querySelector('.message-row .message-bubble'));
+assert.equal(hiddenState(), false, 'a long press on a message bubble is not a blank-area press');
 // 隐着的时候离开对话, 下一页不能继承这个状态: 类是挂在跨页面的 #appShell 上的。
-tap(document.querySelector('.message-list-inner'));
+await longPress(document.querySelector('.message-list-inner'));
 assert.equal(hiddenState(), true, 'hide again before leaving');
 await app.features.chat.close();
 assert.equal(hiddenState(), false, 'leaving the conversation must clear the hidden chrome, or the list page opens invisible');

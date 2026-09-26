@@ -23,13 +23,15 @@
     return '<span class="avatar ' + utils.escapeHtml(className || "") + '"' + (media ? ' data-avatar-media="' + utils.escapeHtml(media) + '"' : '') + ' aria-hidden="true">' + (cleanName ? utils.escapeHtml(label) : label) + '</span>';
   }
   function roleAvatar(role, className) { return avatar(role && role.name, "", className, "", role && role.avatarMediaId); }
+  // 头像取显示地址（宿主文件优先）而不是 base64：宿主记录直接给同源对象地址，
+  // 一次 canvas 编码都省了；只有老记录 / 临时件才会退化成 objectURL 或 dataURL。
   async function hydrateAvatars(root) {
     var nodes = (root || document).querySelectorAll("[data-avatar-media]:not([data-avatar-loaded])");
     await Promise.all(Array.prototype.map.call(nodes, async function (node) {
       node.setAttribute("data-avatar-loaded", "loading");
       try {
-        var dataUrl = await app.data.media.toDataUrl(node.dataset.avatarMedia);
-        if (dataUrl && node.isConnected) { var image = document.createElement("img"); image.src = dataUrl; image.alt = ""; node.textContent = ""; node.appendChild(image); node.setAttribute("data-avatar-loaded", "true"); }
+        var source = await app.data.media.displayUrl(node.dataset.avatarMedia);
+        if (source && node.isConnected) { var image = document.createElement("img"); image.src = source; image.alt = ""; node.textContent = ""; node.appendChild(image); node.setAttribute("data-avatar-loaded", "true"); }
         else node.removeAttribute("data-avatar-loaded");
       } catch (_) { node.removeAttribute("data-avatar-loaded"); }
     }));
@@ -96,7 +98,7 @@
     var blob = source instanceof Blob ? source : null, mime = blob ? blob.type || "" : source && source.type || "", size = blob ? blob.size : Number(source && source.size || 0);
     var managedUrl = !blob && source && source.url ? String(source.url) : "", sourceUrl = blob ? URL.createObjectURL(blob) : managedUrl;
     var aspect = Number(settings.aspect) > 0 ? Number(settings.aspect) : 1;
-    var framing = settings.mode === "framing", quality = Number(settings.quality) || 0.88, outputWidth = Number(settings.outputWidth) || 320;
+    var framing = settings.mode === "framing", quality = Number(settings.quality) || 0.88, outputWidth = Number(settings.outputWidth) || 320, outputHeight = Number(settings.outputHeight) || 0;
     var released = false, cleanup = [];
     function release() {
       if (released) return; released = true; cleanup.forEach(function (fn) { fn(); });
@@ -124,7 +126,9 @@
           panY: geometry.renderedHeight > frame.height ? geometry.y / geometry.limitY : 0
         };
       }
-      var width = Math.max(1, Math.round(outputWidth)), height = Math.max(1, Math.round(width / (frame.width / frame.height)));
+      // 输出尺寸默认跟着取景框的比例算; 给了 outputHeight 就直接用它 —— 取景框是整数像素,
+      // 算出来的比例会漂零点几个像素, 而定妆照要的是**确切**的 576×1024。
+      var width = Math.max(1, Math.round(outputWidth)), height = Math.max(1, Math.round(outputHeight || width / (frame.width / frame.height)));
       var canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
       var context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
       context.drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceWidth, geometry.sourceHeight, 0, 0, width, height);
@@ -183,6 +187,33 @@
         tooLarge: "头像原图不能超过 20 MiB",
         unreadable: "头像图片无法读取",
         failed: "头像裁切失败，请换一张图片"
+      },
+      onCropped: onCropped
+    });
+  }
+  // 定妆照：人像竖幅取景（9:16）+ 576×1024 输出。它不是头像的特例 —— 头像输出方形 320px
+  // 给圆形头像用; 定妆照是要交给生图模型当参考图的"完整形象", 比例与分辨率都得够。
+  //
+  // 两个数是配套定的（业主 2026-09-27）:
+  // * **9:16** —— 生图画幅就是 9:16（768×1344）, 参考图与画幅同比例时模型才是在"照着画"。
+  // * **长边 1024** —— 正好等于 draw.js 的 REFERENCE_MAX_EDGE, 也就是这张图送出去之前的
+  //   传输上限: 长边不多不少 1024 ⇒ 不再被重编码一次。像素还比原来的 3:4@768（0.79MP）
+  //   少, 而"所有角色的定妆照都是同一个尺寸"这件事本身让取景与出图都可预期, 所以显式给
+  //   outputHeight —— 取景框是整数像素、算出来的比例会漂零点几像素。
+  //
+  // **参考图本身的比例永远不会被拉变形**（插件按面积缩, 保比例）, 所以取 9:16 是为了让构图
+  // 与画幅一致, 不是为了迁就插件的缩放。
+  function cropPortrait(source, onCropped) {
+    return cropPicture(source, {
+      aspect: 9 / 16, outputWidth: 576, outputHeight: 1024, quality: 0.9,
+      labels: {
+        title: "设定角色定妆照", submit: "使用这张定妆照",
+        help: "拖动图片把人物放进取景框；双指捏合、滚轮或下方按钮可以缩放。",
+        preview: "定妆照裁切预览", zoomIn: "放大定妆照", zoomOut: "缩小定妆照",
+        notImage: "定妆照只支持 JPEG、PNG 或 WebP 图片",
+        tooLarge: "定妆照原图不能超过 20 MiB",
+        unreadable: "定妆照图片无法读取",
+        failed: "定妆照裁切失败，请换一张图片"
       },
       onCropped: onCropped
     });
@@ -356,5 +387,5 @@
   function search(placeholder) {
     return '<label class="search-field">' + icon("magnifying-glass") + '<input type="search" id="listSearch" aria-label="' + utils.escapeHtml(placeholder) + '" placeholder="' + utils.escapeHtml(placeholder) + '"></label>';
   }
-  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropPicture: cropPicture, cropGeometry: cropGeometry, cropGeometryRect: cropGeometryRect, screenAspect: screenAspect, toast: toast, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
+  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropPortrait: cropPortrait, cropPicture: cropPicture, cropGeometry: cropGeometry, cropGeometryRect: cropGeometryRect, screenAspect: screenAspect, toast: toast, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
 })(window.chataxi);

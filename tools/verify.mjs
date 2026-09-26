@@ -207,6 +207,15 @@ assert.match(chatSource, /kind:\s*'image',\s*url:\s*picked\.url/, "a gallery bac
 assert.doesNotMatch(chatSource, /pickInline\(\{\s*accept:\s*['"]image\/\*['"]/, "a gallery background must not go through the inline picker whose 900 KiB ceiling produced the old error");
 assert.match(chatSource, /function pickBackgroundImage[\s\S]*ui\.pickLocalImage\(/, "a gallery background must be picked through the album picker the host normalizes itself");
 assert.match(chatSource, /ui\.screenAspect\(\)/, "the background crop frame must follow the screen aspect rather than a square");
+// 相册背景的持久化三件套（业主 2026-09-27）：光有 url 不够 —— 宿主对象 URL 是**相对路径**
+// （FileStore.kt 的 objectUrl = "/__hermit/files/<id>"，与 media.objectAddress 同形），
+// 恢复成新实例后 url 仍成立，靠的是 logicalFileId 在实例域内被保留（design.md §恢复）。
+// 所以记录里必须同时留 logicalFileId，并且它要被 releaseMedia / 删对话两条清理路径认到，
+// 否则要么恢复后指向空文件，要么换一次背景就把还在用的文件删掉。
+assert.match(chatSource, /kind:\s*'image',\s*url:\s*picked\.url,\s*name:\s*picked\.name,\s*size:\s*picked\.size,\s*logicalFileId:\s*picked\.logicalFileId/, "a gallery background must keep the host file's logicalFileId, the only reference that survives a restore");
+assert.match(storeSource, /background\s*&&\s*background\.logicalFileId\)\s*usedLogical\[background\.logicalFileId\]\s*=\s*true;/, "the background host file must be registered as in-use, or releasing another message would delete a live background");
+assert.match(storeSource, /conversation\.background[\s\S]{0,220}logicalFileId:\s*conversation\.background\.logicalFileId/, "deleting a conversation must release the host file behind its background");
+assert.match(chatSource, /function releaseBackground\(background\)[\s\S]{0,300}store\.releaseMedia\(\[\{\s*logicalFileId:\s*background\.logicalFileId\s*\}\]\)[\s\S]{0,200}store\.releaseMedia\(\[\{\s*mediaId:\s*background\.mediaId\s*\}\]\)/, "replacing or clearing a gallery background must release both the new and the legacy reference");
 // 六个色板各备明亮 / 深色两套渐变, 按主题取一套。主题判断只有 app.resolvedTheme() 一处,
 // chat.js 不许自己再读 data-theme 或 prefers-color-scheme, 否则两处判断迟早走样。
 assert.match(appSource, /app\.resolvedTheme\s*=\s*resolvedTheme/, "the resolved theme must be exposed so a background can follow it");
@@ -266,8 +275,23 @@ assert.match(styles, /\.chat-chrome-hidden\s+\.topbar,\s*\.chat-chrome-hidden\s+
 assert.doesNotMatch(styles, /\.chat-chrome-hidden[^{]*\{[^}]*\b(?:display|visibility):/s, "hiding the chrome must not reflow the list or steal the layout: use opacity plus pointer-events");
 assert.match(chatSource, /function setChromeHidden\(target, hidden\)/, "the chat page needs one place that knows how the chrome is hidden");
 assert.match(chatSource, /input === document\.activeElement\) input\.blur\(\)/, "hiding the composer must drop keyboard focus with it");
-assert.match(chatSource, /layout\.addEventListener\('click'[\s\S]{0,600}?node\.closest\('button, a, input, textarea, select, label, img, \.avatar, \.message-row, \.chat-welcome'\)/, "the blank-area test must exclude the message rows themselves, not just the buttons inside them");
+// 手势是**不对称的**（业主 2026-09-27 第二轮: "点按空白隐藏 UI 控件, 改为长按空白处隐藏,
+// 恢复显示只要点击不需长按"）: 藏 = 长按 500ms, 恢复 = 轻点。原来是一点就藏 —— 滚动时手指
+// 落下的那一下、想点气泡边缘却点空的那一下都会把界面收掉。四条路径缺一不可:
+// pointerdown 起计时 / pointermove 超容差取消 / pointerup 负责恢复 / pointercancel 收尾。
+assert.match(chatSource, /var LONG_PRESS_MS = 500, PRESS_SLOP = 12/, "藏起来必须是长按: 时长与容差要写在一处");
+assert.match(chatSource, /layout\.addEventListener\('pointerdown',[\s\S]{0,700}?pressTimer = setTimeout\(function \(\) \{[\s\S]{0,120}?setChromeHidden\(target, true\); \}, LONG_PRESS_MS\)/, "长按到点才藏, 不能在 pointerdown 当场藏");
+assert.match(chatSource, /layout\.addEventListener\('pointermove',[\s\S]{0,400}?PRESS_SLOP[\s\S]{0,200}?cancelPress\(\)/, "手指挪动超过容差就当滚动, 取消长按");
+assert.match(chatSource, /layout\.addEventListener\('pointerup',[\s\S]{0,300}?if \(pending && target\.chromeHidden\) setChromeHidden\(target, false\);/, "恢复只要轻点: 抬手时若还隐着就显示回来, 且长按那一次抬手不能再切回去");
+assert.match(chatSource, /layout\.addEventListener\('pointercancel', cancelPress\)/, "手势被系统打断（多指、来电）时必须清掉计时器");
+assert.match(chatSource, /layout\.addEventListener\('contextmenu', function \(event\) \{ if \(isBlank\(event\.target\)\) event\.preventDefault\(\); \}\)/, "长按空白不该顺带弹出系统的文字选择菜单");
+assert.match(chatSource, /function isBlank\(node\) \{ return !\(node && node\.nodeType === 1 && node\.closest && node\.closest\('button, a, input, textarea, select, label, img, \.avatar, \.message-row, \.chat-welcome'\)\); \}/, "the blank-area test must exclude the message rows themselves, not just the buttons inside them");
 assert.match(chatSource, /async function close\(\) \{\s*var target = view; if \(!target\) return;[\s\S]{0,600}?setChromeHidden\(target, false\);/, "close() must clear the hidden chrome before it marks the view closed, or the next page inherits an invisible top bar");
+//   ⑤ **只对"有背景图"的对话存在**（业主 2026-09-27: "如果对话界面没有背景图片, 点击空地就不要
+//      隐藏 UI 元素"）。判据放在 setChromeHidden 里, 于是"恢复"与"清理"（传的都是 false）
+//      两条路径不受前置条件影响 —— 漏了这条, 背景图被撤掉之后就再也恢复不了控件。
+assert.match(chatSource, /function setChromeHidden\(target, hidden\) \{\s*if \(!alive\(target\)\) return;[\s\S]{0,500}?var next = Boolean\(hidden\) && hasBackgroundImage\(\);/, "沉浸模式必须以「这个对话有没有背景图」为前置条件");
+assert.match(chatSource, /function hasBackgroundImage\(\) \{ return Boolean\(appliedBackground && appliedBackground\.kind === 'image'\); \}/, "「有背景图」只认图片背景: 内置渐变不算, 那一档没有照片可看");
 // 全局毛玻璃（用户 2026-09-26：背景充满整个应用, 标题栏 / 底部栏 / 弹窗 / 卡片统一磨砂玻璃）。
 // 开关只有一处 —— <html>.has-app-background（= 最近使用的对话设了背景）。上一版那个只在对话页
 // 生效的 .has-chat-background 已经废弃, 语义不同, 任何地方都不许再出现。
@@ -626,7 +650,9 @@ assert.match(ttsSource, /function mixPercent\(raw, fallback, max\)/, "slider val
 // 所以我们如果缓存最近生成的 100 条 TTS 声音… 每次要进行朗读的任务前, 都检查一下 hash 是否存在,
 // 如果存在则直接使用已有的音频文件, 不需要再次调用 TTS 接口"。
 const ttsCacheSource = fs.readFileSync(path.join(root, "app/services/tts-cache.js"), "utf8");
-assert.match(storeSource, /"tts-cache"\]/, "the cache collection must be registered, or store.put refuses the write outright");
+// 只要求"登记过"，不要求排在最后 —— 原来的 /"tts-cache"\]/ 把"登记"和"恰好是末位"
+// 绑在了一起，以后再往白名单里加一个集合就会误报（0.7.26 加 "media" 时正是这样）。
+assert.match(storeSource, /"tts-cache"(?:\s*,|\s*\])/, "the cache collection must be registered, or store.put refuses the write outright");
 assert.match(html, /app\/services\/tts-cache\.js[\s\S]*app\/services\/tts\.js/, "the cache service must load before tts.js");
 assert.match(ttsCacheSource, /MAX_ENTRIES = 100/, "the cache holds the 100 most recent clips");
 // 键 = **最终请求**的摘要, 不是"文字 + 模型 + 音色"的字面拼接。只哈希那三样, "同句同模型同音色、
@@ -734,6 +760,268 @@ assert.ok(editableSheetDeclarations(summarySheetRule).includes("height:80%"), "t
 const summaryEditorRule = styles.match(/\.summary-sheet \.summary-edit \.prompt-editor\s*\{([^}]*)\}/s);
 assert.ok(summaryEditorRule, "the summary textarea needs its own rule");
 assert.ok(editableSheetDeclarations(summaryEditorRule).includes("height:100%"), "the summary textarea must take the remaining height");
+
+// ------------------------------------------------------------------------------------------
+// 绘图动作 + 全部用户媒体进宿主文件库（用户 2026-09-26）。这一节守的是六条"改坏了在界面上
+// 看不出来"的约束：字节有没有进备份边界、对话主 task 会不会被绘图覆写、动作块会不会漏显、
+// 图片会不会以字节塞进上下文。
+const mediaSource = fs.readFileSync(path.join(root, "app/data/media.js"), "utf8");
+const actionsSource = fs.readFileSync(path.join(root, "app/services/actions.js"), "utf8");
+const drawSource = fs.readFileSync(path.join(root, "app/services/draw.js"), "utf8");
+const drawPromptSource = fs.readFileSync(path.join(root, "app/services/draw-prompt.js"), "utf8");
+const viewerSource = fs.readFileSync(path.join(root, "app/components/image-viewer.js"), "utf8");
+
+// 1) 用户媒体必须走宿主文件库：宿主的备份边界不含 IndexedDB，只有宿主文件才能被"导出备份 →
+//    换实例恢复"带回来（logicalFileId 在实例域内保持成立）。三件套缺一个都写不进去。
+assert.match(mediaSource, /files\.beginWrite\(\{ name:[\s\S]{0,600}files\.appendBytes\(\{ writeId: writeId, chunkBase64:[\s\S]{0,300}files\.finishWrite\(\{ writeId: writeId \}\)/, "media bytes must go through the host file library (beginWrite → appendBytes → finishWrite)");
+assert.match(mediaSource, /typeof files\.beginWrite === "function" && typeof files\.appendBytes === "function" && typeof files\.finishWrite === "function"/, "the write protocol must be probed before use, so an older host degrades instead of failing");
+assert.match(mediaSource, /if \(typeof files\.abortWrite === "function"\) await files\.abortWrite\(\{ writeId: writeId \}\)/, "a half-written host file must be aborted, never left behind");
+// 唯一的例外：朗读缓存要的是内存里的 Blob（混响链走 Web Audio 的 decodeAudioData，喂不进宿主
+// 对象地址），它也本来就不进备份。这条分支被删掉，朗读缓存会直接废掉。
+assert.match(mediaSource, /if \(options\.transient === true \|\| !hostReady\(\)\)/, "transient media (the speech cache) must keep the in-database blob branch");
+assert.match(ttsCacheSource, /transient: true/, "the speech cache must mark its clips transient, otherwise every clip would be uploaded to the host");
+assert.match(ttsCacheSource, /var stored = await app\.data\.media\.get\(record\.mediaId\);[\s\S]{0,80}stored\.blob/, "the speech cache still needs the blob itself, not just a host object address");
+// 定妆照是新的用户媒体：引用必须登记进 releaseMedia，否则删角色会漏下一个宿主文件。
+assert.match(rolesSource, /portraitMediaId/, "the role portrait must be stored as a media reference");
+assert.match(storeSource, /if \(role\.portraitMediaId\) used\[role\.portraitMediaId\] = true;/, "the portrait reference must be registered with releaseMedia");
+// 定妆照控件的外观与位置（用户 2026-09-26）：和头像**同一套结构**，用户不需要学第二种选图控件；
+// 位置固定在行为指导之后 —— 上半屏保持"改称呼、改设定"的节奏，参考图跟着设定走。
+assert.match(rolesSource, /class="avatar-editor portrait-editor"><button class="avatar-picker" type="button" data-choose-portrait/, "the portrait control must reuse the avatar control's markup");
+assert.match(rolesSource, /<span data-portrait-preview><span class="avatar">[\s\S]{0,200}?<\/span><\/span><span class="avatar-edit-badge">/, "the portrait thumbnail must sit in the same .avatar box as the avatar, so the square crop comes from CSS");
+assert.match(rolesSource, /name="behaviorGuidance"[\s\S]{0,900}?portraitBlock\(\)[\s\S]{0,600}?name="enabled"/, "定妆照控件必须排在行为指导之后、启用角色之前");
+// CVP 插件地址预填默认值（用户 2026-09-26：「用户只要修改 ip 就好了」）。
+// 默认值放在编辑器初值这一层，catalog.js 的服务商预设保持空串 —— 否则清空输入框会变成
+// 「恢复默认」，validateConnection 的「请填写服务地址」守卫也就永远触发不了。
+assert.match(modelEditorSource, /var CVP_DEFAULT_ENDPOINT = "http:\/\/[^"]+";/, "the drawing card's plugin address must be prefilled from a named default");
+assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(kind\)/, "the address must resolve as saved > provider preset > CVP default");
+assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(kind\);/, "switching provider must fall back to the CVP default too");
+assert.match(storeSource, /var collections = \[[^\]]*"image-profiles"/, "the drawing-model collection must be whitelisted in store.js");
+assert.match(storeSource, /var collections = \[[^\]]*"media"/, "the host media index must be whitelisted in store.js");
+assert.match(appSource, /app\.data\.media\.migrate\(\)/, "旧图片必须在启动时搬进宿主文件库，否则它们永远进不了备份");
+// 画出来的图片进上下文时**只给一行画面描述**，不给字节、也不给地址。
+// 更要紧的是那一行的**措辞**：它进的是 assistant 的历史，模型会把它当作"我上次发图时说的话"照抄。
+// 业主 2026-09-27 的现场就是照抄的结果：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……
+// 还带文件地址 /hermit/…」。所以这里只切 drawNote 的**函数体**（它的说明注释在函数之前，所以
+// 从 `function drawNote(message) {` 往后切就全是代码），断言里面既没有那句样板、也没有地址形态。
+const drawNoteAt = llmSource.indexOf("function drawNote(message) {");
+assert.ok(drawNoteAt > 0, "找不到 drawNote()：这段门禁本身失效了，必须修好再跑");
+const drawNoteBody = llmSource.slice(drawNoteAt).split("\n  }\n")[0];
+assert.ok(drawNoteBody.length > 80 && drawNoteBody.length < 400 && !/hydrateMessages/.test(drawNoteBody), "切出来的不是 drawNote 的函数体（不是太短就是越过了边界），这条门禁本身失效了，必须修好再跑");
+assert.match(drawNoteBody, /"\[系统附注\]/, "绘图消息进上下文时必须标明是**系统附注**，不能写成模型自己说过的话");
+assert.equal(/发送了一个图片|文件地址是|__hermit\/files|objectAddress/.test(drawNoteBody), false, "系统附注里不许再出现「发送了一个图片：… / 文件地址是：… / __hermit/files/…」：那正是被模型照抄进正文的那半截");
+
+// 2) 动作块：哨兵字面量只允许出现在 actions.js 一处；流式遮罩与定稿切分各司其职。
+assert.match(actionsSource, /var SENTINEL = "<<<chataxi-action";/, "the action sentinel is defined once, in actions.js");
+// 哨兵只能出现在两处：actions.js 定义它，draw-prompt.js 把它教给模型。解析方（llm.js /
+// chat-session.js）一律引用，不许自己再写一份字面量 —— 两份写法一旦漂移就永远切不开。
+assert.equal(/<<<chataxi-action/.test(llmSource) || /<<<chataxi-action/.test(chatSessionSource), false, "只有 actions.js 与 draw-prompt.js 可以写哨兵字面量，解析方一律引用它");
+assert.match(drawPromptSource, /<<<chataxi-action/, "绘图指令必须把动作块的格式原样告诉模型");
+assert.match(llmSource, /app\.services\.actions\.visible\(partialText\(/, "流式阶段必须用 visible() 挡住动作块，否则用户会看见哨兵");
+assert.match(llmSource, /app\.services\.actions\.split\(value\.text\)/, "定稿阶段必须把正文与动作块切开");
+assert.match(llmSource, /value\.action = cut\.action \|\| null;/, "切出来的动作必须挂在返回值上交给对话层执行");
+// 提示词必须把「用文字/地址冒充图片」这条堵死（业主 2026-09-27：它一直在回
+// 「…发送了一个图片：23岁…还带文件地址 /hermit/…」）。**禁法要点名到具体写法**：
+// 只说「要画图」挡不住，因为那几句话是模型从自己的历史里学来的（样板由上面的 drawNote 门禁断掉）。
+assert.match(drawPromptSource, /没有 C。/, "判定必须写成二值的：不要画面 / 要给画面 —— 没有「用文字描述」这第三条路");
+assert.match(drawPromptSource, /正文里绝对不许出现这些写法/, "必须明文禁止「用文字/地址冒充图片」的写法，不能只说「要写动作块」");
+assert.match(drawPromptSource, /发送了一个图片/, "禁止清单要点名到「发送了一个图片：…」这一句 —— 那正是它现在会写的");
+assert.match(drawPromptSource, /\/hermit\//, "禁止清单要点名到 /hermit/… 这种地址形态");
+assert.match(drawPromptSource, /不是你自己说过的话/, "必须说明：历史里 [系统附注] 那几行是系统写的，不许照搬那个句式");
+// prompt 的写法也要教（业主 2026-09-27：「你来规划如何引导她撰写简明扼要但又高效的提示词」）。
+// 判据是「怎么把画面写准」，不是一个字数区间。
+assert.match(drawPromptSource, /信息密度比长度重要/, "必须给出「密度 > 长度」这条判据，而不是只给一个字数区间");
+assert.match(drawPromptSource, /\*\*谁在做什么\*\*[\s\S]{0,140}\*\*在哪、周围有什么\*\*[\s\S]{0,80}\*\*光与色调\*\*[\s\S]{0,80}\*\*画风\*\*/, "prompt 必须给一套四段骨架：主体动作 → 环境 → 光与色调 → 画风");
+assert.match(drawPromptSource, /具体名词压过抽象形容词/, "必须要求用具体名词：抽象形容词堆得再多也画不出东西");
+assert.match(drawPromptSource, /不写否定句/, "必须禁否定句：绘图模型对「不要 X」处理很差，否定项经常照样画出来");
+assert.match(drawPromptSource, /同一套词/, "必须要求同一个角色的容貌与穿着用同一套词，否则每张图看起来会像换了一个人");
+// 图文消息只以提示词进上下文；真正的字节只允许来自用户自己发的图片/视频。
+assert.match(llmSource, /if \(!assistant\) \{[\s\S]{0,600}output\.images\.push\(prepared\)/, "只有非助手消息才把字节交给模型；生成的图片不进");
+// 只有真的配了可用绘图卡片才教角色写动作块，否则角色会写一个永远不执行的动作。
+assert.match(llmSource, /if \(app\.services\.draw && app\.services\.drawPrompt\) drawing = await app\.services\.draw\.available\(\);[\s\S]{0,160}appliedRole\.systemPrompt \+=/, "绘图指令必须按「有没有可用卡片」注入");
+// 画幅偏好与参考图前缀（业主 2026-09-27）：9:16 竖幅、约 1MP（插件原生档 768×1344）；有定妆照时
+// 提示词开头钉一句身份约束。size 仍是枚举语义（插件按 size_domain 判，越界 unsupported_size），
+// 所以只允许在能力公布的尺寸里挑最接近的一张，不许硬写。
+assert.match(drawSource, /var PREFERRED_SIZE = \[768, 1344\];/, "画幅偏好必须是 9:16 竖幅、长边 1344（插件原生档 768×1344）");
+assert.match(drawSource, /var size = pickSize\(model, defaults\.size\), steps = Number\(defaults\.steps\);/, "画幅只能从能力公布的尺寸里挑，不能硬发一个插件不认的值");
+assert.match(drawSource, /if \(options\.referenceDataUrl && prefix\) prompt = prefix \+ "\\n" \+ prompt;/, "有参考图时提示词开头必须加上那句身份约束（只加在发给插件的那一份上）");
+assert.match(drawPromptSource, /var REFERENCE_PREFIX = "参考图1仅仅作为角色身份, 头部姿势必须图1不同, 身体姿势和构图必须按下面描述。";/, "参考图前缀必须原样保留业主给的那一句");
+assert.match(drawPromptSource, /画不画仍由你结合上下文决定/, "绘图指令必须写明：用户索要照片时由角色结合上下文自己决定画不画");
+assert.match(drawPromptSource, /自动出现在对话里/, "绘图指令必须告诉模型：图会自动发到对话里，所以别写「已经画好了」");
+// 定妆照的统一标准（业主 2026-09-27）：所有角色的定妆照都是同一个 9:16 尺寸 576×1024。
+// 9:16 是生图画幅的比例; 长边 1024 正好等于 REFERENCE_MAX_EDGE, 也就是这张图送出去之前
+// 不再被重编码一次的那条线。尺寸必须写死 —— 取景框是整数像素, 由它反算会漂零点几像素。
+assert.match(uiSource, /function cropPortrait\(source, onCropped\) \{\s*return cropPicture\(source, \{\s*aspect: 9 \/ 16, outputWidth: 576, outputHeight: 1024,/, "定妆照必须是 9:16 的 576×1024, 而且尺寸要写死, 不能跟着取景框的整数取整漂");
+assert.match(uiSource, /var width = Math\.max\(1, Math\.round\(outputWidth\)\), height = Math\.max\(1, Math\.round\(outputHeight \|\| width \/ \(frame\.width \/ frame\.height\)\)\);/, "cropPicture 必须认 outputHeight, 否则定妆照拿不到确切的 1024");
+// 参考图不能超过宿主**一条消息**的 256 KiB（协议 v1：超了整条请求以 E_QUOTA 被拒, 画不出来）。
+assert.match(drawSource, /var REFERENCE_BUDGET = 240 \* 1024;/, "参考图要先按宿主的消息预算收口, 超预算的请求是「画不出来」而不是「画差一点」");
+assert.match(drawSource, /output = canvas\.toDataURL\("image\/jpeg", quality\);[\s\S]{0,160}?if \(output\.length <= budget\) break;/, "预算要按 toDataURL 的真实串长判, 不许估算");
+// 画幅目录的快照要自愈：插件升级后不重读就会继续拿旧清单挑画幅（表现是"还是 1024×1024"）。
+assert.match(drawSource, /refreshCatalogs: refreshCatalogs,/, "绘图服务要把目录自愈暴露出去");
+assert.match(appSource, /app\.services\.draw\.refreshCatalogs\(\)\.catch\(function \(\) \{\}\);/, "启动时要静默重读一次绘图卡片目录, 不能等用户去按「重新连接并测试」");
+
+// 3) draw.js 的三条不变量：只认私有 task / 不碰 TTS / 不碰 DOM。
+//    最隐蔽的一条是 I1：network.js 的 request / requestByteStream 都会覆写 options.task.controller，
+//    把对话主 task 传进绘图请求，用户点"停止"时被 abort 的就会是绘图而不是正文。
+assert.equal(/task\.onDelta|task\.onMediaState|task\.stopPromise/.test(drawSource), false, "draw.js must only touch the private drawing task, never the conversation task's fields");
+assert.equal(/app\.services\.tts\.[A-Za-z_]+\s*\(/.test(drawSource), false, "drawing produces no speakable text and must not call the speech service");
+assert.equal(/document\.querySelector|innerHTML/.test(drawSource), false, "drawing must not touch the DOM; progress and results go back through callbacks");
+
+// 4) 绘图是分离的异步任务：占住 tasks[id] 会让用户没法说下一句，也会压住最后一条的自动朗读。
+assert.match(chatSessionSource, /var drawTasks = \{\};/, "drawing tasks must be tracked separately from reply tasks");
+assert.match(chatSessionSource, /runDraw\(id, role, completedMessage, action\)\.catch\(/, "drawing must be started as a detached task, never awaited inside the reply loop");
+// 正文为空、只带动作的那一轮：删掉文本消息，只留图片消息（模型本来一条回复就拆两条）。
+assert.match(chatSessionSource, /if \(action && !completedMessage\.text && completedMessage\.status === "done"\)[\s\S]{0,400}await store\.removeMessage\(completedMessage\)/, "an action-only turn must not leave an empty text message behind");
+// pending 必须活到落库之后：提前置空会让写库失败时留下一条永远 pending 的死消息。
+assert.match(chatSessionSource, /changed\(id, "updated", \{ message: completedMessage \}\);\s*\}\s*pending = null;/, "pending must survive the persist, so a storage failure can still mark the message retriable");
+assert.match(chatSource, /if \(message\.status === 'drawing'\)/, "the drawing placeholder must have its own render branch");
+assert.match(chatSource, /event\.phase === 'removed'/, "撤掉那条空文本消息的相位必须在界面上被处理");
+assert.match(chatSource, /if \(message\.draw\) \{[\s\S]{0,600}session\.retryDraw\(target\.conversation\.id, message\.id\)/, "图片消息的重试是重新绘制，不是再问一次模型；且会话 id 必须从 target 上取 —— messageElement 的作用域里没有 id，写成裸 id 点下去就抛 ReferenceError");
+
+// 5) 全屏看图：手势自己接管，关闭时无条件还原页面滚动。
+assert.match(chatSource, /function openImageViewer\(media, image\)[\s\S]{0,500}?app\.components\.imageViewer\.open\(\{[\s\S]{0,400}?onDownload:[\s\S]{0,200}?onSetBackground:/, "点气泡里的图片必须打开全屏看图, 并把下载 / 设为背景两个动作一起交出去");
+// 这个 for 循环里 media 与 i 都是 var（函数作用域）: 不按条捕获的话所有图片按钮都会拿到最后一条。
+assert.match(chatSource, /imageButton\.addEventListener\('click', \(function \(entry\) \{/, "图片按钮的监听器必须按条捕获 media");
+assert.equal(/html: '<img class="image-preview"/.test(chatSource), false, "看图不再借用通用弹窗");
+assert.match(viewerSource, /document\.body\.style\.overflow = previousOverflow;/, "关闭全屏看图时必须无条件还原页面滚动");
+assert.match(styles, /\.image-viewer-stage \{[^}]*touch-action: none;/, "全屏看图的舞台必须自己接管触摸，否则原生缩放会抢走手势");
+// 6) 全屏看图的基线是「高度充满」（业主 2026-09-27）：一打开图片高度就等于屏幕高，宽度按比例。
+//    连带的后果是横构图 / 方图在基线就横向溢出 —— 所以边界必须按真实溢出量算，不能再用
+//    "放大倍数 > 1" 当平移门槛；双击回到的也必须是这个基线。静态门禁只能锁写法，
+//    真正的手感要在设备上点一遍。
+assert.match(styles, /\.image-viewer-stage img \{[^}]*height: 100%; width: auto; max-width: none;/, "全屏看图的图片必须高度充满，而不是整个缩进屏幕里");
+assert.match(viewerSource, /function canPan\(\)/, "能否平移要看图片比不比屏幕大，而不是有没有放大过");
+assert.match(viewerSource, /box\.width \* scale - view\.width/, "平移边界必须按真实溢出量算");
+assert.equal(/if \(scale <= MIN_SCALE\) return;/.test(viewerSource), false, "基线下的横构图也要能拖，不能拿放大倍数当平移门槛");
+assert.match(viewerSource, /zoomAt\(scale > MIN_SCALE \? MIN_SCALE : DOUBLE_TAP_SCALE/, "双击必须回到高度充满的基线");
+// 6b) 看图这一层只剩**一条工具栏**（业主 2026-09-27 第三轮）：「下载 / 设为背景 / 关闭」三个
+//     icon-文字按钮收进一条磨砂底工具栏，右上角那个单独的关闭按钮与底部的提示词都撤掉 ——
+//     三个动作只有一处出口，不再有第二种关法。工具栏压在图片上，所以底必须是**磨砂**
+//     （纯色底会把底下的画面糊成一块死色），而且自己让开底部安全区。
+//     上一版那套「关闭按钮的反色阴影」（--viewer-halo-*：1px 深圈 + 2px 浅圈）随按钮一起作废，
+//     这里改成守工具栏本身 —— 别把断言留在已删除的选择器上，那种门禁永远不会红，等于没有。
+assert.match(viewerSource, /class="image-viewer-toolbar"[\s\S]{0,900}?data-viewer-action="download"[\s\S]{0,300}?data-viewer-action="background"[\s\S]{0,300}?data-viewer-action="close"/, "看图工具栏必须按「下载 / 设为背景 / 关闭」的次序排出来，不能只留其中一个");
+assert.match(styles, /\.image-viewer-toolbar \{[^}]*backdrop-filter: blur\(var\(--glass-blur\)\) saturate\(var\(--glass-saturate\)\)/, "看图工具栏必须是磨砂底，纯色底会把底下的画面糊死");
+// 它现在是**浮在画面上的小工具箱**（业主 2026-09-27 第三轮: "三个按钮要放到一个圆角矩形容器里面,
+// 紧凑横向排列, 一个小工具箱浮在画面上面"）: 宽度由内容决定、水平居中、圆角、自己让开底部安全区。
+// 写回 `left: 0; right: 0` 就又是铺满底边的横条 —— 那正是这一轮要改掉的样子, 所以反过来也要锁住。
+// 两条分开写而不是串成一条: 声明顺序不该被门禁锁死。
+assert.match(styles, /\.image-viewer-toolbar \{[^}]*border-radius: 18px;/, "看图工具栏必须是一个圆角浮层, 不再是铺满底边的横条");
+assert.match(styles, /\.image-viewer-toolbar \{[^}]*bottom: calc\(16px \+ var\(--safe-bottom\)\);/, "工具栏必须自己让开底部安全区, 否则会被系统手势条压住");
+assert.match(styles, /\.image-viewer-toolbar \{[^}]*left: 50%;[\s\S]{0,240}?transform: translateX\(-50%\)/, "浮层宽度由内容决定, 靠 left:50% + translateX(-50%) 居中");
+assert.doesNotMatch(styles, /\.image-viewer-toolbar \{[^}]*left: 0;/, "工具栏不许再铺满底边（left: 0; right: 0 的横条）, 那正是这一轮要改掉的样子");
+// 紧凑横排: 三个按钮等宽, 相邻之间用 margin 而不是 flex gap（老 WebView 红线）。
+assert.match(styles, /\.image-viewer-action \{[^}]*min-width: 68px;/, "三个按钮要等宽紧凑（min-width 兜住「设为背景」四个字）");
+assert.match(styles, /\.image-viewer-action \+ \.image-viewer-action \{ margin-left: 2px; \}/, "相邻按钮之间必须用 margin 拉开：老 WebView 的 flex 不吃 gap");
+// 三个动作都要有在途闸：下载要唤起宿主的选择器、设为背景要写库，连点两下会开出两个。
+assert.match(viewerSource, /if \(!handler \|\| acting\) return;/, "看图工具栏的动作必须有在途闸，连点不能重复发起");
+assert.equal(/image-viewer-close|image-viewer-caption/.test(styles + viewerSource), false, "右上角关闭按钮与底部提示词都已撤掉，不许留下残留的样式或节点");
+assert.equal(/caption/.test(viewerSource), false, "看图组件不再接受 caption，底部提示词已经去掉");
+// 「下载」= 宿主文件库的 export（系统选择器让用户自己挑保存位置，字节由宿主直写、不经过页面）。
+assert.match(chatSource, /api\.files\.export\(\{ logicalFileId: logicalFileId \}\)/, "「下载」必须走 files.export，而不是把字节在页面里转一圈");
+// 「设为背景」只登记 mediaId、不写 url：backgroundImageUrl() 见到 url 才会按取景参数算 size/position，
+// 而这里根本没有取景参数 —— 写了 url 就会被当成 1:1 的取景推一个放大的尺寸。只给 mediaId 时
+// backgroundImageUrl 返回空串，size/position 都不写，落到 CSS 的 cover / center。
+assert.match(chatSource, /saveChatBackground\(target\.conversation\.id, target, \{ kind: 'image', mediaId: media\.mediaId, name:[\s\S]{0,90}?layout: null \}, null\)/, "「设为背景」只登记 mediaId 与 layout: null，不写 url");
+// 「设为背景」必须先弹确认（业主 2026-09-27 第三轮）: 它改的是**对话设置**, 而且一设就铺满整个
+// 界面 —— 在看图时误触一次, 用户得再进对话设置里换回来。取消则什么都不写, 看图这一层照旧开着。
+// 判的是「confirm 在 saveChatBackground **之前**」, 顺序才是这条要求的全部 —— 只判 ui.confirm
+// 出现过, 一个「先写库再问」的实现也能过。
+assert.match(chatSource, /async function useMediaAsBackground\(media\)[\s\S]{0,1200}?if \(!confirmed\) return;[\s\S]{0,240}?await saveChatBackground\(target\.conversation\.id, target, \{ kind: 'image'/, "「设为背景」必须先确认、确认之后才写背景");
+// 层级也是这条要求的一半: 确认框得开在看图**上面**, 而看图是内容层 ⇒ 它必须落在弹窗之下。
+// 写死 80（比弹窗还高）的那一版会把确认框整个藏在照片背后, 代码上完全看不出来 —— 只能靠这条
+// 算出来的不等式拦住。两边都用 CSS 里读出来的数, 不是把数字再抄一遍。
+const viewerLayer = Number((styles.match(/\.image-viewer \{[^}]*z-index:\s*(\d+)/) || [])[1]);
+const dialogLayer = Number((styles.match(/\.modal-backdrop \{[^}]*z-index:\s*(\d+)/) || [])[1]);
+const subsheetLayer = Number((styles.match(/\.subsheet-backdrop \{ z-index: (\d+); \}/) || [])[1]);
+assert.ok(viewerLayer > 25, "全屏看图必须压住页面 chrome（顶栏 20 / 输入区 25），这是它下一层的判据，改层级时先读这几条");
+assert.ok(viewerLayer < dialogLayer && viewerLayer < subsheetLayer, "全屏看图必须在弹窗之下, 否则它自己的确认框会开在照片背后（这两层谁是 NaN 也会在这里失败）");
+assert.ok(dialogLayer >= 50 && subsheetLayer > dialogLayer, "弹窗层必须仍在内容层之上（普通弹窗 50 / 叠在弹窗上的一层 55）");
+// 气泡里的缩略图 2/3（业主 2026-09-27：320 → 213）；顺带与「画图中」的 216px 占位方块对齐，
+// 出图时那一条消息不会突然长高、整列跳一下。
+assert.match(styles, /\.message-image img \{ max-height: 213px; object-fit: contain; \}/, "气泡里的缩略图必须是 213px 高（原来的 2/3）");
+// 缩略图懒加载（业主 2026-09-27 第五轮：进视口才加载，加载前要有 9:16 的占位符，而且不能跳）。
+// 三处各判一半，少一处这次优化就是假的：
+//   * 消息渲染的循环里**不许**再出现 displayUrl（那正是进对话时 O(N) 次读库的来源）；
+//   * 地址解析挪进 loadThumb，并由观察器的相交回调驱动；
+//   * 占位盒写死 120×213（9:16 落在 213px 高上的宽度），否则列表照样因为它到位而跳。
+assert.match(chatSource, /function loadThumb\(button\)[\s\S]{0,700}app\.data\.media\.displayUrl\(media\)/, "图片地址必须挪到 loadThumb 里按需解析");
+assert.match(chatSource, /new IntersectionObserver\(function \(entries\)/, "必须用观察器决定什么时候去取地址");
+assert.match(chatSource, /rootMargin: LAZY_ROOT_MARGIN/, "观察器必须有提前量（rootMargin）：贴着边才取地址的话，图会一张张地空白一下");
+assert.match(chatSource, /if \(observer\) observer\.observe\(thumbs\[i\]\);\s*else loadThumb\(thumbs\[i\]\)/, "没有 IntersectionObserver 的老引擎必须退化成「立刻加载」，否则图片永远不出来");
+assert.match(chatSource, /watchThumbs\(inner\)/, "渲染完成后必须把缩略图交给观察器，否则它们永远停在占位盒上");
+assert.match(chatSource, /data-media-pending/, "占位状态必须落在 DOM 属性上，CSS 才能给出占位尺寸");
+assert.match(styles, /\.message-image\[data-media-pending\] \{ width: 120px; height: 213px; \}/, "占位盒必须是 9:16 在 213px 高下的宽度（120 = 213 × 9 ÷ 16）");
+assert.match(styles, /\.message-image\[data-media-pending\] img \{ width: 100%; height: 100%; object-fit: contain; \}/, "占位期间图片要填满占位盒，不然灰块里会露出默认的 300×150 盒子");
+// 反向判据：渲染消息的循环里不能再解析地址。循环的边界用**注释锚点**卡死（不是猜长度），
+// 并且先滤掉行注释 —— 循环内部那段说明里正引用了 displayUrl 这个名字。
+const mediaLoopAt = chatSource.indexOf("for (var i = 0; i < (message.media || []).length; i += 1) {");
+const mediaLoopEnd = chatSource.indexOf("// 绘图消息在图片下面回显提示词", mediaLoopAt);
+assert.ok(mediaLoopAt > 0 && mediaLoopEnd > mediaLoopAt, "切不出消息媒体的渲染循环：这条门禁本身失效了，必须修好再跑");
+const mediaLoop = chatSource.slice(mediaLoopAt, mediaLoopEnd).split("\n").filter(line => !/^\s*\/\//.test(line)).join("\n");
+assert.ok(mediaLoop.length > 500, "切出来的循环太短了，边界锚点已经漂了，必须修好再跑");
+assert.equal(/displayUrl/.test(mediaLoop), false, "渲染消息时不许解析图片地址（进对话要等 O(N) 次读库），地址只在进视口时取");
+// 7) 生成中那一条下面的「停止」（业主 2026-09-27：生图消息与角色消息都要有，都用来停止模型生成）。
+//    两条任务的生命周期不同，按钮必须各走各的开关：
+//      * 文本生成挂在对话的 tasks[id] 上 → session.stop(id)（顺手停自动朗读）
+//      * 绘图是**分离**的任务、不占 tasks[id] → session.cancelDraw(id)
+//    而且它们**可以同时在跑**（正文还在流式输出时上一轮的图已经在画），一个按钮不该顺手掐掉另一条。
+assert.match(chatSource, /if \(message\.status === 'pending' \|\| message\.status === 'drawing'\) \{[\s\S]{0,2000}?dataset\.stopGeneration = message\.status/, "生成中 / 绘制中的消息下面必须有停止按钮，并且按状态分派");
+assert.match(chatSource, /if \(session\.cancelDraw\(target\.conversation\.id\)\) status\(target, '正在停止绘制…'\);/, "生图消息的停止走 cancelDraw，不是 stop");
+assert.match(chatSessionSource, /function cancelDraw\(id\) \{[\s\S]{0,200}?task\.cancelled = true;[\s\S]{0,90}?task\.controller\.abort\(\);/, "cancelDraw 必须同时翻 cancelled 与 abort：只翻标志位要再等一个轮询间隔，在途请求也不会断");
+assert.match(chatSessionSource, /cancelDraw: cancelDraw,/, "cancelDraw 必须暴露给界面层，否则按钮点不动");
+// stop() 里不许出现 drawTasks。整段切出来单独看（split 的 [0] 是 "function " 前面那一段空串，
+// 所以取 [1]），避免"只要文件里出现过就算过"。
+const stopBody = chatSessionSource.slice(chatSessionSource.indexOf("function stop(id) {")).split("function ")[1].replace(/^\s*\/\/.*$/gm, "");
+assert.ok(stopBody.length > 80, "切不出 stop() 的函数体，这条门禁本身失效了，必须修好再跑");
+assert.equal(/drawTasks/.test(stopBody), false, "stop() 不许取消绘图：业主明令「action 不受对话控制，不因对话停止而终止行为」");
+assert.match(chatSessionSource, /var drawing = Boolean\(drawTasks\[id\]\);/, "对账时必须知道绘图还在跑，否则「退出对话再回来看画好没有」会把正在画的图当场判成已中断");
+assert.match(chatSessionSource, /if \(status === "drawing" && drawing\) continue;/, "正在跑的绘图不许被 recover() 判成中断");
+assert.match(chatSessionSource, /if \(!\(await store\.get\("conversations", id\)\)\) \{ await store\.releaseMedia\(message\.media\); return; \}/, "绘图可能比对话活得久：落库前必须确认对话还在，否则留下孤儿记录和没人释放的字节");
+// 用户按停止时插件那边的任务也得收 —— 否则本地已经放弃，显卡还会继续烧到画完。
+assert.match(drawSource, /if \(error && error\.cancelled\) \{[\s\S]{0,420}?jobs\/" \+ encodeURIComponent\(jobId\) \+ "\/cancel"/, "用户取消绘图时要尽力通知插件取消，不能让它把这一张画完");
+// 8) 「停止」不许有轮廓、「看图工具箱」的底要更透（业主 2026-09-27 第三 / 第四轮）。
+//    轮廓这条要在两处各扣一半，缺一处就会原样回来：
+//      * chat.js 不能再挂 ghost —— 那是唯一给它上边框的东西（.button 自己只有 1px 透明）；
+//      * app.css 的规则必须写成 .button.message-stop —— 只写 .message-stop 是 (0,1,0)，
+//        压不过 components.css 的 .button.ghost (0,2,0)，轮廓照样在。
+assert.match(chatSource, /className = 'button message-stop'/, "停止按钮不许挂 ghost：业主明令「气泡下面那个停止按钮不要有轮廓」");
+assert.match(styles, /\.button\.message-stop \{[^}]*border-color: transparent;/, "去轮廓的规则必须写成 .button.message-stop 这个等权选择器，只写 .message-stop 压不过 .button.ghost");
+// 透明度的判据是"读出来的 alpha 比原来小"，不是把新数值再抄一遍 —— 抄一遍的断言，下次改回 c4 照样绿。
+const toolbarFill = (styles.match(/\.image-viewer-toolbar \{[^}]*background: #101210([0-9a-f]{2});/) || [])[1];
+const toolbarAlpha = toolbarFill ? parseInt(toolbarFill, 16) : NaN;
+assert.ok(toolbarAlpha > 0 && toolbarAlpha < 0xc4, "看图工具箱的底色必须比原来更透明（alpha < 0xc4）；取不到数值（选择器被改名）也会在这里失败");
+
+// 手机的系统返回（含侧面滑动返回手势）只能关掉看图这一层（业主 2026-09-27）。宿主对 happ 的
+// 返回处理是 `if (canGoBack()) goBack()`，即交给 WebView 历史栈 —— 所以靠压一格同 hash 记录接住，
+// 自己关掉时又必须把那一格收回来，否则会吞掉用户的下一次返回。
+assert.match(viewerSource, /window\.addEventListener\("popstate", back\)/, "系统返回必须能关掉看图，靠 popstate 接住");
+assert.match(viewerSource, /history\.pushState\([\s\S]{0,220}chataxiImageViewer: true/, "打开看图必须压一格带标记的历史记录");
+assert.match(viewerSource, /if \(pushed && history\.state && history\.state\.chataxiImageViewer\) history\.back\(\);/, "自己关掉看图要把那一格历史收回来，否则吞掉下一次返回");
+assert.match(viewerSource, /window\.removeEventListener\("popstate", back\);/, "关闭时必须摘掉返回监听，避免自己的 history.back() 递归进来");
+// 7) 定妆照必须真的作为参考图进 CVP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
+//    字段名 `image_base64` 来自插件规范（vibedraw 的 cvp-spec.md / capabilities.py），不是自拟的。
+assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CVP 请求体");
+assert.match(chatSessionSource, /if \(action\.selfPortrait && role\.portraitMediaId\)[\s\S]{0,600}draw\.portraitReference\(role\.portraitMediaId\)/, "selfPortrait 为真时要把角色的定妆照顶上去当参考图");
+assert.match(chatSessionSource, /catch \(error\) \{ return fail\(new Error\("定妆照没能读出来/, "定妆照读不出来必须就地报错：静默当成没有参考图会画成另一张脸");
+assert.equal(/portraitReference\(role\.portraitMediaId\)[\s\S]{0,240}catch \(_\)/.test(chatSessionSource), false, "定妆照的读取失败不许被 catch (_) 吞掉");
+// 8) 提示词：模型必须把「发照片」当成「画图」（业主 2026-09-27 —— 它现在把这两件事分开了），
+//    并且画角色自己时必须把 selfPortrait 写成 true，否则 action 层带不进定妆照。
+assert.match(drawPromptSource, /「发照片」和「画图」是同一件事/, "提示词必须把「发照片」等同于画图，模型现在把两者当成两件事");
+assert.match(drawPromptSource, /\*\*必须写 true\*\*/, "提示词必须硬性要求：画角色自己时 selfPortrait 必须是 true");
+// 9) 图片消息的编辑 / 重新生成 / 删除（业主 2026-09-27）。
+//    铅笔改的是**绘图提示词**（气泡里回显的那段文字就是提示词），不是恒为空的 text；
+//    重新生成就是重新发起绘图，卡片与能力记在消息里，不必再问模型；
+//    删除在编辑弹窗底部，必须先确认 —— 而且必须 type="button"，否则点它等于提交表单（保存并关闭）。
+assert.match(chatSource, /edit\.setAttribute\('aria-label', message\.draw \? '修改绘图提示词' : '编辑这条消息'\)/, "图片消息的铅笔要说明改的是绘图提示词");
+assert.match(chatSource, /if \(message\.draw\) message\.draw\.prompt = text; else message\.text = text;/, "编辑图片消息必须落在 draw.prompt 上，不许去改恒为空的 text");
+assert.match(chatSource, /var drawing = Boolean\(original\.draw\);/, "编辑弹窗必须按「是不是图片消息」分支");
+assert.match(chatSource, /return redraw \? session\.retryDraw\(target\.conversation\.id, message\.id\) : regenerateMessage\(target, message\)/, "图片消息的重新生成按钮必须重新发起绘图");
+assert.match(chatSource, /type="button" data-delete-message>删除这条消息</, "编辑弹窗底部必须有删除入口");
+assert.match(chatSource, /ui\.confirm\(\{ title: '删除这条消息？'[\s\S]{0,260}await deleteMessage\(target, original\)/, "删除前必须先确认，确认之后才真删");
+assert.match(chatSource, /async function deleteMessage\(target, original\)/, "删除必须有单点实现，走 store.removeMessage 释放本条未引用的媒体");
+assert.match(chatSessionSource, /profileId: card \? String\(card\.profile\.id \|\| ""\) : "", modelId: card \? String\(card\.modelId \|\| ""\) : ""/, "绘图消息必须记下用了哪张卡片与哪项能力");
+assert.match(chatSessionSource, /existing\.draw && existing\.draw\.profileId \? await app\.services\.draw\.resolveCard\(/, "重新绘制必须优先用消息里记下的那张卡片");
+assert.match(drawSource, /async function resolveCard\(profileId, modelId\)/, "按记录重建绘图能力必须有单点实现");
 
 const references = [...html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
 for (const reference of references) {

@@ -520,6 +520,21 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 .message-meta { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; font-size: 11px; min-height: 32px; }
 .message-meta time { margin-right: 2px; }
 .message-meta .icon-button { width: 32px; min-height: 32px; font-size: 12px; }
+/* 正在生成 / 正在绘制那一条的「停止」（app/features/chat.js 的 messageElement，坐在 .message-meta 里）。
+   业主 2026-09-27: 「气泡下面那个停止按钮不要有轮廓」⇒ 和右边那几个 icon-button（编辑 / 重新生成 /
+   删除）一样是个**没有边框**的轻量动作；那一行里本来也只有它一个带框，看着像另一个物种。
+   **选择器必须写成 .button.message-stop**：轮廓来自 components.css 的
+   `.button.ghost { border-color: var(--border); }`，优先级是 (0,2,0)，只写 .message-stop（(0,1,0)）
+   压不过它 —— 而 app.css 在 components.css 之后加载，同权重才轮得到顺序说话。
+   chat.js 那边已经不再挂 ghost 了，这一条是防止有人把 ghost 加回来时轮廓跟着回来。
+   1px 的宽度仍由 components.css 的 `.button { border: 1px solid transparent; }` 给（只是透明），
+   所以这一行的高度与原来逐像素一致，消息完成时列表不会跳。
+   它跟着这一行的 32px 走，**不**用 .button 默认的 44px —— 消息一完成这一行就从 44 掉回 32，
+   列表会跳一下（同一个理由让 .message-draw 与 .message-image 一起对齐到 ~213px）。
+   图标与文字之间显式 gap: 0 + margin：本项目 WebView 是老 Chrome，flex 的 gap 不可靠，
+   写死 margin 才不会因为环境不同变成"图标贴着字"或"两倍间距"。 */
+.button.message-stop { gap: 0; min-height: 32px; padding: 5px 12px; border-color: transparent; font-size: 12px; }
+.button.message-stop i { margin-right: 6px; }
 .message-row.user .message-meta { justify-content: flex-end; }
 .message-row.system .message-meta { justify-content: center; }
 .context-badge { font-size: 10px; }
@@ -538,12 +553,66 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 @media (hover: hover) { .message-meta .icon-button.is-disabled:hover { background: transparent; } }
 .message-error { color: var(--danger); margin-bottom: 10px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-image { display: block; max-width: 100%; background: var(--surface-muted); border: 0; padding: 0; border-radius: 12px; overflow: hidden; margin-bottom: 10px; min-height: 44px; }
-.message-image img { max-height: 320px; object-fit: contain; }
+/* 生成图 / 相册图在气泡里的缩略图高度（业主 2026-09-27: "缩略图变小一些, 变为现在的 2/3 高度左右"）:
+   320 → 213。顺带与"画图中"的占位方块对齐 —— 那个方块本来就是 216px, 之前真图 320px 一出来列表要跳一下。 */
+.message-image img { max-height: 213px; object-fit: contain; }
+/* 缩略图的**占位盒**（业主 2026-09-27 第五轮：列表里的图片改成进视口才加载，加载前要有一个
+   9:16 的占位符，而且不能因为它到位就跳一下）。
+   120×213 就是 9:16 落在"正常高度 213px"上的宽度（213 × 9 ÷ 16 = 119.8）—— 生成图全是这个比例,
+   所以绝大多数缩略图加载前后是逐像素不动的。
+   **占位盒只能长在按钮上, 不能靠 <img> 的 width/height 属性**: 还没赋 src 的 img 没有内在比例,
+   属性只会退化成默认的 300×150 盒子, max-height 再一压就成了 2:1 —— 比加载完跳得还厉害。
+   data-media-pending 在 image.onload 里被摘掉（取不到地址时由 JS 换成一行说明）,
+   摘下之后回落到上面那条基础规则：宽度按图片自身比例算, 非 9:16 的用户照片照旧占满 213px 高。 */
+.message-image[data-media-pending] { width: 120px; height: 213px; }
+.message-image[data-media-pending] img { width: 100%; height: 100%; object-fit: contain; }
 .message-video-card { display: flex; align-items: center; gap: 0; min-width: 0; max-width: 100%; margin-bottom: 10px; padding: 10px; overflow: hidden; border-radius: 12px; background: var(--surface-muted); }
 .message-video-card > i, .message-video-card > img { margin-right: 10px; }
 .message-video-card img { width: 76px; height: 58px; flex: 0 0 76px; object-fit: cover; border-radius: 9px; }
 .message-video-card > i { flex: 0 0 auto; color: var(--accent-strong); }
 .message-video-card span, .message-video-card small { min-width: 0; overflow-wrap: anywhere; }
+/* 画图中的占位（消息 status:"drawing"）。固定 216×216 的方块占住位置，出图后原地换成真图，
+   列表不跳。这里刻意不用 aspect-ratio —— 本项目 WebView 红线是 Chrome 83（没有这个属性）。 */
+.message-draw { position: relative; display: flex; align-items: center; justify-content: center; width: 216px; max-width: 100%; height: 216px; margin-bottom: 10px; overflow: hidden; border-radius: 12px; background: var(--surface-muted); }
+.message-draw::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 60%; background: linear-gradient(90deg, transparent, var(--surface), transparent); animation: drawSweep 1.5s linear infinite; }
+@keyframes drawSweep { from { left: -60%; } to { left: 100%; } }
+.message-draw span { position: relative; z-index: 1; padding: 0 14px; color: var(--text-soft); font-size: 12px; line-height: 1.5; text-align: center; }
+/* 绘制提示词：图片下方的一行小字，让用户知道这张图是照哪句话画的。 */
+.message-caption { margin-bottom: 10px; color: var(--text-soft); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+/* 编辑消息弹窗底部的删除区（app/features/chat.js 的 editMessage）：和上面的字段拉开一段并加分隔线，
+   免得"保存"旁边就是"删除"被误触。左侧对齐、不要拉满宽 —— 它是破坏性动作，不该看着像主按钮。 */
+.message-delete { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 8px; justify-items: start; }
+.message-delete .helper { margin: 0; }
+/* 全屏看图（app/components/image-viewer.js）。fixed + 铺满整屏，纯深底让图片本身成为唯一焦点；
+   图片靠 transform 缩放平移，手势全在 JS 里（容器 touch-action: none 挡掉原生缩放）。
+   基线是「高度充满」：图片高度恒等于屏幕高、宽度按比例（业主 2026-09-27）。所以横构图或方图会
+   横向溢出屏幕 —— 那不是 bug，靠单指平移看两边；竖构图则正好铺满。
+
+   **z-index 阶梯（改这一层之前先读）**：看图是**内容层**（45），只要压住页面 chrome —— 顶栏 20、
+   输入区 25；弹窗（.modal-backdrop 50 / .subsheet-backdrop 55）与提示条（.toast-root 70）都必须在
+   它**上面**。原来这里是 80，比弹窗还高：看图里按「设为背景」弹的确认框会开在照片背后（看得见
+   才怪 —— 而代码上完全看不出问题）。所以看图自己的动作一旦需要弹窗，这一层就只能在弹窗之下。 */
+.image-viewer { position: fixed; z-index: 45; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; background: #0b0d0a; animation: sheetFade .16s ease-out; }
+.image-viewer-stage { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+.image-viewer-stage img { height: 100%; width: auto; max-width: none; max-height: 100%; transform-origin: center center; user-select: none; -webkit-user-drag: none; }
+/* 底部工具箱（业主 2026-09-27 第二轮 → 第三轮）: 三个 icon-文字按钮 —— 下载 / 设为背景 / 关闭。
+   右上角那个单独的关闭按钮与底部的提示词都已去掉, 一切动作收进这一条; 它又收进一个**圆角矩形的
+   浮层**, 紧凑横排, 像一个小工具箱浮在画面上面（不再是一条铺满底边的横条）。
+   所以宽度由内容决定（`left: 50%` + `translateX(-50%)` 居中）, 四周留边距 + 让开底部安全区。 */
+/* 磨砂底而不是纯色底: 它压在图片上, 既要让底下的画面透出来, 又不能把文字糊进照片里。磨砂参数
+   复用全应用那一组 --glass-blur / --glass-saturate（只有一处定义, 见 tokens.css）。
+   加一层投影把它从照片里"托"起来 —— 不然在浅色画面上那块玻璃边会消失。
+   业主 2026-09-27 第四轮: 「工具箱的背景更透明一些」⇒ 底色的 alpha c4(196/255 ≈ 77%) → 99(≈ 60%)。
+   再往下调就要动文字可读性了: 标签是 #f2f2ee 的 11px, 压在浅色照片上本来就靠这层深底撑着,
+   60% 是"看得见画面、又还能读字"的平衡点 —— 继续降之前先在真机上对着亮图看一眼。 */
+.image-viewer-toolbar { position: absolute; z-index: 2; left: 50%; bottom: calc(16px + var(--safe-bottom)); transform: translateX(-50%); display: flex; align-items: stretch; padding: 4px; border-radius: 18px; background: #10121099; -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); box-shadow: 0 8px 26px #00000052; }
+/* 紧凑横排: 三个按钮等宽（min-width 兜住"设为背景"四个字）, 彼此只隔 2px。
+   Chrome 83 的 flex 不吃 gap（老 WebView 红线）⇒ 相邻兄弟用 margin 拉开。 */
+.image-viewer-action { display: flex; flex: 0 0 auto; min-width: 68px; flex-direction: column; align-items: center; padding: 8px 8px 7px; border: 0; border-radius: 14px; background: transparent; color: #f2f2ee; font-size: 11px; line-height: 1; }
+.image-viewer-action + .image-viewer-action { margin-left: 2px; }
+.image-viewer-action i { margin-bottom: 6px; font-size: 17px; }
+.image-viewer-action:active { background: #ffffff26; }
+.image-viewer-action[hidden] { display: none; }
 .typing-bubble { display: flex; align-items: center; gap: 5px; height: 24px; min-width: 45px; }
 .typing-bubble span { width: 6px; height: 6px; background: var(--text); border-radius: 50%; animation: typing 1.3s infinite; }
 .typing-bubble span:nth-child(2) { animation-delay: .15s; } .typing-bubble span:nth-child(3) { animation-delay: .3s; }

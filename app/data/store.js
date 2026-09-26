@@ -2,7 +2,9 @@
   "use strict";
   var backend = "local";
   var prefix = "chataxi.v1.";
-  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "remote-media", "model-catalog", "model-directory", "tts-cache"];
+  // `media` 是 app/data/media.js 的宿主文件索引（logicalFileId / url / 元数据），不是模型卡片，
+  // 所以不进 profileCollection()。加进白名单是为了让 store.put/remove 能直接服务媒体索引。
+  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "image-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "remote-media", "model-catalog", "model-directory", "tts-cache", "media"];
   var secretFields = ["apiKey", "accessKeyId", "sessionToken", "customHeaders"];
 
   function localKey(collection, key) { return prefix + collection + "." + key; }
@@ -203,6 +205,8 @@
       var role = roles[roleIndex], changed = false;
       if (Object.prototype.hasOwnProperty.call(role, "avatarIcon")) { delete role.avatarIcon; changed = true; }
       if (Object.prototype.hasOwnProperty.call(role, "avatarColor")) { delete role.avatarColor; changed = true; }
+      // 定妆照：0.7.26 新增。老存档补空串，新角色由 roles.js 建默认值。
+      if (role.portraitMediaId == null) { role.portraitMediaId = ""; changed = true; }
       if (!role.model && role.llmProfileId) { var llm = await get("llm-profiles", role.llmProfileId); if (llm && llm.model) { role.model = llm.model; changed = true; } }
       var llmProfileKey = role.llmProfileId + "\n" + (role.model || "");
       if (singleProfileMaps.llm[llmProfileKey] && role.llmProfileId !== singleProfileMaps.llm[llmProfileKey]) { role.llmProfileId = singleProfileMaps.llm[llmProfileKey]; changed = true; }
@@ -240,7 +244,7 @@
     await put("meta", "schema", { version: 14, modelProfileMigrationVersion: 1, updatedAt: Date.now() });
   }
 
-  function profileCollection(collection) { return collection === "llm-profiles" || collection === "tts-profiles" || collection === "asr-profiles"; }
+  function profileCollection(collection) { return collection === "llm-profiles" || collection === "tts-profiles" || collection === "asr-profiles" || collection === "image-profiles"; }
   function catalogPrefix(serviceId, revision) { return serviceId + ":catalog:" + (revision ? revision + ":" : ""); }
 
   function credentialValues(value) {
@@ -319,7 +323,7 @@
 
   async function removeCredentialIfUnused(reference) {
     if (!reference) return;
-    var profileCollections = ["llm-profiles", "tts-profiles", "asr-profiles"];
+    var profileCollections = ["llm-profiles", "tts-profiles", "asr-profiles", "image-profiles"];
     for (var index = 0; index < profileCollections.length; index += 1) {
       var result = await api().scan(profileCollections[index], "");
       if ((result.items || []).some(function (item) { return item.value && item.value.credentialRef === reference; })) return;
@@ -515,7 +519,7 @@
     var references = (await list("messages")).concat(await list("drafts"));
     var used = {}, usedLogical = {};
     references.forEach(function (item) { (item.media || []).forEach(function (media) { if (media.mediaId) used[media.mediaId] = true; if (media.logicalFileId) usedLogical[media.logicalFileId] = true; }); });
-    (await list("roles")).forEach(function (role) { if (role.avatarMediaId) used[role.avatarMediaId] = true; });
+    (await list("roles")).forEach(function (role) { if (role.avatarMediaId) used[role.avatarMediaId] = true; if (role.portraitMediaId) used[role.portraitMediaId] = true; });
     (await list("conversations")).forEach(function (conversation) { if (conversation.userAvatarMediaId) used[conversation.userAvatarMediaId] = true; var background = conversation.background; if (background && background.mediaId) used[background.mediaId] = true; if (background && background.logicalFileId) usedLogical[background.logicalFileId] = true; });
     var userProfile = await get("meta", "user-profile"); if (userProfile && userProfile.avatarMediaId) used[userProfile.avatarMediaId] = true;
     for (var i = 0; i < candidates.length; i += 1) {

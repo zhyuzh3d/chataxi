@@ -38,6 +38,9 @@
     if (kind === "llm") {
       var refs = roles.filter(function (role) { return role.llmProfileId === id; });
       if (refs.length) throw new Error("仍被“" + refs.map(function (role) { return role.name; }).join("、") + "”使用，请先更换角色的对话模型");
+    } else if (kind === "image") {
+      // 绘图模型只按"第一张启用的卡片"生效（见 app/services/draw.js 的 available()），
+      // 没有角色级引用，也没有默认配置字段 ⇒ 删掉就完事，别再往 asr 的分支里落。
     } else {
       var settings = await store.get("meta", "settings");
       var field = kind === "tts" ? "defaultTtsProfileId" : "defaultAsrProfileId";
@@ -68,6 +71,7 @@
       if (llmRoles.length) throw new Error("请先更换“" + llmRoles.map(function (role) { return role.name; }).join("、") + "”的对话模型，再停用此模型");
       return;
     }
+    if (kind === "image") return;
     var settings = await store.get("meta", "settings");
     if (settings[kind === "tts" ? "defaultTtsProfileId" : "defaultAsrProfileId"] === profile.id) throw new Error("请先更换默认配置，再停用此服务");
     if (kind === "tts") {

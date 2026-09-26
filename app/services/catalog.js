@@ -369,6 +369,22 @@
     }
   ];
 
+  // ---------------------------------------------------------------- 绘图（image）
+  // 目前只有 CVP 一种合同（vibedraw 插件那套 `cvp/1`，见 vibedraw/plans/cvp-spec.md）。
+  // 这里**不内置任何模型清单**：能画什么由 `/cvp/info` 的 capabilities 自报，chataxi 只是
+  // 把每个能力映射成一张单模型卡片（卡片 = 能力，不是模型名）。理由与规范第 0 条一致 ——
+  // 插件换模型不该让客户端改代码，所以卡片认的是 `capability` 而不是 checkpoint 文件名。
+  var imageFamilies = [
+    {
+      id: "cvp", name: "CVP 绘图插件", description: "vibedraw 的 ComfyUI 插件协议：连接后由插件自报可用的绘图能力",
+      type: "cvp", protocol: "cvp", auth: "bearer", keyOptional: true, customEndpoint: true,
+      // 插件跑在局域网里，没有可用的公共默认地址。这里保持空串：本字段代表「服务商预设」，
+      // 填了它，输入框清空就会自动变回默认值，「请填写服务地址」的校验也就永远触发不了。
+      // 真正的默认地址放在 model-single-editor.js 的 CVP_DEFAULT_ENDPOINT（卡片初值那一层）。
+      endpoint: "", discovery: "cvp", models: []
+    }
+  ];
+
   app.services = app.services || {};
   app.services.catalog = {
     registryVersion: REGISTRY_VERSION,
@@ -386,6 +402,7 @@
     llmFamilies: llmFamilies,
     reviewedLlmModels: reviewedLlmModels,
     ttsFamilies: ttsFamilies,
+    imageFamilies: imageFamilies,
     asrFamilies: asrFamilies,
     apiStyles: [
       { id: "openai-responses", name: "OpenAI Responses" },

@@ -15,7 +15,10 @@
   // 存两半（用户要求"缓存的音频文件存在数据库记录中, 包含文件路径"）:
   //   - 数据库记录: 集合 `tts-cache`, 键 = 摘要, 值里只有**文件句柄**与元数据（kind / mediaId 或
   //     logicalFileId / mime / seconds / chars / createdAt / usedAt）, 不存音频本体。
-  //   - 音频本体: 走 `app.data.media`（IndexedDB 的 blob 记录）, 与消息图片、头像、对话背景同一处。
+  //   - 音频本体: 走 `app.data.media` 的 **transient** 分支（IndexedDB 的 blob 记录）。
+  //     0.7.26 起消息图片 / 头像 / 生成图都搬进了宿主文件库（为了进备份），音频缓存是**唯一例外**：
+  //     混响链要 decodeAudioData 吃内存里的 Blob，宿主文件的对象地址喂不进去，而它本来就
+  //     不在备份里 —— 所以按临时件存，不算备份资产。
   //     句柄就是记录里的 mediaId —— "记录里只有文件路径"这件事在 chataxi 里对应的是它。
   //   宿主把响应落成文件那种情况（旧 APK / 没有字节流能力）没有混响可言 —— 宿主播放器在 Web Audio
   //   总线之外出声, 而页面又 fetch 不到那个文件（happ 的 CSP 是 connect-src 'none'）。0.7.22 起
@@ -117,7 +120,10 @@
       // 返回 false 之后 synthesize 不会设 cacheOwned, 播完 disposeClip 就把宿主文件删掉, 一点不留。
       if (clip.blob) {
         // 用确定的 id（tts-cache:<hash>）而不是随机 id: 同一段音频被重复写入时是覆盖而不是再占一份。
-        var mediaRecord = await app.data.media.put(clip.blob, { id: MEDIA_PREFIX + hash, kind: "audio", mime: record.mime, name: "tts-" + hash.slice(0, 12) });
+        // transient: true ⇒ 只写 IndexedDB、**不进宿主文件库**。缓存音频是本地临时件：混响链是
+        // Web Audio 的 decodeAudioData，必须拿到内存里的 Blob，宿主文件的对象地址喂不进去；
+        // 它本来也不在备份里，搬过去换不来任何备份收益（见 app/data/media.js 顶部说明）。
+        var mediaRecord = await app.data.media.put(clip.blob, { id: MEDIA_PREFIX + hash, kind: "audio", mime: record.mime, name: "tts-" + hash.slice(0, 12), transient: true });
         record.kind = "media"; record.mediaId = mediaRecord.id;
       } else return false;
       await app.data.store.put(COLLECTION, hash, record);

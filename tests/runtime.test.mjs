@@ -22,7 +22,7 @@ function runtime(files = []) {
   ['app/core/namespace.js', 'app/core/utils.js', 'app/core/events.js', 'app/core/i18n.js', 'app/data/i18n-en.js'].forEach(load);
   const app = window.chataxi;
   app.platform = { hermit: { awaitReady: async () => false, available: () => false, api: () => null } };
-  ['app/data/store.js', 'app/services/catalog.js', 'app/services/model-registry.js', 'app/services/model-services.js', 'app/services/providers.js', 'app/services/middleware.js', 'app/services/context.js', 'app/services/llm.js', 'app/services/profiles.js', 'app/features/chat-session.js'].forEach(load);
+  ['app/data/store.js', 'app/services/catalog.js', 'app/services/model-registry.js', 'app/services/model-services.js', 'app/services/providers.js', 'app/services/middleware.js', 'app/services/context.js', 'app/services/actions.js', 'app/services/llm.js', 'app/services/profiles.js', 'app/features/chat-session.js'].forEach(load);
   app.data.media = { remove: async (id) => removedMedia.push(id), put: async () => { throw Error('no images expected'); } };
   // tts.js 会在合成前后访问朗读缓存（app/services/tts-cache.js）。它是 tts 的服务级依赖, 所以和
   // store/catalog 一样预先装载 —— 否则每个 TTS 测试都得自己把它列进 files。
@@ -1319,4 +1319,73 @@ test('the speech cache keeps the 100 most recent clips and releases both halves 
   const kept = await app.data.store.list('tts-cache');
   assert.equal(kept.some(item => item.hash === 'k0'), false); // 最久未用的先走
   assert.equal(kept.some(item => item.hash === 'k104'), true);
+});
+
+// 画幅偏好（业主 2026-09-27）：9:16 竖幅、约 1MP。规范的 size 仍是**枚举**语义 —— 插件按能力的
+// size_domain（对齐步长 + 像素预算）判，不落在它公布的 values.size 里就是 unsupported_size，
+// 所以只能在它公布的尺寸里挑最接近的一张，不能硬发 [768, 1344]。
+test('the drawing client asks for the closest 9:16 canvas the capability actually publishes', async () => {
+  const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
+  const pick = app.services.draw.pickSize, canvas = (value) => Array.from(value || []);
+  // 插件 2.3.0 的 render 在 A1X 上真实公布的枚举（照抄 /cvp/info）：原生档 768×1344 就在里面，
+  // 形状差 0、长边差 0 ⇒ 直接命中，不是"挑一张最接近的凑合"。
+  const render = [[1024,1024],[768,1344],[1344,768],[832,1152],[1152,832],[832,1216],[1216,832],[1536,640]];
+  assert.deepEqual(canvas(pick({ sizes: render })), [768,1344]);
+  const square = [[512,512],[576,576],[640,640],[704,704],[768,768],[832,832],[896,896],[960,960],[1024,1024]];
+  // 老插件只公布方形 ⇒ 形状一样远，于是按长边落到最大的一张（不会发一个插件不认的画幅）。
+  assert.deepEqual(canvas(pick({ sizes: square, defaults: { size: [512,512] } })), [1024,1024]);
+  // 只公布到 576×1024 的那一版也照样优先形状 ⇒ 自动换过去，chataxi 不改代码。
+  assert.deepEqual(canvas(pick({ sizes: square.concat([[576,1024]]) })), [576,1024]);
+  // 只有 3:4 与方形时，挑更接近 9:16 的那张竖幅。
+  assert.deepEqual(canvas(pick({ sizes: [[768,1024],[1024,1024]] }, [1024,1024])), [768,1024]);
+  // 能力没公布 sizes 时退到它自己的 defaults.size；两者都没有才是"读不到"。
+  assert.deepEqual(canvas(pick({ defaults: { size: [512,512] } }, [512,512])), [512,512]);
+  assert.equal(pick({}, null), null);
+  // 有参考图时钉在图像提示词开头的那句约束（业主指定原文，只加在发给插件的那一份上）。
+  assert.match(app.services.drawPrompt.referencePrefix, /^参考图1仅仅作为角色身份/);
+});
+
+// 定妆照必须真的作为参考图发到 CVP（业主 2026-09-27：「请仔细确认能够正确调用定妆照图片作为
+// 参考图一起发给 cvp」）。字段名 `image_base64` 与 data URL 形态都来自插件规范（vibedraw 的
+// cvp-spec.md / capabilities.py），不是自拟的。这里跑的是真实的 generate()，断的是它真正提交的
+// 请求体 —— 只看源码里有这一行不算数。
+test('a self-portrait reference really reaches the CVP request body as image_base64', async () => {
+  const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
+  const submitted = [];
+  const model = { id: 'render', sizes: [[512, 512], [1024, 1024]], defaults: { size: [1024, 1024], steps: 20, ref_strength: 0.95 }, ignores: ['negative_prompt'] };
+  app.services.modelServices = {
+    modelDefinition: () => model,
+    cvpBase: () => 'http://192.168.124.31:8189',
+    computedEndpoint: () => 'http://192.168.124.31:8189',
+    authHeaders: () => ({ Authorization: 'Bearer fixture' })
+  };
+  app.utils.parseHeaders = () => ({});
+  app.platform.network = {
+    requestJson: async (options) => {
+      if (/\/cvp\/jobs$/.test(options.url)) { submitted.push(JSON.parse(options.bodyText)); return { data: { job: { id: 'job-1' } } }; }
+      if (/\/progress$/.test(options.url)) return { data: { job: { state: 'completed', queue_position: 0 } } };
+      return { data: { job: { state: 'completed', outputs: [{ url: '/cvp/jobs/job-1/output/0', media_type: 'image/png' }] } } };
+    },
+    requestByteStream: async (options) => { options.onChunk(new Uint8Array([137, 80, 78, 71])); return { contentType: 'image/png' }; }
+  };
+  const portrait = 'data:image/jpeg;base64,AAAA', produce = (extra) => app.services.draw.generate(Object.assign({ profile: { id: 'card' }, modelId: 'render', prompt: '雨夜的旧车站' }, extra));
+
+  const produced = await produce({ referenceDataUrl: portrait });
+  assert.equal(submitted.length, 1, '一次绘图只提交一个任务');
+  const body = submitted[0];
+  assert.equal(body.image_base64, portrait, '定妆照必须原样进 image_base64');
+  assert.equal(body.capability, 'render');
+  assert.equal(body.size[0], 1024); assert.equal(body.size[1], 1024);
+  assert.equal(body.steps, 20);
+  assert.equal(body.ref_strength, 0.95, '参考强度照插件自报的默认值发');
+  assert.equal('negative_prompt' in body, false, 'ignores 里声明的字段一个都不许发');
+  assert.match(body.prompt, /^参考图1仅仅作为角色身份[\s\S]*雨夜的旧车站$/, '有参考图时提示词开头必须钉上身份约束');
+  assert.ok(produced.blob && produced.blob.size, '取回的字节要变成一张真图');
+
+  // 没有参考图时不许自己编一张出来：那会把"定妆照没读到"这件事掩盖掉。
+  //（插件侧 render.needs.image = true，缺它会 400 bad_image —— 该由上层给出可读原因。）
+  submitted.length = 0;
+  await produce({});
+  assert.equal('image_base64' in submitted[0], false, '没有参考图就不许凭空造一张');
+  assert.equal(submitted[0].prompt, '雨夜的旧车站', '没有参考图时不加那句身份约束');
 });
