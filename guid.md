@@ -16,7 +16,7 @@
 
 ```
 index.html            入口
-hermit.json           包清单（schema 2，happId com.airen.chataxi）
+hermit.json           包清单（schema 2，happId life.airen.chataxi）
 guid.md               本文件
 app/app.js            启动与装配
 app/core/             namespace / events / i18n / utils，纯逻辑不碰 DOM 与宿主

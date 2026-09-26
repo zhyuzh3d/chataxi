@@ -61,6 +61,7 @@
     var main = document.getElementById('mainContent'); main.className = 'main chat-main';
     main.innerHTML = '<section class="chat-layout"><div class="message-viewport"><div class="message-list" id="messageList" aria-label="对话消息"><div class="message-list-inner" id="messageListInner"></div></div><button type="button" class="button secondary jump-latest is-hidden" id="jumpLatest">' + ui.icon('arrow-down') + '回到最新</button></div><div class="composer"><div class="composer-inner"><div class="attachment-tray is-hidden" id="attachmentTray"></div><div class="composer-box">' + (conversation.kind === 'group' ? '<div class="composer-recipients"><span class="recipient-at" aria-label="艾特一位角色">@</span><div class="mention-strip" role="group" aria-label="选择本轮回复角色">' + participants.map(function (role) { return '<button class="chip mention-chip" type="button" data-role-toggle="' + u.escapeHtml(role.id) + '" data-moderator="' + String(role.id === moderatorRoleId(conversation)) + '" aria-pressed="' + (target.selected.indexOf(role.id) >= 0) + '" title="' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'tiny mention-avatar') + '<span class="mention-name">' + u.escapeHtml(shortRoleName(role.name)) + '</span></button>'; }).join('') + '</div><button class="auto-role-toggle" type="button" id="autoRoleToggle" role="switch" aria-checked="' + String(target.autoSelectRole) + '" aria-label="自动选择回复角色" title="自动选择回复角色">' + ui.icon('wand-magic-sparkles') + '</button></div>' : '') + '<textarea id="messageInput" rows="1" maxlength="16000" placeholder="把你的想法写在这里…" aria-label="消息内容"></textarea><div class="composer-toolbar"><div class="row composer-tools"><button class="icon-button" type="button" id="imageButton" aria-label="添加图片或视频" title="添加图片或视频">' + ui.icon('paperclip') + '</button><button class="icon-button" type="button" id="micButton" aria-label="语音输入" title="语音输入">' + ui.icon('microphone') + '</button><span class="composer-hint" id="composerHint"></span></div><button type="button" class="icon-button send-button" id="sendButton" aria-label="发送消息">' + ui.icon('arrow-up') + '</button></div></div><div class="composer-footer"><span id="composerStatus" role="status" aria-live="polite"></span><span id="draftStatus"></span></div></div></div></section>';
     ui.hydrateAvatars(main);
+    applyChatBackground(target);
     var input = document.getElementById('messageInput'); input.value = target.draft.text || '';
     resizeInput(input);
     input.addEventListener('input', function () { target.draft.text = input.value; resizeInput(input); queueDraft(target); syncComposer(target); });
@@ -570,7 +571,7 @@
   }
   async function manageChat(target) {
     var summaries = await app.services.context.list(target.conversation.id), conversation = await store.get('conversations', target.conversation.id);
-    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩概要' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="background">' + ui.icon('image') + '<span>对话背景</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩概要' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-chat-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.chatMenu; ui.closeModal();
       if (currentBusy(target) && (command === 'settings' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
@@ -582,6 +583,7 @@
         revoke(target.urls); target.urls = [];
         await renderMessages(target, true);
       } });
+      if (command === 'background') return backgroundSettings(target);
       if (command === 'voice') return voiceSettings(target);
       if (command === 'summary') return editSummaries(target);
       if (command === 'export') return app.features.conversations.exportText(conversation.id);
@@ -589,6 +591,106 @@
       if (command === 'delete' && await ui.confirm({ title: '删除对话？', message: '消息、压缩内容、草稿和未被其他对话使用的图片将从当前设备删除。', confirmText: '删除对话', danger: true })) { await close(); await store.deleteConversation(conversation.id); await app.navigate('conversations'); ui.toast('对话已删除'); }
     })); });
   }
+  // 对话背景：只作用于当前对话。内置若干张，也可以从相册选一张，或者恢复默认。
+  var chatBackgrounds = [
+    { id: 'night', name: '午夜', css: 'radial-gradient(circle at 22% 12%, rgba(122,142,255,.34), rgba(0,0,0,0) 46%), linear-gradient(160deg, #131a30 0%, #262f55 50%, #3d2f66 100%)' },
+    { id: 'dawn', name: '晨曦', css: 'radial-gradient(circle at 78% 8%, rgba(255,214,150,.55), rgba(0,0,0,0) 52%), linear-gradient(165deg, #fdf3e3 0%, #f7d9c4 46%, #e9b7a8 100%)' },
+    { id: 'forest', name: '林中', css: 'radial-gradient(circle at 18% 14%, rgba(196,232,180,.48), rgba(0,0,0,0) 50%), linear-gradient(160deg, #e8f2e2 0%, #c6ddc0 48%, #9dc0a4 100%)' },
+    { id: 'sea', name: '海雾', css: 'radial-gradient(circle at 72% 16%, rgba(200,232,245,.52), rgba(0,0,0,0) 54%), linear-gradient(160deg, #eaf4f8 0%, #c2ddec 48%, #9cc0d8 100%)' },
+    { id: 'sunset', name: '晚霞', css: 'radial-gradient(circle at 30% 82%, rgba(255,170,120,.5), rgba(0,0,0,0) 56%), linear-gradient(150deg, #ffe9d6 0%, #f7bea0 44%, #d98fb0 100%)' },
+    { id: 'paper', name: '宣纸', css: 'radial-gradient(circle at 40% 20%, rgba(255,255,255,.9), rgba(0,0,0,0) 60%), linear-gradient(160deg, #faf6ec 0%, #f2ebdc 55%, #e8dfcc 100%)' }
+  ];
+
+  // 相册图的 dataUrl 绝不能塞进对话记录：store 单条硬上限 63KB（store.js），
+  // 任何一张真实照片的 base64 都会超。走 chataxi 自己的媒体库（IndexedDB），
+  // 记录里只留 mediaId —— 与消息附件、角色头像是同一条路。
+  async function backgroundImageDataUrl(background) {
+    if (!background || background.kind !== 'image' || !background.mediaId) return '';
+    try { return await app.data.media.toDataUrl(background.mediaId) || ''; } catch (_) { return ''; }
+  }
+
+  async function backgroundStyle(background) {
+    if (!background) return '';
+    if (background.kind === 'image') { var url = await backgroundImageDataUrl(background); return url ? 'url("' + url + '")' : ''; }
+    var preset = chatBackgrounds.filter(function (item) { return item.id === background.id; })[0];
+    return preset ? preset.css : '';
+  }
+
+  // 相册图也要占一格：不占的话，选完相册再开面板 6 个色块全是未选中态，
+  // 用户看不出当前用的是哪张。
+  function backgroundImageSwatch(dataUrl) {
+    if (!dataUrl) return '';
+    return '<button class="background-swatch is-current" type="button" data-background-image="1" aria-pressed="true" title="相册图片" style="background-image:url(\'' + dataUrl + '\')"><span>相册</span></button>';
+  }
+
+  function markBackgroundCurrent(form, background) {
+    if (!form) return;
+    form.querySelectorAll('[data-background-preset]').forEach(function (button) {
+      var on = Boolean(background) && background.kind === 'preset' && background.id === button.dataset.backgroundPreset;
+      button.classList.toggle('is-current', on); button.setAttribute('aria-pressed', String(on));
+    });
+    var image = form.querySelector('[data-background-image]');
+    if (image) { var imageOn = Boolean(background) && background.kind === 'image'; image.classList.toggle('is-current', imageOn); image.setAttribute('aria-pressed', String(imageOn)); }
+  }
+
+  // 背景铺在整个对话页上（顶栏与输入区都透出背景），这样才读作"换了背景"，而不是"贴了一块色纸"。
+  async function applyChatBackground(target) {
+    var shell = document.getElementById('appShell');
+    if (!shell) return;
+    var style = await backgroundStyle(target.conversation && target.conversation.background);
+    shell.classList.toggle('has-chat-background', Boolean(style));
+    if (style) shell.style.setProperty('--chat-background', style); else shell.style.removeProperty('--chat-background');
+  }
+
+  function backgroundSwatch(item, background) {
+    var current = background && background.kind === 'preset' && background.id === item.id;
+    return '<button class="background-swatch' + (current ? ' is-current' : '') + '" type="button" data-background-preset="' + item.id + '" aria-pressed="' + String(Boolean(current)) + '" title="' + u.escapeHtml(item.name) + '" style="background-image:' + item.css + '"><span>' + u.escapeHtml(item.name) + '</span></button>';
+  }
+
+  async function saveChatBackground(target, background, form) {
+    var next = await store.get('conversations', target.conversation.id);
+    if (!next) return;
+    var previous = next.background;
+    next.background = background; next.updatedAt = Date.now();
+    await store.put('conversations', target.conversation.id, next);
+    target.conversation = next;
+    await applyChatBackground(target);
+    markBackgroundCurrent(form, background);
+    // 换掉或清掉相册图之后，旧的那张不该继续占着媒体库。
+    if (previous && previous.kind === 'image' && previous.mediaId && previous.mediaId !== (background && background.mediaId)) await store.releaseMedia([{ mediaId: previous.mediaId }]).catch(function () {});
+  }
+
+  async function backgroundSettings(target) {
+    var conversation = await store.get('conversations', target.conversation.id);
+    if (!conversation) return;
+    var form = ui.openModal({
+      title: '对话背景',
+      submitText: '完成',
+      cancelText: null,
+      html: '<div class="background-sheet"><p class="helper">只改变这个对话的背景，其他对话不受影响。</p><div class="background-grid">' + backgroundImageSwatch(await backgroundImageDataUrl(conversation.background)) + chatBackgrounds.map(function (item) { return backgroundSwatch(item, conversation.background); }).join('') + '</div><div class="menu-list"><button class="menu-item" type="button" data-background-command="pick">' + ui.icon('image') + '<span>从相册选一张</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-background-command="reset">' + ui.icon('rotate-left') + '<span>恢复默认背景</span></button></div></div>',
+      onSubmit: function () {}
+    });
+    form.querySelectorAll('[data-background-preset]').forEach(function (button) {
+      button.addEventListener('click', ui.action(function () { return saveChatBackground(target, { kind: 'preset', id: button.dataset.backgroundPreset }, form); }));
+    });
+    form.querySelector('[data-background-command="reset"]').addEventListener('click', ui.action(function () { return saveChatBackground(target, null, form); }));
+    form.querySelector('[data-background-command="pick"]').addEventListener('click', ui.action(async function () {
+      var selected = null;
+      if (app.platform.hermit.available()) selected = await app.platform.hermit.api().files.pickInline({ accept: 'image/*', maxBytes: 768 * 1024 });
+      if (!selected || selected.cancelled) return;
+      var parts = u.dataUrlToParts(selected.dataUrl);
+      if (!parts || !/^image\//i.test(parts.mime)) { ui.toast('所选文件不是有效图片'); return; }
+      var record = await app.data.media.put(u.base64ToBlob(parts.data, parts.mime), { name: selected.name || 'conversation-background.jpg', mime: parts.mime });
+      var background = { kind: 'image', mediaId: record.id, name: selected.name || '' };
+      try { await saveChatBackground(target, background, form); }
+      catch (error) { await app.data.media.remove(record.id).catch(function () {}); throw error; }
+      var grid = form.querySelector('.background-grid'), image = form.querySelector('[data-background-image]');
+      if (!image) { image = document.createElement('button'); image.type = 'button'; image.className = 'background-swatch'; image.setAttribute('data-background-image', '1'); image.innerHTML = '<span>相册</span>'; grid.insertBefore(image, grid.firstChild); }
+      image.style.backgroundImage = "url('" + (await backgroundImageDataUrl(background)) + "')";
+      markBackgroundCurrent(form, background);
+    }));
+  }
+
   async function transcribe(target, file) {
     if (!alive(target) || target.io) return;
     target.io = true; syncComposer(target); status(target, '正在识别音频…');
@@ -645,6 +747,7 @@
     if (target.speechId || target.speechStarting) await app.services.asr.cancelSystem().catch(function () {});
     await app.services.tts.stop().catch(function () {});
     if (target.job) await target.job.catch(function () {});
+    document.getElementById('appShell').classList.remove('has-chat-background');
     view = null; app.state.activeConversationId = null;
     revoke(target.urls); revoke(target.draftUrls);
     document.getElementById('imagePicker').onchange = null; document.getElementById('videoPicker').onchange = null; document.getElementById('audioPicker').onchange = null;

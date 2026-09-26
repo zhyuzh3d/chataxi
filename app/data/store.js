@@ -493,7 +493,7 @@
     var used = {}, usedLogical = {};
     references.forEach(function (item) { (item.media || []).forEach(function (media) { if (media.mediaId) used[media.mediaId] = true; if (media.logicalFileId) usedLogical[media.logicalFileId] = true; }); });
     (await list("roles")).forEach(function (role) { if (role.avatarMediaId) used[role.avatarMediaId] = true; });
-    (await list("conversations")).forEach(function (conversation) { if (conversation.userAvatarMediaId) used[conversation.userAvatarMediaId] = true; });
+    (await list("conversations")).forEach(function (conversation) { if (conversation.userAvatarMediaId) used[conversation.userAvatarMediaId] = true; if (conversation.background && conversation.background.mediaId) used[conversation.background.mediaId] = true; });
     var userProfile = await get("meta", "user-profile"); if (userProfile && userProfile.avatarMediaId) used[userProfile.avatarMediaId] = true;
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = typeof candidates[i] === "string" ? { mediaId: candidates[i] } : candidates[i] || {};
@@ -510,6 +510,7 @@
     var conversation = await get("conversations", conversationId);
     var media = (draft && draft.media || []).slice();
     if (conversation && conversation.userAvatarMediaId) media.push({ mediaId: conversation.userAvatarMediaId });
+    if (conversation && conversation.background && conversation.background.mediaId) media.push({ mediaId: conversation.background.mediaId });
     for (var i = 0; i < records.items.length; i += 1) {
       var value = records.items[i].value;
       media = media.concat(value.media || []);

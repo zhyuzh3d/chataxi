@@ -1,10 +1,11 @@
 {
   "schema": 2,
-  "happId": "com.airen.chataxi",
+  "happId": "life.airen.chataxi",
   "name": "chataxi",
+  "author": "zhyuzh",
   "version": {
-    "code": 78,
-    "name": "0.6.18"
+    "code": 79,
+    "name": "0.7.0"
   },
   "entry": "index.html",
   "routing": "hash",

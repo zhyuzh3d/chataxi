@@ -271,6 +271,15 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
 .message-viewport { min-height: 0; position: relative; }
 .message-list { height: 100%; min-height: 0; overflow-y: auto; padding: 22px max(20px, var(--safe-right)) 20px max(20px, var(--safe-left)); overflow-anchor: none; }
 .message-list-inner { width: 100%; max-width: 830px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; gap: 18px; }
+.app-shell.has-chat-background { background-image: var(--chat-background); background-size: cover; background-position: center; }
+.app-shell.has-chat-background .topbar { background: transparent; border-bottom-color: transparent; }
+.app-shell.has-chat-background .composer { background: transparent; }
+.background-sheet { display: grid; gap: 16px; }
+.background-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.background-swatch { position: relative; height: 76px; padding: 0; cursor: pointer; overflow: hidden; border: 2px solid transparent; border-radius: 12px; background-size: cover; background-position: center; }
+.background-swatch span { position: absolute; left: 8px; bottom: 6px; padding: 1px 6px; border-radius: 6px; font-size: 12px; color: #2a2a2a; background: rgba(255, 255, 255, .74); }
+.background-swatch.is-current { border-color: var(--accent, #f0c63c); }
+.background-swatch.is-current::after { content: '✓'; position: absolute; right: 6px; top: 5px; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; line-height: 18px; text-align: center; color: #fff; background: var(--accent, #f0c63c); }
 .date-divider { align-self: center; color: var(--text-faint); font-size: 11px; padding: 8px 14px; }
 .history-window-control { align-self: center; display: flex; justify-content: center; width: 100%; }
 .history-window-control .button { max-width: 100%; min-height: 40px; font-size: 12px; }
@@ -402,3 +411,16 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
   .message-bubble { padding: 12px 14px; }
 }
 @media (max-height: 520px) { .chat-open .topbar { min-height: 54px; padding-top: 5px; padding-bottom: 5px; } .chat-open .brand-copy span, .composer-hint { display: none; } .composer { padding-top: 6px; padding-bottom: max(4px, var(--safe-bottom)); } .composer textarea { max-height: 80px; min-height: 44px; } .composer-footer { min-height: 18px; padding-top: 2px; } }
+
+/* 磨砂玻璃：设了对话背景时，顶栏 / 消息气泡 / 底部输入框都变成半透明毛玻璃，浮在背景图上。
+   放在文件末尾是有意的 —— .message-bubble 等同权重选择器靠顺序取胜，排前面压不住。
+   只用标准 backdrop-filter（这台 Android 11 / Chrome 83 WebView 实测 CSS.supports 为真）；
+   万一哪个环境不支持，会退化成半透明色块，文字依然可读，不会崩。 */
+.app-shell.has-chat-background .topbar { background: var(--glass); border-bottom-color: transparent; backdrop-filter: blur(18px) saturate(1.6); }
+.app-shell.has-chat-background .composer-box { background: var(--glass); border-color: var(--glass-edge); backdrop-filter: blur(20px) saturate(1.6); }
+.app-shell.has-chat-background .composer-recipients { border-bottom-color: var(--glass-edge); }
+.app-shell.has-chat-background .message-bubble { background: var(--glass); border-color: var(--glass-edge); backdrop-filter: blur(16px) saturate(1.5); }
+.app-shell.has-chat-background .message-row.assistant .message-bubble::before { background: var(--glass); border-color: var(--glass-edge); }
+.app-shell.has-chat-background .message-row.user .message-bubble { background: var(--glass-accent); border-color: var(--glass-edge); }
+.app-shell.has-chat-background .message-row.user .message-bubble::after { background: var(--glass-accent); border-color: var(--glass-edge); }
+.app-shell.has-chat-background .message-row.system .message-bubble { background: var(--glass-muted); }

@@ -1,70 +1,122 @@
 # chataxi
 
-chataxi 是运行在 HermitApp 中的个人 AI 对话 happ。它使用纯原生 HTML、CSS、JavaScript，不依赖运行时第三方框架、npm 或编译工具。
+chataxi 是运行在 [Hermit](https://hermit.airen.life/) 宿主里的个人 AI 对话 happ。它用纯原生 HTML,CSS,JavaScript 写成,不依赖任何运行时框架,npm 或编译步骤,源文件就是可直接运行的页面。
 
-产品定位是「比 chatbox 更强大，比 chatterUI 更好用」：重心是真实的流式真人感语音和真正的多角色群聊，配置上只要粘贴 API Key 就能接通模型，模型和数据放在哪里由用户自己决定。
+产品定位是「比 chatbox 更强大,比 chatterUI 更好用」：重心是真实的流式真人感语音和真正的多角色群聊,配置上只要粘贴 API Key 就能接通模型,模型和数据放在哪里由你自己决定。
 
-## 安装与站点
+> 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://hermit.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
-chataxi 是 HermitApp 的 happ，不能脱离宿主单独安装。
+- happ id：`life.airen.chataxi`
+- 当前源码版本：`0.7.0`(versionCode `79`,见 `hermit.json`)
+- 形态：HermitApp 的普通 happ,不能脱离宿主单独安装
 
-1. 先安装 HermitApp：[下载页](https://hermit.airen.life/pages/download.html)（Android 10 及以上）。
-2. 再添加 chataxi：在[应用广场](https://hermit.airen.life/pages/happs.html)扫描 chataxi 二维码，或直接打开官方安装清单 `https://hermit.airen.life/downloads/happs/com.airen.chataxi/hermit-install.json`。
+## 特性亮点
 
-- 产品网站：<https://chataxi.airen.life/>，包含真人语音、多角色群聊、模型配置、角色模板、上手流程和推荐模型组合的完整说明。
-- happ id：`com.airen.chataxi`。数据、授权、通知和代码版本都按这个实例管理。
-- 源码仓库：<https://github.com/zhyuzh3d/chataxi>。
-- 相关 happ：VibeDraw（<https://vibedraw.airen.life/>）是同一宿主上的实时 AI 绘图应用；两者互不依赖，只做相互推荐。
+- **真人感流式语音**：Android 系统朗读与系统语音识别是默认服务,第三方走 ElevenLabs,OpenAI Speech,豆包等流式通道。OpenAI Speech,ElevenLabs HTTP Streaming 与豆包 V3 SSE 会在响应未结束时持续读取 PCM 音频,约三秒缓冲后通过已解锁的 Web Audio 队列开始播放,首片不可用时回退完整音频。
+- **真正的多角色群聊**：每轮用户发送只为选定的角色触发一次回复(不建立无界自主互聊),第一个参与角色保存为主持人并固定排在列表首位。输入区的魔法棒可让主持人先按完整上下文决定下一个发言者,预选输出不写入消息历史。
+- **一张模型卡只代表一个具体模型**：接入路径是「API Key → 获取目录 → 选择模型 → 连接测试 → 保存」。相同凭据通过本机引用复用,供应商目录单独缓存,复制模型卡可快速选择同账号下的另一个模型。
+- **多协议适配**：OpenAI Responses 是统一首选协议,Chat Completions,Anthropic Messages,Gemini GenerateContent 与 Ollama Chat 通过显式适配器转换,无法确认 system 能力的模型统一降级为带 `[角色与用户设定]` 等标记的 user 内容。
+- **可控的上下文压缩**：对话历史严格是「压缩概要 + 最近 k 条」。k 不逐对话配置——每轮从最新一条往前累加字数,刚超过设置里的「压缩保留字数」时的条数就是 k(最少 2 条),保证最新的问答始终以原文参与上下文,主持人角色在后台压缩更早的消息,不等待,不打断本轮回复。
+- **丰富的角色与场景**：27 个角色模板(全部 / 男性 / 女性 / 其他四类),人物卡展示头像,名称,职业,年龄和性别,每个对话可设「场景设定」,支持手工填写或按闲聊,思辨,学习,工作,倾诉五种模式自动生成开场白。角色有独立字段「身份性格」(`systemPrompt`)与「行为指导」(`behaviorGuidance`),互不合并。
+- **本地优先与隐私**：API Key,对话,录音,头像都留在本机 happ 的隔离数据区,密钥永远遮罩显示,只在用户明确保存后写入。外部网络请求由用户逐 Origin 授权,公网必须 HTTPS,HTTP 仅用于可信局域网。
+- **安全渲染**：默认不执行模型返回的代码,HTML,工具或链接,模型文本按纯文本安全渲染,图片只接受明确的数据 URL 或 HTTPS URL。
+- **整包备份**：系统页提供「备份软件和数据」,调用宿主 `app.backup`,把当前 happ 连同全部记录,附件和本地代码整包导出。
+- **中英双语**：界面文案随系统语言切换,新增文案必须同步补齐英文。
 
-当前源码版本号为 **0.6.18**。每张模型卡只代表一个具体模型：官方服务按“API Key → 获取目录 → 选择模型 → 连接测试 → 保存”接入，聚合平台和本地运行时再显示必要的地址与模型系列确认。相同凭据通过本机引用复用，供应商目录单独缓存；复制模型卡可以快速选择同一账号下的另一个模型，不会把多个模型塞进一张卡。模型页只负责接通，温度、最大输出、`top_p`、`top_k`、推理强度、图片生成、TTS 音色和发音参数都在角色设置中按当前具体模型的已知能力显示。
+### 界面示意
 
-密钥编辑器只提供从系统剪贴板主动粘贴和按需显隐，不再把密钥复制回剪贴板。角色、“我的”和本对话头像共用 Hermit 受控文件选取与裁切链路：裁切器直接加载宿主返回的同源对象 URL，完成、取消或失败后清理临时文件；本对话未设置专属头像时默认跟随“我的”头像，所有头像在浅色背景上保留细轮廓。
+- 所有编辑,菜单和枚举选择都使用横向铺满屏幕的底部 Sheet,不调用系统原生列表菜单。
+- 对话中的角色与用户头像均为圆形,浅黄气泡采用接近常见即时通讯的左右布局与小尖角,点角色头像打开「编辑角色」,点用户头像打开「本对话个人设定」。
+- 头像在浅色背景上保留细轮廓,未设置时显示名称首字符,名称为空时显示用户图标。
 
-创建角色时，头像信息行右侧提供“九宫格头像图＋使用模版”纵向入口；头像说明标题跟随角色名称，名称为空时显示“未命名”。画廊顶部以“全部、男性、女性、其他”四个 Tab 分类，默认显示全部 27 个模板，其余分类各 9 个。人物卡展示头像、名称、职业、年龄和性别；非人角色没有可验证的年龄和性别，因此展示角色类型与“其他”分类，不编造信息。选择后只填入头像、名称和角色提示词，不覆盖模型与声音。模板内容以 schema 2 为准，男性和女性按相同位置从 schema 1 补足职业、年龄和稳定 ID。编辑已有角色时不提供模板入口，场景设计也不进入本功能。设计边界见[0.6.5 角色模板画廊计划](plans/chataxi-v0.6.5-role-template-gallery.md)。
+> 截图位置：此处可放对话页,群聊页与模型配置页的真机截图(仓库暂未内置静态截图文件)。
 
-对话、朗读和语音输入分别经过固定的内部合同，再由供应商适配器编译为真实请求。目录结构化信息与本地精确规则优先，正则只用于保守分类；不匹配当前用途的模型不进入候选，证据不足的模型进入“未知能力”，不凭名称开启多模态或高级参数。旧版一个服务包含多个模型的数据会幂等拆分成多张单模型卡，并精确迁移角色引用、默认服务、模型和音色。具体设计、实现边界和验收要求见[0.6.0 单模型与统一中间层计划](plans/chataxi-v0.6.0-single-model-middleware-upgrade-plan-2026-09-15.md)、[模型供应商升级方案](plans/chataxi-llm-tts-upgrade-plan-2026-09-14.md)与[供应商接口资料](plans/chataxi-provider-api-reference-2026-09-14.md)。
+## 安装使用
 
-每个对话的管理菜单在“个人设定”下提供“场景设定”。弹窗固定为视口高度的 80%，可以在“手工设定”和“自动生成”间切换；自动生成在闲聊、思辨、学习、工作、倾诉中至多单选一个模式，单行关键词输入框与生成按钮并排显示。五种模式使用独立策划提示：工作、学习和思辨优先建立正式的专业议题、前提、资料与待解决问题，只简述一两句环境；闲聊和倾诉则加强具体情节、人物关系与氛围承托。主持人角色的模型会结合当前对话的个人设定和全部参与角色生成约 100 字、最多 200 字的开场白，结果只回填到同一个可编辑文本框，仍需用户保存。非空内容只在空对话首次进入时落成一条普通 `system` 开场消息；此后它和其他消息一样可编辑、进入压缩边界并最终由概要替代，不再保留独立注入通道。角色和用户设定仍在每轮重新组装且不参与压缩。OpenAI Responses、OpenAI Chat、Anthropic Messages、Gemini Interactions、Gemini GenerateContent 与 Ollama Chat 使用各自原生 system 通道；无法确认 system 能力的模型统一降级为带 `[角色与用户设定]`、`[场景设定]` 或 `[历史概要]` 标记的 user 内容。设计与开发边界见[0.6.2 场景开场白计划](plans/chataxi-v0.6.2-conversation-opening-scene.md)。
+chataxi 是 HermitApp 的 happ,**不能脱离宿主单独安装**。
 
-群聊输入区使用单行 `@` 角色条，`@` 本身没有背景；每个角色项显示小圆头像与名称，项间保留紧凑间距。每轮只能选一位角色并记住上次选择；角色较多时只有这条局部区域可以横向滚动。第一个选中的参与角色保存为主持人并固定排在角色列表首位；基础设定显示“主持”标记，群聊消息中的主持人头像显示细亮黄色圆环。输入区右侧的魔法棒开关可让主持人先按完整对话上下文输出标准角色名，再由所选角色正式回复；预选输出不写入消息历史，失败或格式错误时随机选择一位可用角色继续并显示提示。空文本艾特会保存明确的继续回答消息。每个角色收到全部参与角色设定、当前个人设定中的名称与介绍、对话共享的压缩上下文，以及摘要边界之后全部尚未压缩的完整消息。压缩后保留多少条最近消息不再逐对话配置：每轮从最新一条往前累加消息字数，刚超过设置里“压缩保留字数”（默认 4000，可设 2000–10000）时的条数就是 k，最少 2 条，保证最新一问一答始终以原文参与上下文。“触发字数”（默认 10000，可设 4000–32000）决定何时由主持人角色用自己的模型在后台压缩更早的消息，“压缩目标”（默认 1000，可设 500–2000）是压缩概要期望落到的长度；后台压缩不等待、不打断本轮回复，压缩期间在对话里显示进度，完成后冻结被压缩的历史。已有概要时可编辑或重新生成的窗口同样由 k 决定，且只由概要边界划定，改动保留字数不会重塑已经压缩的消息。编辑只保存文字；角色回复的重新生成按钮独立执行，目标回复后存在任何消息时必须先确认删除全部后续消息。
+1. 先安装 Hermit：[下载页](https://hermit.airen.life/pages/download.html)(Android 10 及以上),或到 [Releases](https://github.com/zhyuzh3d/hermitapp/releases) 取 APK。
+2. 再添加 chataxi：打开 [应用广场](https://hermit.airen.life/pages/happs.html) 找到 chataxi,扫描二维码,或复制它的官方安装清单地址(形如 `https://hermit.airen.life/downloads/happs/<happId>/hermit-install.json`,`<happId>` 以应用广场页面显示的为准),回到 Hermit 点「从网址」粘贴。产品网站 <https://chataxi.airen.life/> 也提供同一套二维码与安装地址。
 
-对话中的角色和用户头像均为圆形，浅黄色气泡采用接近常见即时通讯的左右布局与小尖角。点击气泡旁的角色头像打开“编辑角色”Sheet，点击用户头像打开“本对话个人设定”Sheet。角色完成消息下方提供独立的重新生成按钮。输入工具栏中的图片和麦克风按钮相邻并固定使用 8px 间距。右上角喇叭保存本对话的自动朗读静音状态；静音时即使通用或本对话自动朗读已开启，后续回复也不会自动发起 TTS。应用退到后台时立即暂停网页音频或停止系统朗读，回到前台后自动继续；当前播放只在用户手动切换静音时保持不中断。播放期间只把喇叭图标变为高饱和绿色，按钮背景不变；静音与未静音使用不同图标。
+## 快速上手
 
-所有编辑、菜单和枚举选择都使用横向铺满屏幕的底部 Sheet，不调用系统原生列表菜单。在角色或个人设定的编辑 Sheet 中点击头像，会直接打开系统图库并进入统一裁切界面；裁切舞台使用显式高度和运行时正方形尺寸同步，旧 Android WebView 也会显示图片、蓝色取景框与九宫格。图片可直接拖动、双指捏合或使用加减按钮缩放，短边始终覆盖方框且不能拖出空白；不支持 Pointer Events 时使用触摸和鼠标回退。没有图片时显示名称首字符，名称为空时显示用户图标。角色朗读区可以按当前配置试听固定欢迎语。不受所选服务或模型支持的参数会隐藏或禁用。设置和 Sheet 内容使用沉浸式分区，避免卡片轮廓嵌套。
+1. 打开 chataxi,进入「模型」页新建一张模型卡。
+2. 选择供应商并粘贴 API Key,点「重新连接并更新目录」获取模型目录。
+3. 挑选一个具体模型,做一次连接测试,保存。
+4. 到「角色」页创建角色：可套用角色模板(只填入头像,名称和角色提示词,不覆盖模型与声音),或手写「身份性格」与「行为指导」。
+5. 回到对话开始聊天,需要群聊时在输入区用 `@` 选择参与角色,想自动选发言者就打开魔法棒。
+6. 朗读与语音输入默认使用 Android 系统服务,可在设置里改语言,音色,语速与音调。
 
-设置分为“界面、对话、压缩、系统”四类：输入框固定 Enter 换行、Ctrl / ⌘ + Enter 发送，不再提供“按 Enter 发送”开关；压缩概要在固定为视口高度 80% 的弹窗里编辑，正文输入框吃掉说明文字之外的高度。系统页顶部提供“备份软件和数据”，调用宿主的 `app.backup`：先由系统文件选择器确定保存位置，再由 HermitApp 把当前 happ 连同全部记录、附件和本地代码整包导出，与“应用库”的单应用导出格式完全一致。chataxi 只能备份自己，宿主不接受页面指定实例。
+## 项目结构
 
-Android 系统语音识别与系统朗读是默认服务。系统朗读编辑页读取当前 Android TTS 引擎实际提供的语言和音色，并保存默认语言、音色、语速与音调；服务试听和跟随通用设置的角色复用这组默认值。系统语音输入测试直接使用系统识别的部分结果和录音电平；第三方语音输入测试使用 Hermit 录音文件上传，并显示宿主提供的真实麦克风波形。
-
-模型服务编辑页只保留一个 API Key 输入控件：已保存值显示首尾字符和中段遮罩，获得焦点后可直接编辑，粘贴新值会替换旧值，旁边提供复制按钮，不再提供单独的清除开关。新凭据可以直接保存并标记为待验证；点击“重新连接并更新目录”会用当前输入重新获取目录并验证默认组合。自定义 Header 仍逐项遮罩并可复制。完整凭据不写入页面 HTML 或日志。
-
-语言模型对话优先使用供应商原生流式协议并逐段显示。ElevenLabs 连接分别读取模型和账户音色；受限密钥没有 `models_read` 时使用与当前 Text to Speech HTTP 协议匹配的 Multilingual v2、Flash v2.5 和 Eleven v3 内置目录，只要音色读取和实际合成测试成功就可保存。服务真实返回且声明可做 TTS 的其他模型仍会动态显示。`high_quality_base_model_ids`、已验证语言和微调状态只作为质量元数据，不用于隐藏 Jane 等账户音色；Professional 音色可以直接用于 v3，界面只提示官方所述的 PVC 相似度风险，不再注入已弃用且被 v3 拒绝的 `use_pvc_as_ivc`。豆包语音使用新版控制台的单一 API Key 和 V3 SSE 接口，内置语音合成 2.0、1.0及声音复刻 2.0、1.0资源，角色选择模型资源、音色和模型支持的语速、音调、音量。
-
-对话只设置是否自动朗读，流式路径由回复角色的模型能力自动决定。OpenAI Speech、ElevenLabs HTTP Streaming 与豆包 V3 SSE 会在响应仍未结束时持续读取 PCM 音频，约三秒缓冲后通过已解锁的 Web Audio 队列开始播放；流式通道在首个音频分片前不可用时回退完整音频。ElevenLabs Multilingual v2 和 Flash v2.5 通过 TTS WebSocket 接收语言模型的完整段落，Eleven v3 通过独立的 Text-to-Dialogue WebSocket 接收段落；两者返回的音频分片直接进入同一播放队列。OpenAI 和豆包当前按完成段落分别发起请求，每段的音频响应仍会边生成边播放。Android 系统朗读继续在完整回复后调用。
-
-开发预览：
-
-```bash
-python3 tools/serve.py --port 4180
+```text
+index.html            入口
+hermit.json           包清单(schema 2,happId life.airen.chataxi)
+guid.md               写给智能体插件的短说明
+app/app.js            启动与装配
+app/core/             纯逻辑,不碰 DOM 与宿主:namespace / events / i18n / utils
+app/data/             store / i18n-en / role-templates(生成物)/ media
+app/features/         chat / conversations / roles / models / settings 等用例编排
+app/platform/         hermit.js(Bridge 唯一出口)/ network.js
+app/services/         llm / tts / asr / context(压缩)/ providers / model-registry 等
+app/components/ui.js  弹窗,Sheet,Toast,图标等通用组件
+styles/               tokens / base / components / app
 ```
 
-检查和归档：
+依赖方向固定 `core → platform → services → components → features`,只有 `platform/` 直接接触 Bridge 与网络。运行包(发布 ZIP)只包含 `index.html`,`hermit.json`,`guid.md`,`app/` 与 `styles/`,`docs/`,`plans/`,`tools/`,`tests/`,`templates/` 不进运行包。
 
-```bash
-python3 tools/check-secrets.py
-node tools/verify.mjs
-python3 tools/package.py
-python3 tools/package.py --check
+## 开发与验证
+
+本仓库使用纯原生页面,没有构建步骤。改完代码先跑自检：
+
+```sh
+node tools/verify.mjs              # 主自检:清单,引用,静态断言与纯逻辑测试
+node tools/check-i18n.mjs          # 只改文案时:中英对照检查
+python3 tools/check-secrets.py     # 提交前:确认没有凭据泄漏
 ```
 
-仓库使用 `.githooks/pre-commit` 和 `.githooks/pre-push` 在提交前扫描暂存快照、推送前扫描全部 Git 历史；扫描范围包含发布 ZIP 内的文本文件。首次克隆后运行 `git config core.hooksPath .githooks` 启用本地钩子。GitHub 仓库同时开启 Secret Scanning 与 Push Protection。真实 API Key、密码和访问令牌只能保存在用户自己的 Hermit 数据区，不能进入源码、测试夹具、文档、日志或发布包。
+本地预览与发布打包：
 
-ZIP 只是源码归档，只包含 `index.html`、`hermit.json`、`app/` 和 `styles/`。已有版本 ZIP 不能被不同内容覆盖，修改运行内容后必须递增版本。`tests/ui-flow.mjs` 使用运行包之外的 LinkeDOM 做可选 DOM 流程检查，不是浏览器视觉或真机验收。
+```sh
+python3 tools/serve.py --port 4180   # 局域网预览(在 Hermit 里用「从网址」加 http://<开发机IP>:4180/)
+python3 tools/package.py             # 生成 release/chataxi-v<版本>.zip 并同步 hermit-install.json 的路径与 sha256
+python3 tools/package.py --check     # 只校验不写入
+```
 
-在 HermitApp 中添加 `http://<开发机局域网IP>:4180/` 可使用线上实时运行；同源 `/hermit-install.json` 用于发现不可变本地 release。开发服务只适合可信局域网。普通浏览器使用独立 localStorage 预览数据，不会自动迁入 Hermit 实例。
+角色模板走生成链路：`templates/char/*.json` 是源,`app/data/role-templates.js` 与 `app/assets/role-templates/` 是生成物,用 `python3 tools/sync-role-templates.mjs` 同步,不要手改生成物。
 
-0.4.15 沿用全部已有数据。对话中的角色头像始终是“编辑角色”入口；用户头像无论显示图片、文字还是默认图标，都是“本对话个人设定”入口。对话级名称、介绍和头像分别保存，空字段分别跟随“我的”；保存后立即刷新当前对话，并从下一次回复开始使用新的名称与介绍。群聊请求把当前角色设定与其他角色参考资料分层，其他角色历史不再作为当前角色自己的 assistant 历史，并在每轮末尾加入唯一发言者路由；检测到以其他参与角色显式署名的输出时会直接拦截。当前源码通过局域网实时服务提供，未生成 0.4.15 ZIP；偶发身份行为由用户在真机自行体验。
+仓库使用 `.githooks/pre-commit` 与 `.githooks/pre-push` 在提交前扫描暂存快照,推送前扫描全部 Git 历史,扫描范围包含发布 ZIP 内的文本文件。首次克隆后运行 `git config core.hooksPath .githooks` 启用本地钩子。GitHub 仓库同时开启 Secret Scanning 与 Push Protection。
 
-0.4.16 将 N 收敛为压缩保留下限：触发压缩前，摘要边界后的所有未压缩消息始终进入角色上下文；触发时只把最近 N 条之前的消息与上次概要合并压缩，并把精确覆盖消息 ID、时间与累计数量写入新概要。群聊固定用参与角色列表中的第一位角色执行压缩。压缩模型会收到所有角色及当前用户的名称与介绍作为辨认参考，同时被明确禁止把这些资料本身写进概要。消息编辑只保存内容，不再连带生成或删除历史。
+真机热更新(需要设备开发地址与密码,见手机 Hermit 的「开发配置」)：
 
-0.4.17 增加正式应用图标。运行包使用 512×512 无损 WebP，在保留完整方形画布、黄色圆角底和原始安全边距的同时，把图标资源从约 822 KB 降至约 145 KB；清单 `icon` 字段与页面 favicon 均指向同一包内资源。图标本身为正方形，Hermit 安装处理不会裁掉任何一边，只会把完整画布等比例缩放为 192×192。
+```sh
+python3 ~/.workbuddy/skills/hermit-dev-plugin/hermit-agent.py develop-dir <目录> --quiet
+python3 ~/.workbuddy/skills/hermit-dev-plugin/hermit-agent.py update-dir  <目录> --bump patch
+```
+
+版本号需同步 `hermit.json`,`app/core/namespace.js` 与 `README.md`,修改运行内容后必须递增版本,已有版本 ZIP 不能被不同内容覆盖。
+
+## Hermit 家族
+
+**Hermit 家族 —— 一个安卓宿主 + 若干可自由改造的应用**
+
+- **Hermit**(宿主,先装这个)：<https://hermit.airen.life/> · <https://github.com/zhyuzh3d/hermitapp>
+- **chataxi**(多角色 AI 群聊)：<https://chataxi.airen.life/> · <https://github.com/zhyuzh3d/chataxi> —— **本仓库**
+- **VibeDraw**(实时 AI 绘图)：<https://vibedraw.airen.life/> · <https://github.com/zhyuzh3d/vibedraw>
+- **PoseGi**(3D 摆姿生图)：<https://posegi.airen.life/> · <https://github.com/zhyuzh3d/PoseGi>
+
+三个 happ 都必须先装 Hermit 宿主,再在[应用广场](https://hermit.airen.life/pages/happs.html)添加。chataxi 与 VibeDraw,PoseGi 互不依赖,只做相互推荐——你可以只装 chataxi,也可以用 VibeDraw 画图,用 PoseGi 摆姿后再对话。
+
+## 贡献
+
+欢迎提交 Issue 与 Pull Request。请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)：其中说明了提 Issue / 提 PR 的流程,分支与提交信息风格,如何在本地跑起来与自检,代码风格与红线,以及不要提交哪些内容(真实 API Key,令牌,录音,对话数据等)。
+
+## License
+
+本项目以 [MIT License](./LICENSE) 发布,Copyright (c) 2026 zhyuzh。
+
+## 免责与支持
+
+- chataxi 对自己的代码,服务器,账号,令牌和业务内容负责,模型费用由你使用的供应商按量计费,请自行留意。
+- 线上实时运行只允许加载你信任的代码来源——页面代码在调用时可以读取已保存的密钥。
+- 遇到问题请到 <https://github.com/zhyuzh3d/chataxi/issues> 反馈。

@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: chataxi 产品网站
+    url: https://chataxi.airen.life/
+    about: 真人语音,多角色群聊,模型配置与上手流程的完整说明。
+  - name: 在应用广场安装 chataxi
+    url: https://hermit.airen.life/pages/happs.html
+    about: 扫描二维码或复制官方安装清单地址,先装 Hermit 再添加 chataxi。
+  - name: 下载 Hermit 宿主
+    url: https://hermit.airen.life/pages/download.html
+    about: chataxi 不能脱离 Hermit 单独安装,请先装宿主。
+  - name: VibeDraw(实时 AI 绘图)
+    url: https://vibedraw.airen.life/
+    about: 同一宿主上的实时 AI 绘图应用,互不依赖,只做相互推荐。
+  - name: PoseGi(3D 摆姿生图)
+    url: https://github.com/zhyuzh3d/PoseGi
+    about: 同一宿主上的 3D 摆姿应用(官方站点规划中,暂以仓库为准)。
