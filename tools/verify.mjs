@@ -164,6 +164,13 @@ assert.match(contextSource, /function compressionRetain\(settings\)[\s\S]*compre
 assert.match(contextSource, /var retained = retainedCount\(history, settings\)[\s\S]*history\.length - retained/, "compression must cut its prefix with the derived retention window");
 assert.match(contextSource, /async function permissions\(messages, conversationId\)[\s\S]*lockedMap\[message\.id\] = true/, "frozen history must follow the summary boundary alone, not the retention setting");
 assert.match(contextSource, /async function updateSummaryText\(conversationId, text\)[\s\S]*压缩概要不能为空/, "the compression summary must stay hand-editable with an explicit empty guard");
+// 工具纪律必须并进行为指导下那一段（业主 2026-09-27 第九轮：「角色设定、行为指导、用户个人设定、场景设定等，
+// 所描述的内容都只限于对话 content 内容，不约束动作 schema 的规范，也不包括相关内容的长度约束」）。
+// 判据不是「有没有那句话」，而是**它出现在哪一段里**：段里那句「必须严格遵守」是唯一让模型让路的东西，
+// 另起一个同名段就等于把工具条款降级成一份并列的参考资料 —— 而现场失败正是模型选了角色那条（少说几句）。
+assert.match(contextSource, /function applyToRole\(role, participantRoles, userProfile, toolGuidance\)/, "applyToRole 必须接受第 4 个参数：这一轮的工具纪律");
+assert.match(contextSource, /var tool = String\(toolGuidance \|\| ""\)\.trim\(\);[\s\S]{0,140}if \(tool\) guidance = guidance \? guidance \+ "\\n" \+ tool : tool;/, "工具纪律必须并进角色行为指导的那一份文本里");
+assert.equal((contextSource.match(/prompt \+= "\\n\\n<behavior_guidance>/g) || []).length, 1, "context.js 里只许拼一次 <behavior_guidance>：工具纪律并进同一段，另起一段会把「必须严格遵守」的效力摊薄");
 const llmSource = fs.readFileSync(path.join(root, "app/services/llm.js"), "utf8");
 assert.match(llmSource, /other-role-history[\s\S]*speakerMismatch/, "other role history and mismatched speaker labels need deterministic guards");
 assert.doesNotMatch(llmSource, /compressionRole/, "compression must never be driven by the answering role");
@@ -769,6 +776,13 @@ const mediaSource = fs.readFileSync(path.join(root, "app/data/media.js"), "utf8"
 const actionsSource = fs.readFileSync(path.join(root, "app/services/actions.js"), "utf8");
 const drawSource = fs.readFileSync(path.join(root, "app/services/draw.js"), "utf8");
 const drawPromptSource = fs.readFileSync(path.join(root, "app/services/draw-prompt.js"), "utf8");
+// 提示词断言一律打在**真正喂给模型的那段话**上，而不是整文件上：这个文件的头部注释和源码在讲
+// 同一件事，同一个词（「说到就要做到」「再来一张」这类）注释里也有 —— 对整文件断言，把返回文本里
+// 的要求删掉、注释留着，门禁照样绿。所以先按 `function instruction(` 切出函数体，切不出来就直接失败。
+const instructionAt = drawPromptSource.indexOf("function instruction(hasPortrait) {");
+assert.ok(instructionAt > 0, "找不到 instruction()：这段门禁本身失效了，必须修好再跑");
+const instructionBody = drawPromptSource.slice(instructionAt).split("\n  }\n")[0];
+assert.ok(instructionBody.length > 1200 && instructionBody.length < 7000 && !/REFERENCE_PREFIX/.test(instructionBody), "切出来的不是 instruction() 的函数体（太短或越过了边界）");
 const viewerSource = fs.readFileSync(path.join(root, "app/components/image-viewer.js"), "utf8");
 
 // 1) 用户媒体必须走宿主文件库：宿主的备份边界不含 IndexedDB，只有宿主文件才能被"导出备份 →
@@ -798,46 +812,113 @@ assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value 
 assert.match(storeSource, /var collections = \[[^\]]*"image-profiles"/, "the drawing-model collection must be whitelisted in store.js");
 assert.match(storeSource, /var collections = \[[^\]]*"media"/, "the host media index must be whitelisted in store.js");
 assert.match(appSource, /app\.data\.media\.migrate\(\)/, "旧图片必须在启动时搬进宿主文件库，否则它们永远进不了备份");
-// 画出来的图片进上下文时**只给一行画面描述**，不给字节、也不给地址。
-// 更要紧的是那一行的**措辞**：它进的是 assistant 的历史，模型会把它当作"我上次发图时说的话"照抄。
-// 业主 2026-09-27 的现场就是照抄的结果：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……
-// 还带文件地址 /hermit/…」。所以这里只切 drawNote 的**函数体**（它的说明注释在函数之前，所以
-// 从 `function drawNote(message) {` 往后切就全是代码），断言里面既没有那句样板、也没有地址形态。
-const drawNoteAt = llmSource.indexOf("function drawNote(message) {");
-assert.ok(drawNoteAt > 0, "找不到 drawNote()：这段门禁本身失效了，必须修好再跑");
-const drawNoteBody = llmSource.slice(drawNoteAt).split("\n  }\n")[0];
-assert.ok(drawNoteBody.length > 80 && drawNoteBody.length < 400 && !/hydrateMessages/.test(drawNoteBody), "切出来的不是 drawNote 的函数体（不是太短就是越过了边界），这条门禁本身失效了，必须修好再跑");
-assert.match(drawNoteBody, /"\[系统附注\]/, "绘图消息进上下文时必须标明是**系统附注**，不能写成模型自己说过的话");
-assert.equal(/发送了一个图片|文件地址是|__hermit\/files|objectAddress/.test(drawNoteBody), false, "系统附注里不许再出现「发送了一个图片：… / 文件地址是：… / __hermit/files/…」：那正是被模型照抄进正文的那半截");
+// 绘图的执行结果必须以**本机程序回执**的形态进上下文（业主 2026-09-27 定稿，见 plan §⑲）。
+// 旧版那行 `[系统附注]` 是**绘图消息自己的文本、挂在 assistant 名下**，还把因果说成"你附了一张图"，
+// 实测 11 组这样的正例把模型教成了"说一句话就有图"——于是它只需要说，不需要写动作块。
+// 新回执的四条硬要求都要机械可判：
+//   ① 标明来源是**本机系统**（「要明确说明是本地系统发来的」）；
+//   ② 因果要指回**上一条消息里的动作块**，不能含糊说"已生成"；
+//   ③ **三态齐全**（成功 / 出错 / 取消）—— 只有成功留痕的话，"写了块但失败"和"根本没写块"
+//      在历史里长得一样，模型学不到区别；
+//   ④ **不给图像地址** —— 可复制的地址形态正是被抄进正文当图片的那半截。
+const receiptAt = llmSource.indexOf("function drawReceipt(message) {");
+assert.ok(receiptAt > 0, "找不到 drawReceipt()：这段门禁本身失效了，必须修好再跑");
+const receiptBody = llmSource.slice(receiptAt).split("\n  }\n")[0];
+assert.ok(receiptBody.length > 200 && receiptBody.length < 1200 && !/hydrateMessages/.test(receiptBody), "切出来的不是 drawReceipt 的函数体（不是太短就是越过了边界），这条门禁本身失效了，必须修好再跑");
+// 变异验证暴露过一处漏洞：原先只断言"函数体里出现过来源标记"，而三态是三条独立的字符串 ——
+// 去掉出错那一条的标记照样全绿。所以改成**计数**：三条都得自报来源。
+assert.equal((receiptBody.match(/\[本机系统消息\]/g) || []).length, 3, "三条回执都必须自报来源是本机系统消息（业主：「要明确说明是本地系统发来的」）：只给成功那条标，失败与取消两条就会被读成用户说的话");
+// 旧记录（v0.7.39 之前）没有 rawText。对它们发回执 = 提示词里「只有你写了动作块的回合才会有这条回执」
+// 被历史当场证伪, 而旧对话正是最容易被拿来试的地方。所以这道守卫必须留着。
+assert.match(receiptBody, /hasOwnProperty\.call\(message, "rawText"\)/, "回执只许发给「确实为那一轮留了原文」的回合：缺这道守卫, 旧对话里会出现「说了句话 → 系统说我的动作块执行了」, 比改动前更误导");
+assert.match(receiptBody, /你上一条消息里的绘图动作块/, "回执必须把因果指回**上一条消息里的动作块**，而不是含糊说「已生成」");
+assert.equal((receiptBody.match(/message\.status === "/g) || []).length, 3, "回执必须区分「正在画」「出错」「取消」三态（成功走默认分支）：少一态就等于又让一种失败在历史里沉默");
+assert.equal((receiptBody.match(/没有生成/g) || []).length, 2, "失败与取消两态必须各自明说没有生成图片：少一条, 那一态就会被读成「画好了」");
+assert.equal(/发送了一个图片|文件地址是|__hermit\/files|objectAddress/.test(receiptBody), false, "回执里不许再出现「发送了一个图片：… / 文件地址是：… / __hermit/files/…」：那正是被模型照抄进正文的那半截");
+// 回执必须以 **user 身份**紧跟在那条消息之后。不能留在 assistant 名下（模型会读成"我自己说过的话"，
+// 旧版 [系统附注] 的病根）；也不能用 system —— `providers.mapSystemMessages` 会把所有 system 消息
+// 抽出来集中拼到请求最前面，位置全丢，回执就跟它要说明的那条动作块脱开了。
+assert.match(llmSource, /role: "user", roleName: "", speakerKind: "draw-receipt"/, "回执必须用 user 身份进上下文：位置准确，且不会被 assistant 读成自己说过的话");
+assert.doesNotMatch(llmSource, /role: "system",[^}]{0,120}draw-receipt/, "回执不许用 system 身份：会被 providers 抽到请求最前面，跟它说明的动作块脱开");
+// 模型写下的**原文**（含动作块）必须原样进上下文 —— 这是它在历史里唯一的「我当初是怎么做的」样本。
+assert.match(llmSource, /value\.rawText = String\(value\.text == null \? "" : value\.text\);/, "settle 必须保留模型原文（rawText），否则历史里永远没有正例");
+assert.match(llmSource, /var raw = String\(message\.rawText \|\| message\.text \|\| ""\);/, "hydrateMessages 进上下文的必须是原文（rawText），不是切过的正文");
+// 中间那一环：`complete()` 把原文挂在 result.rawText 上, chat-session 必须把它抄进 pending 再落库。
+// 2026-09-27 实测的故障就断在这里 —— settle 与 hydrate 两头都对, 中间只抄了 text ⇒ 原文从来没进库,
+// 模型第一轮出图、第二轮起再也不写块（设备记录: 第一轮 147 token, 之后 49~65 token, rawText 字段缺席）。
+assert.match(chatSessionSource, /pending\.rawText = String\(result\.rawText == null \? result\.text : result\.rawText\);/, "落库前必须把 complete() 的 rawText 抄进 pending：少了这一行, settle 与 hydrate 两头都白改");
+assert.match(chatSessionSource, /pending\.actionBroken = Boolean\(result\.actionBroken\);/, "畸形动作块必须留下痕迹：否则「写了没解析出来」在记录里与「压根没写」完全同形, 判不出原因");
+// 正文为空的那条回复会被删掉（不留空气泡），但原文要接住 —— 否则动作块在历史里还是没载体。
+assert.match(chatSessionSource, /carryRaw = String\(completedMessage\.rawText \|\| ""\);/, "删掉空正文消息之前必须先把原文取出来");
+assert.match(chatSessionSource, /rawText: String\(rawText \|\| ""\)/, "绘图消息必须接住原文：正文为空时它是那条动作块的唯一载体");
 
 // 2) 动作块：哨兵字面量只允许出现在 actions.js 一处；流式遮罩与定稿切分各司其职。
 assert.match(actionsSource, /var SENTINEL = "<<<chataxi-action";/, "the action sentinel is defined once, in actions.js");
 // 哨兵只能出现在两处：actions.js 定义它，draw-prompt.js 把它教给模型。解析方（llm.js /
 // chat-session.js）一律引用，不许自己再写一份字面量 —— 两份写法一旦漂移就永远切不开。
 assert.equal(/<<<chataxi-action/.test(llmSource) || /<<<chataxi-action/.test(chatSessionSource), false, "只有 actions.js 与 draw-prompt.js 可以写哨兵字面量，解析方一律引用它");
-assert.match(drawPromptSource, /<<<chataxi-action/, "绘图指令必须把动作块的格式原样告诉模型");
+assert.match(instructionBody, /<<<chataxi-action/, "绘图指令必须把动作块的格式原样告诉模型");
 assert.match(llmSource, /app\.services\.actions\.visible\(partialText\(/, "流式阶段必须用 visible() 挡住动作块，否则用户会看见哨兵");
 assert.match(llmSource, /app\.services\.actions\.split\(value\.text\)/, "定稿阶段必须把正文与动作块切开");
 assert.match(llmSource, /value\.action = cut\.action \|\| null;/, "切出来的动作必须挂在返回值上交给对话层执行");
+// 编辑绘图提示词时，气泡里那行（draw.prompt）与真实进上下文的动作块（rawText 里的块）必须一起改
+// （业主 2026-09-27：「确保生图消息气泡中的提示词就是真实消息中动作块内容，修改的话保存时候同步保存」）。
+// 只改一个是"界面上是 A、模型看到的还是 B"的静默不一致，界面上看不出来。
+assert.match(actionsSource, /function retarget\(rawText, prompt\) \{/, "actions.js 必须提供改写已有动作块 prompt 的能力（编辑绘图提示词时同步用）");
+// 只替换 `"prompt": "…"` 这一个值：整块 JSON.parse → stringify 会把模型原文换成我们的拼装稿，
+// 而那份原文是它在历史里唯一的「我当初怎么写」样本（plan §⑲）。
+assert.match(actionsSource, /"prompt"\\s\*:\\s\*\)"/, "retarget 只能替换掉 prompt 这一个值，不许重新序列化整个动作块");
+assert.match(actionsSource, /return next === rest \? "" : value\.slice\(0, at\) \+ next;/, "retarget 在原文里找不到可改的块时必须返回空串，调用方据此跳过（不许伪造一个块出来）");
+assert.match(chatSource, /app\.services\.actions\.retarget\(message\.rawText, prompt\)/, "编辑时必须同步改写本条消息原文里的动作块（正文为空的那一轮，块就在它自己身上）");
+assert.match(chatSource, /app\.services\.actions\.retarget\(previous\.rawText, prompt\)/, "同轮的前一条消息（正文 + 块的那一轮）里那个块也要一起改");
+assert.match(chatSource, /previous\.replyTo !== message\.replyTo\) return extra;/, "只许改**同轮**的前一条（replyTo 相同）：不同轮的 replyTo 必然不同，越过一轮会改坏别人的块");
+assert.match(chatSource, /if \(media\[i\]\.alt\) media\[i\]\.alt = text;/, "图片的 alt 文本是这个提示词的副本，编辑时要一起改");
 // 提示词必须把「用文字/地址冒充图片」这条堵死（业主 2026-09-27：它一直在回
 // 「…发送了一个图片：23岁…还带文件地址 /hermit/…」）。**禁法要点名到具体写法**：
 // 只说「要画图」挡不住，因为那几句话是模型从自己的历史里学来的（样板由上面的 drawNote 门禁断掉）。
-assert.match(drawPromptSource, /没有 C。/, "判定必须写成二值的：不要画面 / 要给画面 —— 没有「用文字描述」这第三条路");
-assert.match(drawPromptSource, /正文里绝对不许出现这些写法/, "必须明文禁止「用文字/地址冒充图片」的写法，不能只说「要写动作块」");
-assert.match(drawPromptSource, /发送了一个图片/, "禁止清单要点名到「发送了一个图片：…」这一句 —— 那正是它现在会写的");
-assert.match(drawPromptSource, /\/hermit\//, "禁止清单要点名到 /hermit/… 这种地址形态");
-assert.match(drawPromptSource, /不是你自己说过的话/, "必须说明：历史里 [系统附注] 那几行是系统写的，不许照搬那个句式");
+assert.match(instructionBody, /没有 C。/, "判定必须写成二值的：不要画面 / 要给画面 —— 没有「用文字描述」这第三条路");
+assert.match(instructionBody, /正文里绝对不许出现这些写法/, "必须明文禁止「用文字/地址冒充图片」的写法，不能只说「要写动作块」");
+assert.match(instructionBody, /发送了一个图片/, "禁止清单要点名到「发送了一个图片：…」这一句 —— 那正是它现在会写的");
+assert.match(instructionBody, /\/hermit\//, "禁止清单要点名到 /hermit/… 这种地址形态");
+assert.match(instructionBody, /不是你自己说过的话/, "必须说明：历史里 [系统附注] 那几行是系统写的，不许照搬那个句式");
+// 历史里能看到自己写过的动作块 + 回执的含义（业主 2026-09-27 定稿，plan §⑲）。这两段是配套的：
+// 原文进上下文给了正例，提示词把因果讲清楚，模型才不会继续归纳成"说一句就有图"。
+assert.match(instructionBody, /你在历史里看得到自己以前写过的动作块/, "必须告诉模型：历史里能看到自己写过的动作块 —— 那是它的正例来源");
+assert.match(instructionBody, /别把历史里那段画面提示词抄过来当这一轮用/, "必须明确禁止照抄历史里的画面提示词：抄了就还是上一张图（已知现场）");
+assert.match(instructionBody, /本机程序给你的回执/, "必须解释那行方括号消息是**本机程序的回执**，不是用户说的、也不是它自己说的");
+assert.match(instructionBody, /只有你写了动作块的回合才会有这条回执/, "必须把因果点明：只有写了动作块才会有回执 —— 这正是它归纳错的那一环");
 // prompt 的写法也要教（业主 2026-09-27：「你来规划如何引导她撰写简明扼要但又高效的提示词」）。
 // 判据是「怎么把画面写准」，不是一个字数区间。
-assert.match(drawPromptSource, /信息密度比长度重要/, "必须给出「密度 > 长度」这条判据，而不是只给一个字数区间");
-assert.match(drawPromptSource, /\*\*谁在做什么\*\*[\s\S]{0,140}\*\*在哪、周围有什么\*\*[\s\S]{0,80}\*\*光与色调\*\*[\s\S]{0,80}\*\*画风\*\*/, "prompt 必须给一套四段骨架：主体动作 → 环境 → 光与色调 → 画风");
-assert.match(drawPromptSource, /具体名词压过抽象形容词/, "必须要求用具体名词：抽象形容词堆得再多也画不出东西");
-assert.match(drawPromptSource, /不写否定句/, "必须禁否定句：绘图模型对「不要 X」处理很差，否定项经常照样画出来");
-assert.match(drawPromptSource, /同一套词/, "必须要求同一个角色的容貌与穿着用同一套词，否则每张图看起来会像换了一个人");
+assert.match(instructionBody, /信息密度比长度重要/, "必须给出「密度 > 长度」这条判据，而不是只给一个字数区间");
+assert.match(instructionBody, /\*\*谁在做什么\*\*[\s\S]{0,140}\*\*在哪、周围有什么\*\*[\s\S]{0,80}\*\*光与色调\*\*[\s\S]{0,80}\*\*画风\*\*/, "prompt 必须给一套四段骨架：主体动作 → 环境 → 光与色调 → 画风");
+assert.match(instructionBody, /具体名词压过抽象形容词/, "必须要求用具体名词：抽象形容词堆得再多也画不出东西");
+assert.match(instructionBody, /不写否定句/, "必须禁否定句：绘图模型对「不要 X」处理很差，否定项经常照样画出来");
+assert.match(instructionBody, /同一套词/, "必须要求同一个角色的容貌与穿着用同一套词，否则每张图看起来会像换了一个人");
+// 2c) 「说到就要做到」（业主 2026-09-27 第五轮：「让它更清楚的理解和知道要调用绘图工具，而且如果说
+//     给用户看照片或自己的样子的时候，也要立即调用工具绘制来兑现自己的话」）。现场抓到的失败正是
+//     「只说不画」：用户说「再来一张」，角色回「那我再画一张……」却没有动作块 —— 连自己刚说出口的承诺
+//     都没兑现，用户什么图也收不到。所以这一版的三件事都要机械可判：
+//     ① 把动作块说明白成「调用绘图工具」本身（写块 = 按了生图按钮）；
+//     ② 承诺与动作块必须在**同一条回复**里 —— 模型没有「下一轮再补」的机会；
+//     ③ 复指要求（「再来一张」这类接着上一张说的话）与完整说法同样是一次要图。
+assert.match(instructionBody, /画图只有一个入口/, "提示词必须说清：画图只有一个入口 —— 写动作块，没有第二个入口");
+assert.match(instructionBody, /调用绘图工具/, "要把动作块说明白成「调用绘图工具」本身（业主点名要它更清楚地知道要调工具）");
+assert.match(instructionBody, /说到就要做到/, "必须写明「说到就要做到」：承诺了就必须画");
+assert.match(instructionBody, /承诺和动作块必须在同一条回复里/, "承诺与动作块必须在同一条回复里：「下一轮再补」不是允许的选项");
+assert.match(instructionBody, /立即写出来/, "业主原话是「立即调用工具绘制」，提示词里要把这个「立即」说出来");
+assert.match(instructionBody, /发出去之前自检一遍/, "必须给一条发出前的自检：这条回复里有没有要图的承诺 ⇒ 有就必须有动作块");
+assert.match(instructionBody, /一个字也不要预告/, "反方向也要堵住：这一轮不画就不许预告（「等下画给你」这类吊胃口的话）");
+assert.match(instructionBody, /「再来一张」「再画一张」/, "复指要求必须点名：接着上一张说的「再来一张 / 再画一张」同样要写动作块");
+assert.match(instructionBody, /换个姿势/, "复指清单要覆盖「换个姿势」这类变体");
+assert.match(instructionBody, /都不是不写动作块的理由/, "必须说明：上一张刚发过，不是不写动作块的理由");
 // 图文消息只以提示词进上下文；真正的字节只允许来自用户自己发的图片/视频。
 assert.match(llmSource, /if \(!assistant\) \{[\s\S]{0,600}output\.images\.push\(prepared\)/, "只有非助手消息才把字节交给模型；生成的图片不进");
 // 只有真的配了可用绘图卡片才教角色写动作块，否则角色会写一个永远不执行的动作。
-assert.match(llmSource, /if \(app\.services\.draw && app\.services\.drawPrompt\) drawing = await app\.services\.draw\.available\(\);[\s\S]{0,160}appliedRole\.systemPrompt \+=/, "绘图指令必须按「有没有可用卡片」注入");
+assert.match(llmSource, /if \(app\.services\.draw && app\.services\.drawPrompt\) drawing = await app\.services\.draw\.available\(\);/, "绘图可用性判断必须存在：没配卡片就不许教角色写动作块");
+// 顺序：先算 drawing，再 applyToRole —— 工具纪律要**并进行为指导那一段**，不能事后拼到 systemPrompt 尾巴上。
+assert.match(llmSource, /var drawing = null;[\s\S]{0,300}var appliedRole = app\.services\.context\.applyToRole\(/, "可用性判断必须排在 applyToRole 之前：工具纪律要并进行为指导那一段");
+assert.match(llmSource, /applyToRole\(role, participantRoles, userProfile,[\s\S]{0,80}behaviorGuidance\(\) : ""\)/, "能出图时必须把工具纪律作为第 4 个参数交给 applyToRole（并进 <behavior_guidance>），不许另起一段");
+assert.match(llmSource, /if \(drawing\) appliedRole\.systemPrompt \+= "\\n\\n" \+ app\.services\.drawPrompt\.instruction\(/, "绘图格式说明仍要 append 在 systemPrompt 最后：动作块写在正文之后，规则要贴着生成点");
 // 画幅偏好与参考图前缀（业主 2026-09-27）：9:16 竖幅、约 1MP（插件原生档 768×1344）；有定妆照时
 // 提示词开头钉一句身份约束。size 仍是枚举语义（插件按 size_domain 判，越界 unsupported_size），
 // 所以只允许在能力公布的尺寸里挑最接近的一张，不许硬写。
@@ -845,8 +926,38 @@ assert.match(drawSource, /var PREFERRED_SIZE = \[768, 1344\];/, "画幅偏好必
 assert.match(drawSource, /var size = pickSize\(model, defaults\.size\), steps = Number\(defaults\.steps\);/, "画幅只能从能力公布的尺寸里挑，不能硬发一个插件不认的值");
 assert.match(drawSource, /if \(options\.referenceDataUrl && prefix\) prompt = prefix \+ "\\n" \+ prompt;/, "有参考图时提示词开头必须加上那句身份约束（只加在发给插件的那一份上）");
 assert.match(drawPromptSource, /var REFERENCE_PREFIX = "参考图1仅仅作为角色身份, 头部姿势必须图1不同, 身体姿势和构图必须按下面描述。";/, "参考图前缀必须原样保留业主给的那一句");
-assert.match(drawPromptSource, /画不画仍由你结合上下文决定/, "绘图指令必须写明：用户索要照片时由角色结合上下文自己决定画不画");
-assert.match(drawPromptSource, /自动出现在对话里/, "绘图指令必须告诉模型：图会自动发到对话里，所以别写「已经画好了」");
+// 2d) 加进行为指导里的两条纪律（业主 2026-09-27 第八~十轮）。**断言必须打在函数体上**：同一批词在
+//     文件头注释里也有（注释要记录业主原话），打在整文件上会从注释里假绿 —— 把返回文本里的要求删掉、
+//     注释留着，门禁照样全绿。
+//     另有一条同源的坑：断言只能打在**被拼接成型的连续文本段**上。这个函数的文案是多行字符串拼的，
+//     若把「在同一条回复里」与「调用生图工具」拆到两个字符串里，正则就跨不过那个 `" +` 缝，
+//     断言会永远红（或永远绿）。所以关键短语必须落在同一行字符串内。
+const bgAt = drawPromptSource.indexOf("function behaviorGuidance() {");
+assert.ok(bgAt > 0, "找不到 behaviorGuidance()：这段门禁本身失效了，必须修好再跑");
+const behaviorGuidanceBody = drawPromptSource.slice(bgAt).split("\n  }")[0];
+assert.ok(behaviorGuidanceBody.length > 600 && behaviorGuidanceBody.length < 3200, "切出来的不是 behaviorGuidance() 的函数体（长度越界，切片边界失效了）");
+assert.match(drawPromptSource, /drawPrompt = \{ instruction: instruction, behaviorGuidance: behaviorGuidance, referencePrefix: REFERENCE_PREFIX \};/, "behaviorGuidance 必须导出给 llm.js 注入");
+// 第一条：边界写成**三段** —— ① 用不用 / 什么时候用归设定；② 怎么用归工具规则；③ 不计 token 代价。
+assert.match(behaviorGuidanceBody, /只能决定「要不要用工具」, 不能改「工具怎么用」/, "边界必须写成两侧：设定管「要不要用工具」，工具规则管「工具怎么用」");
+assert.match(behaviorGuidanceBody, /角色设定、这段行为指导、用户资料、场景设定/, "适用范围要点名到业主说的那几类设定（角色设定 / 行为指导 / 用户资料 / 场景设定）");
+// ① 设定对工具的正当影响必须保留 —— 业主明说设定可以让角色更积极或更消极地用工具。
+assert.match(behaviorGuidanceBody, /什么时候该给画面、该主动还是少给/, "必须保留设定的正当影响：什么时候给画面、主动还是少给确实由设定定（业主：「可以让角色更积极或更消极的使用工具」）");
+assert.doesNotMatch(behaviorGuidanceBody, /只管你的对话正文|不约束动作块/, "不许把设定与工具一刀两断：上一版「这些设定只管对话正文, 不约束动作块」把设定对工具的正当影响也一并否掉了");
+// ② 工具规则不许被设定改动。
+assert.match(behaviorGuidanceBody, /只由\*\*工具规则\*\*决定/, "怎么用必须交回给工具规则：动作块的格式、字段与位置不归设定管");
+assert.match(behaviorGuidanceBody, /上面任何设定都不许改动它/, "必须明文禁止设定改动工具规则（业主：「不能变动使用工具的规则」）");
+// ③ 不必顾虑 token 代价。
+assert.match(behaviorGuidanceBody, /不必顾虑动作块的 token 代价/, "必须说明不必顾虑动作块的 token 代价（业主：「也不用考虑使用工具的额外 token 代价」）");
+assert.match(behaviorGuidanceBody, /不占你的发言长度/, "必须说明动作块不占发言长度：它不是「多说的一句话」");
+assert.doesNotMatch(behaviorGuidanceBody, /只生成很少的几句对话|不能急于输入过多内容/, "不许在这个函数里逐条点名某个角色的具体措辞：那是照着一份行为指导的原文写的，换个角色就失效");
+// 第二条：一致性条款 —— 业主第十轮把它定性为**逻辑**问题（「表面看是诚信和履约问题, 但这是逻辑问题」）。
+assert.match(behaviorGuidanceBody, /这是逻辑问题/, "一致性条款必须定性为逻辑问题，不是态度或信用问题");
+assert.match(behaviorGuidanceBody, /同一条回复的两个面/, "要说成一件事的两个面：正文与工具调用必须一致，而不是「要讲信用」");
+assert.match(behaviorGuidanceBody, /在同一条回复里调用生图工具/, "要点名「调用生图工具」：只说「要画」挡不住它用文字糊弄");
+assert.match(behaviorGuidanceBody, /不要用别的理由把它放弃/, "必须堵住「因为别的理由放弃调用」（业主：「不能因为其他原因轻易放弃」）");
+assert.match(behaviorGuidanceBody, /不必留到下一轮/, "失败轮的关键逃生口是「下一轮再补」——必须点名堵住");
+assert.match(instructionBody, /画不画仍由你结合上下文决定/, "绘图指令必须写明：用户索要照片时由角色结合上下文自己决定画不画");
+assert.match(instructionBody, /自动出现在对话里/, "绘图指令必须告诉模型：图会自动发到对话里，所以别写「已经画好了」");
 // 定妆照的统一标准（业主 2026-09-27）：所有角色的定妆照都是同一个 9:16 尺寸 576×1024。
 // 9:16 是生图画幅的比例; 长边 1024 正好等于 REFERENCE_MAX_EDGE, 也就是这张图送出去之前
 // 不再被重编码一次的那条线。尺寸必须写死 —— 取景框是整数像素, 由它反算会漂零点几像素。
@@ -868,7 +979,15 @@ assert.equal(/document\.querySelector|innerHTML/.test(drawSource), false, "drawi
 
 // 4) 绘图是分离的异步任务：占住 tasks[id] 会让用户没法说下一句，也会压住最后一条的自动朗读。
 assert.match(chatSessionSource, /var drawTasks = \{\};/, "drawing tasks must be tracked separately from reply tasks");
-assert.match(chatSessionSource, /runDraw\(id, role, completedMessage, action\)\.catch\(/, "drawing must be started as a detached task, never awaited inside the reply loop");
+// 判据是「不 await」, 不是「参数必须正好 4 个」—— 所以按行取调用点, 分开断言两件事。
+const runDrawCallAt = chatSessionSource.indexOf("runDraw(id, role, completedMessage, action");
+assert.ok(runDrawCallAt > 0, "回复循环里必须直接调用 runDraw(id, role, completedMessage, action, …)");
+const runDrawCallLine = chatSessionSource.slice(
+  chatSessionSource.lastIndexOf("\n", runDrawCallAt) + 1,
+  chatSessionSource.indexOf("\n", runDrawCallAt)
+);
+assert.ok(!/\bawait\b/.test(runDrawCallLine), "drawing must be started as a detached task, never awaited inside the reply loop");
+assert.match(runDrawCallLine, /runDraw\(id, role, completedMessage, action, [^)]*\)\.catch\(/, "绘制任务必须挂 .catch() 兜底, 且调用后立刻交还控制权");
 // 正文为空、只带动作的那一轮：删掉文本消息，只留图片消息（模型本来一条回复就拆两条）。
 assert.match(chatSessionSource, /if \(action && !completedMessage\.text && completedMessage\.status === "done"\)[\s\S]{0,400}await store\.removeMessage\(completedMessage\)/, "an action-only turn must not leave an empty text message behind");
 // pending 必须活到落库之后：提前置空会让写库失败时留下一条永远 pending 的死消息。
@@ -878,7 +997,13 @@ assert.match(chatSource, /event\.phase === 'removed'/, "撤掉那条空文本消
 assert.match(chatSource, /if \(message\.draw\) \{[\s\S]{0,600}session\.retryDraw\(target\.conversation\.id, message\.id\)/, "图片消息的重试是重新绘制，不是再问一次模型；且会话 id 必须从 target 上取 —— messageElement 的作用域里没有 id，写成裸 id 点下去就抛 ReferenceError");
 
 // 5) 全屏看图：手势自己接管，关闭时无条件还原页面滚动。
-assert.match(chatSource, /function openImageViewer\(media, image\)[\s\S]{0,500}?app\.components\.imageViewer\.open\(\{[\s\S]{0,400}?onDownload:[\s\S]{0,200}?onSetBackground:/, "点气泡里的图片必须打开全屏看图, 并把下载 / 设为背景两个动作一起交出去");
+//    这条原来用一个 500 字符的窗口锁住"打开时把两个动作一起交出去"，第六轮在窗口里塞进了画廊
+//    清单就被撑破 —— 改成**先切出函数体再断言**：窗口是脆的（加一行注释都可能失效），函数体不是。
+const viewerAt = chatSource.indexOf("async function openImageViewer(media, image) {");
+assert.ok(viewerAt > 0, "找不到 openImageViewer：这一条门禁本身失效了，必须修好再跑");
+const viewerEnd = chatSource.indexOf("\n  async function ", viewerAt + 1);
+const openViewerBody = chatSource.slice(viewerAt, viewerEnd < 0 ? viewerAt + 2400 : viewerEnd);
+assert.match(openViewerBody, /app\.components\.imageViewer\.open\(\{[\s\S]*?onDownload:[\s\S]*?onSetBackground:/, "点气泡里的图片必须打开全屏看图, 并把下载 / 设为背景两个动作一起交出去");
 // 这个 for 循环里 media 与 i 都是 var（函数作用域）: 不按条捕获的话所有图片按钮都会拿到最后一条。
 assert.match(chatSource, /imageButton\.addEventListener\('click', \(function \(entry\) \{/, "图片按钮的监听器必须按条捕获 media");
 assert.equal(/html: '<img class="image-preview"/.test(chatSource), false, "看图不再借用通用弹窗");
@@ -991,6 +1116,20 @@ const toolbarFill = (styles.match(/\.image-viewer-toolbar \{[^}]*background: #10
 const toolbarAlpha = toolbarFill ? parseInt(toolbarFill, 16) : NaN;
 assert.ok(toolbarAlpha > 0 && toolbarAlpha < 0xc4, "看图工具箱的底色必须比原来更透明（alpha < 0xc4）；取不到数值（选择器被改名）也会在这里失败");
 
+// 9) 画图中的扫光（业主 2026-09-27 第五轮）：「改为 45 度，效果更淡更弱一些」。
+//    斜角来自 transform，淡弱来自 opacity < 1 —— 不是把 --surface 换成写死的半透明色
+//    （那样另一套主题会变成另一个效果）。两条都要机械可判。
+const sweepRule = (styles.match(/\.message-draw::after \{([^}]*)\}/) || [])[1];
+assert.ok(sweepRule, "找不到 .message-draw::after 这条规则：门禁本身失效了，必须修好再跑");
+assert.match(sweepRule, /transform: rotate\(45deg\)/, "画图中的扫光必须是 45 度的斜带");
+const sweepOpacity = Number((sweepRule.match(/opacity: ([0-9.]+);/) || [])[1]);
+assert.ok(sweepOpacity > 0 && sweepOpacity < 1, "扫光必须比原来更淡：强度写在伪元素的 opacity 上，且小于 1");
+// 反向断言：位移只能走 transform。改回 `left` 动画的话，45 度还在、斜带却会变回竖着平移，
+// 正向断言照样绿 —— 所以这里必须把「不再出现 left」也钉住。
+const sweepKeys = (styles.match(/@keyframes drawSweep \{([^\n]*)/) || [])[1] || "";
+assert.equal((sweepKeys.match(/rotate\(45deg\)/g) || []).length, 2, "扫光的起点与终点都要带 45 度，否则动画过程中会被拉回竖直");
+assert.equal(/left:/.test(sweepKeys), false, "扫光的位移不许再用 left（布局属性）：斜带是靠 transform 平移的，改回去就退回竖带平移");
+
 // 手机的系统返回（含侧面滑动返回手势）只能关掉看图这一层（业主 2026-09-27）。宿主对 happ 的
 // 返回处理是 `if (canGoBack()) goBack()`，即交给 WebView 历史栈 —— 所以靠压一格同 hash 记录接住，
 // 自己关掉时又必须把那一格收回来，否则会吞掉用户的下一次返回。
@@ -998,6 +1137,53 @@ assert.match(viewerSource, /window\.addEventListener\("popstate", back\)/, "系�
 assert.match(viewerSource, /history\.pushState\([\s\S]{0,220}chataxiImageViewer: true/, "打开看图必须压一格带标记的历史记录");
 assert.match(viewerSource, /if \(pushed && history\.state && history\.state\.chataxiImageViewer\) history\.back\(\);/, "自己关掉看图要把那一格历史收回来，否则吞掉下一次返回");
 assert.match(viewerSource, /window\.removeEventListener\("popstate", back\);/, "关闭时必须摘掉返回监听，避免自己的 history.back() 递归进来");
+
+// 10) 看图里的画廊（业主 2026-09-27 第六轮）：底部菜单**最左边**加「画廊」按钮，点开从屏幕左侧
+//     推出一条圆角侧栏（左边两角是直角），列出这一组图片的缩略小图，点一张就换着看。同一条需求里
+//     还有两件事：**点画面一下改成切换控件显隐**（不再关掉看图）、**未放大时上下滑动换前后一张**。
+//     三件事都发生在同一块画面上、互相咬合，所以每一条都得连同"不许退回旧行为"一起钉住。
+assert.match(viewerSource, /class="image-viewer-toolbar"[\s\S]{0,900}?data-viewer-action="gallery"[\s\S]{0,300}?data-viewer-action="download"/, "「画廊」按钮必须在「下载」之前 —— 业主原话是底部菜单左侧增加画廊按钮");
+assert.match(viewerSource, /class="image-viewer-gallery"[^>]*aria-label="/, "侧栏要挂出去并自报名字：一串缩略图没有标题时读屏用户只会听到一排一模一样的按钮");
+// 侧栏这几条都从**锚定捕获的那一条基础规则**里判，不用 `.image-viewer-gallery \{[^}]*…` 这种写法：
+// 那种写法会被"别处同名规则"骗过去 —— 后面那条 `.image-viewer.is-ui-hidden .image-viewer-gallery
+// { … pointer-events: none; }` 里就有同样的片段，于是把基础规则里的 pointer-events 删掉、断言照样绿
+//（实测踩过：这就是变异 E 第一遍没抓住的原因）。锚 `\n` 到行首，`.image-viewer-gallery {` 前面就必须
+// 真的是换行，带前缀的选择器再也不会被当成它。
+const galleryRule = (styles.match(/\n\.image-viewer-gallery \{([^}]*)\}/) || [])[1] || "";
+assert.ok(galleryRule, "找不到 .image-viewer-gallery 的基础规则：这一条门禁本身失效了，必须修好再跑");
+assert.match(galleryRule, /left: 0;/, "画廊侧栏必须贴着屏幕左边缘推出来");
+assert.match(galleryRule, /border-radius: 0 /, "侧栏左边两角必须是直角（业主原话：圆角矩形，左侧直角）");
+// 侧栏关着时必须彻底不参与命中：它趴在画面左边，pointer-events 不收的话那一带的点击与滑动全被它吃掉。
+assert.match(galleryRule, /pointer-events: none;/, "侧栏关着时不许吃画面上的点击");
+assert.match(galleryRule, /visibility: hidden;/, "侧栏关着时必须彻底藏起来，否则它的投影会露在屏幕边上");
+assert.match(styles, /\.image-viewer-gallery\.is-open \{ transform: none;/, "侧栏靠 is-open 推出来（用 hidden 会连过渡一起丢掉）");
+assert.match(viewerSource, /data-gallery-index="' \+ i \+ '"/, "每一格缩略图要带自己的序号：点击定位与「当前是哪张」都靠它");
+assert.match(viewerSource, /function show\(index\) \{/, "组件必须能换到第 index 张");
+// **换图必须连两个动作回调一起换**：不然切到第二张再按「下载」，存下来的还是第一张。
+assert.match(viewerSource, /actions\.download = next && next\.onDownload \|\| null;/, "换图时必须把「下载」换成这一张的动作回调");
+assert.match(viewerSource, /actions\.background = next && next\.onSetBackground \|\| null;/, "换图时必须把「设为背景」换成这一张的动作回调");
+assert.match(viewerSource, /\{ runAction\(actions\.download\); \}/, "工具栏点击要读**当前**这张的动作，不能闭包在打开时那一张上");
+assert.match(viewerSource, /\{ runAction\(actions\.background\); \}/, "同上：设为背景也必须读当前这张");
+// chat.js 侧：把"本对话所有生成图"整理成清单 + 定位当前这张的下标，一起交给组件。
+assert.match(chatSource, /function galleryEntries\(target\) \{/, "chat.js 要把本对话所有生成图整理成清单交给看图");
+assert.match(chatSource, /if \(!message\.draw \|\| message\.status === 'drawing'\) continue;/, "清单只收已经画出来的图，正在画的那条不算");
+assert.match(chatSource, /if \(mediaKey\(gallery\[i\]\.media\) === mediaKey\(media\)\) \{ index = i; break; \}/, "打开看图时要定位到当前这张在清单里的下标，否则一打开就是第一张");
+assert.match(chatSource, /gallery: gallery, index: index,/, "清单与下标要一起交给看图组件");
+assert.match(chatSource, /source: function \(\) \{ return app\.data\.media\.displayUrl\(media\)\.catch\(function \(\) \{ return ''; \}\); \}/, "缩略图地址要惰性取：一个对话几十张图，全部赋 src 会让引擎一次解码几十张 1MP 的图");
+assert.match(viewerSource, /new IntersectionObserver\(function \(entries\) \{/, "缩略图必须进视口才要地址，不能一打开抽屉就全量拉");
+// **点画面一下 = 切换控件显隐**，不再关掉看图（业主第六轮改的就是这一条）。
+assert.match(viewerSource, /function toggleUi\(\) \{[\s\S]{0,160}?classList\.toggle\("is-ui-hidden", uiHidden\)/, "点一下画面必须切换控件显隐");
+assert.match(styles, /\.image-viewer\.is-ui-hidden \.image-viewer-toolbar,[\s\S]{0,140}?\.image-viewer\.is-ui-hidden \.image-viewer-gallery \{[^}]*visibility: hidden;/, "藏控件必须同时管住底部工具栏与画廊侧栏");
+assert.equal(/event\.target === stage\) close\(\);/.test(viewerSource), false, "「点背景关掉看图」必须撤掉：同一个“点一下”不能既是关闭又是切控件");
+// 切控件要延后一个双击窗口：立刻切的话，用户双击放大时界面会先闪一下。
+assert.match(viewerSource, /tapTimer = setTimeout\(function \(\) \{ tapTimer = 0; if \(!closed\) toggleUi\(\); \}, DOUBLE_TAP_MS\);/, "切控件必须延后一个双击窗口再执行，否则双击放大时界面会先闪一下");
+assert.match(viewerSource, /lastTap = 0;\s*\n\s*later\(\);/, "双击必须就地取消那一次待执行的「切控件」");
+// 上下滑动换图：**只在纵向没有可平移的余地时生效**（放大后纵向能拖，那时必须留给平移）。
+assert.match(viewerSource, /function slideReady\(\) \{[\s\S]{0,420}?box\.height \* scale <= view\.height \+ 1/, "只有纵向没有可平移的余地时才允许滑动换图，放大后必须留给平移");
+assert.match(viewerSource, /gesture\.axis = \(Math\.abs\(dy\) > Math\.abs\(dx\) \* 1\.2 && slideReady\(\)\) \? "y" : "x";/, "定轴必须同时满足「竖着划」与「纵向没有可平移的余地」，缺一个就会在放大后抢走平移手势");
+assert.match(viewerSource, /var next = swipe < 0 \? at \+ 1 : at - 1;/, "手指往上划 = 下一张（画面往上卷，和相册一致）");
+assert.match(viewerSource, /if \(Math\.abs\(swipe\) < SWIPE_MIN\) \{ bound\(\); paint\(\); return; \}/, "滑动距离不到门槛时要回位，不能一抖就翻页");
+
 // 7) 定妆照必须真的作为参考图进 CVP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
 //    字段名 `image_base64` 来自插件规范（vibedraw 的 cvp-spec.md / capabilities.py），不是自拟的。
 assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CVP 请求体");
@@ -1006,14 +1192,14 @@ assert.match(chatSessionSource, /catch \(error\) \{ return fail\(new Error\("定
 assert.equal(/portraitReference\(role\.portraitMediaId\)[\s\S]{0,240}catch \(_\)/.test(chatSessionSource), false, "定妆照的读取失败不许被 catch (_) 吞掉");
 // 8) 提示词：模型必须把「发照片」当成「画图」（业主 2026-09-27 —— 它现在把这两件事分开了），
 //    并且画角色自己时必须把 selfPortrait 写成 true，否则 action 层带不进定妆照。
-assert.match(drawPromptSource, /「发照片」和「画图」是同一件事/, "提示词必须把「发照片」等同于画图，模型现在把两者当成两件事");
-assert.match(drawPromptSource, /\*\*必须写 true\*\*/, "提示词必须硬性要求：画角色自己时 selfPortrait 必须是 true");
+assert.match(instructionBody, /「发照片」和「画图」是同一件事/, "提示词必须把「发照片」等同于画图，模型现在把两者当成两件事");
+assert.match(instructionBody, /\*\*必须写 true\*\*/, "提示词必须硬性要求：画角色自己时 selfPortrait 必须是 true");
 // 9) 图片消息的编辑 / 重新生成 / 删除（业主 2026-09-27）。
 //    铅笔改的是**绘图提示词**（气泡里回显的那段文字就是提示词），不是恒为空的 text；
 //    重新生成就是重新发起绘图，卡片与能力记在消息里，不必再问模型；
 //    删除在编辑弹窗底部，必须先确认 —— 而且必须 type="button"，否则点它等于提交表单（保存并关闭）。
 assert.match(chatSource, /edit\.setAttribute\('aria-label', message\.draw \? '修改绘图提示词' : '编辑这条消息'\)/, "图片消息的铅笔要说明改的是绘图提示词");
-assert.match(chatSource, /if \(message\.draw\) message\.draw\.prompt = text; else message\.text = text;/, "编辑图片消息必须落在 draw.prompt 上，不许去改恒为空的 text");
+assert.match(chatSource, /if \(message\.draw\) \{\n\s+message\.draw\.prompt = text;/, "编辑图片消息必须落在 draw.prompt 上，不许去改恒为空的 text");
 assert.match(chatSource, /var drawing = Boolean\(original\.draw\);/, "编辑弹窗必须按「是不是图片消息」分支");
 assert.match(chatSource, /return redraw \? session\.retryDraw\(target\.conversation\.id, message\.id\) : regenerateMessage\(target, message\)/, "图片消息的重新生成按钮必须重新发起绘图");
 assert.match(chatSource, /type="button" data-delete-message>删除这条消息</, "编辑弹窗底部必须有删除入口");

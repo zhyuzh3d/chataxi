@@ -315,6 +315,193 @@ test('conversation personal settings override global name and introduction indep
   assert.doesNotMatch(applied.systemPrompt, /通用用户背景/);
 });
 
+test('the drawing tool discipline joins the role behaviour guidance instead of standing apart', () => {
+  const { app } = runtime();
+  const role = { id: 'a', name: 'A', systemPrompt: '角色设定', behaviorGuidance: '我每次回复必须用第一人称，只生成很少的几句对话。' };
+  // 不传工具纪律时一个字都不许出现 —— 没配绘图卡片就不该把动作块的事说给模型。
+  const without = app.services.context.applyToRole(role, [role]);
+  assert.doesNotMatch(without.systemPrompt, /工具纪律那句/);
+  // 传了就必须和角色自己的行为指导**并进同一段**：段里那句「必须严格遵守」是唯一让模型让路的东西，
+  // 另起一段就等于把工具条款降级成一份并列的参考资料（现场失败正是模型选了角色那条「少说几句」）。
+  const withTool = app.services.context.applyToRole(role, [role], null, '工具纪律那句');
+  assert.match(withTool.systemPrompt, /只生成很少的几句对话。\n工具纪律那句/);
+  assert.equal((withTool.systemPrompt.match(/<behavior_guidance>/g) || []).length, 1);
+  // 角色没写行为指导时也要单独成段 —— 否则一个没设行为指导的角色会整条工具纪律都收不到。
+  const bare = { id: 'a', name: 'A', systemPrompt: '角色设定' };
+  const bareWithTool = app.services.context.applyToRole(bare, [bare], null, '工具纪律那句');
+  assert.match(bareWithTool.systemPrompt, /<behavior_guidance>\n以下行为指导[\s\S]*工具纪律那句/);
+  // 空串 / 纯空白按「没有」处理，不许拼出一个空的行为指导段。
+  const blank = app.services.context.applyToRole(bare, [bare], null, '   ');
+  assert.doesNotMatch(blank.systemPrompt, /<behavior_guidance>/);
+  // applyToRole 返回新对象：原角色记录的系统提示词不能被就地改写。
+  assert.equal(role.systemPrompt, '角色设定');
+  assert.notEqual(withTool.systemPrompt, role.systemPrompt);
+});
+
+// 历史组装必须保住「因」（业主 2026-09-27，plan §⑲）。以前动作块在入库前就被切走，模型在自己的
+// 全部历史里看不到一个「我是怎么写块、块有没有被执行」的样本，只能把「说一句话」归纳成出图的原因。
+// 这两条测试跑的是真实链路：complete() 真的解析一次带动作块的流式回复，hydrateMessages() 真的组装一次历史。
+test('a reply keeps the original text with its action block, so the model keeps its own how-to sample', async () => {
+  const { app } = await fixture();
+  const role = await app.data.store.get('roles', 'a'), conversation = await app.data.store.get('conversations', 'c');
+  const raw = '我画一张给你看吧。\n\n<<<chataxi-action\n{"type":"draw","prompt":"雨夜的旧车站","selfPortrait":false}\n>>>';
+  app.platform.network = { requestSse: async options => {
+    await options.onEvent({ data: JSON.stringify({ type: 'response.output_text.delta', delta: raw }) });
+    await options.onEvent({ data: '{"type":"response.completed","response":{"usage":{"output_tokens":9}}}' });
+  } };
+  const completed = await app.services.llm.complete(role, [], { cancelled: false, onDelta() {} }, conversation, [role]);
+  // 显示 / 朗读 / 预览读的是切过的 text：这一段一个字都不能变，否则动作块会露到界面上。
+  assert.equal(completed.text, '我画一张给你看吧。');
+  assert.equal(completed.action.prompt, '雨夜的旧车站');
+  // 进上下文的是 rawText —— 含动作块的原文。
+  assert.equal(completed.rawText, raw, 'rawText 必须是模型原样输出（含动作块），不能被切掉');
+  assert.ok(completed.rawText.includes('<<<chataxi-action'), 'rawText 里必须留着哨兵，模型才认得出自己当初的写法');
+});
+
+test('a drawing turn reaches the model as its own words plus a machine receipt in the user voice', async () => {
+  const { app } = await runtime();
+  const block = '<<<chataxi-action\n{"type":"draw","prompt":"雨夜的旧车站","selfPortrait":false}\n>>>';
+  const turn = (extra) => Object.assign({
+    id: 'a' + Math.random(), conversationId: 'c', kind: 'assistant', roleId: 'a', roleName: 'A',
+    text: '我画一张给你看吧。', rawText: '我画一张给你看吧。\n\n' + block,
+    draw: { prompt: '雨夜的旧车站' }, status: 'done', media: [], createdAt: 1
+  }, extra);
+  const history = await app.services.llm.hydrateMessages([
+    { id: 'u1', kind: 'user', text: '给我看看你的样子', media: [], status: 'done', createdAt: 0 },
+    turn({ id: 'a1' }),
+    turn({ id: 'a2', status: 'error', error: '连接超时' }),
+    turn({ id: 'a3', status: 'cancelled' }),
+    turn({ id: 'a4', status: 'drawing' }),
+    { id: 'a5', kind: 'assistant', roleId: 'a', roleName: 'A', text: '就是聊聊天。', status: 'done', media: [], createdAt: 2 },
+    // 没写过动作块的一次失败：status 是 error, 但没有 draw 记录 ⇒ 不许凭空发一条"绘图失败"回执。
+    { id: 'a6', kind: 'assistant', roleId: 'a', roleName: 'A', text: '', status: 'error', error: '模型超时', media: [], createdAt: 3 },
+    // v0.7.39 之前的记录：有 draw、状态 done, 但**一个 rawText 都没有**（那一轮的原文从来没被留下）。
+    // 对它发回执, 就等于用历史把提示词里「只有你写了动作块的回合才会有这条回执」当场证伪。
+    { id: 'a7', kind: 'assistant', roleId: 'a', roleName: 'A', text: '', draw: { prompt: '旧图' }, status: 'done', media: [], createdAt: 4 }
+  ], {}, { id: 'a', name: 'A' }, {}, {}, {});
+
+  // 模型自己的话（含动作块）在上下文里。
+  assert.match(history[1].text, /\{"type":"draw","prompt":"雨夜的旧车站","selfPortrait":false\}/, '进上下文的原文必须连动作块的 JSON 一起在');
+  // 回执**紧挨**在那条消息之后, 且是 user 身份 —— system 会被 mapSystemMessages 抽到请求最前面, 位置就丢了。
+  assert.equal(history[2].speakerKind, 'draw-receipt');
+  assert.equal(history[2].role, 'user');
+  assert.match(history[2].text, /^\[本机系统消息\]/, '回执必须自报来源是本机系统消息');
+  assert.match(history[2].text, /成功执行你上一条消息里的绘图动作块/);
+  // 地址不许给：可复制的 URL 形态正是模型抄进正文当图片的那半截。
+  const receipts = history.filter(entry => entry.speakerKind === 'draw-receipt');
+  assert.equal(receipts.length, 3, '成功 / 出错 / 取消三态各一条；正在绘制与「根本没写块」都不发');
+  assert.equal(receipts.every(entry => entry.role === 'user'), true, '回执一律 user 身份（system 会被抽到请求最前面，位置就丢了）');
+  assert.equal(receipts.every(entry => /^\[本机系统消息\]/.test(entry.text)), true, '三条回执都要自报来源：只给成功那条标，失败与取消两条就会被读成用户说的话');
+  assert.equal(receipts.every(entry => !/__hermit\/files|https?:\/\//.test(entry.text)), true, '回执里不许出现任何地址');
+  // 差态的两种写法必须能被区分：只留成功的话, "写了块但失败"和"根本没写块"在历史里长得一样。
+  assert.match(receipts[1].text, /出错[\s\S]*图片没有生成/);
+  assert.match(receipts[2].text, /已被取消[\s\S]*没有生成图片/);
+  assert.equal(history[7].speakerKind, 'active-role-history'); assert.match(history[7].text, /<<<chataxi-action/, '正在绘制的那一轮原文照旧进上下文, 只是还没有回执');
+  assert.equal(history.length, 9, '空正文的失败轮与旧格式记录都不留下任何条目, 也不许留回执');
+  assert.equal(history.some(entry => entry.role === 'system' && entry.speakerKind === 'draw-receipt'), false, '回执绝不许用 system 身份');
+});
+
+// **这条测试的判据是"别再把中间那一环丢掉"。** 前面两条测试是手工构造消息, 所以它们永远绿 ——
+// 而 2026-09-27 的真实故障恰恰断在中间: `settle()` 把原文挂在 result.rawText 上, 但 `chat-session.js`
+// 把 result 抄进 pending 时只抄了 text ⇒ 原文从来没落库 ⇒ 历史里那条正例还是被抽掉了「因」,
+// 模型第一轮出图、第二轮起再也不写块。手写的 fixture 看不见这种断链, 只有真链路能看见。
+test('the action block and its receipt survive the real reply path all the way into the model context', async () => {
+  const { app } = await fixture(), store = app.data.store;
+  const raw = '我画一张给你看吧。\n\n<<<chataxi-action\n{"type":"draw","prompt":"雨夜的旧车站","selfPortrait":false}\n>>>';
+  // 第二轮是**纯动作轮**（正文为空）：那条动作块只能靠绘图消息自己承载（carryRaw 那条路径）。
+  const actionOnlyRaw = '<<<chataxi-action\n{"type":"draw","prompt":"窗台上的橘猫","selfPortrait":false}\n>>>';
+  const replies = [raw, actionOnlyRaw];
+  // 真 complete()：只替换传输层, 让真 settle() 去切块。
+  app.platform.network = { requestSse: async options => {
+    const text = replies.shift() || '';
+    await options.onEvent({ data: JSON.stringify({ type: 'response.output_text.delta', delta: text }) });
+    await options.onEvent({ data: '{"type":"response.completed","response":{"usage":{"output_tokens":120}}}' });
+  } };
+  // 绘图客户端 stub：只要 runDraw 能跑完, 不碰真插件。
+  let produced = 0;
+  app.services.draw = {
+    available: async () => ({ profile: { id: 'card' }, modelId: 'render' }),
+    resolveCard: async () => ({ profile: { id: 'card' }, modelId: 'render' }),
+    newTask: () => ({ cancelled: false }),
+    generate: async () => ({ blob: new Blob([new Uint8Array([1, 2, 3])]), mime: 'image/png' }),
+    portraitReference: async () => ''
+  };
+  app.data.media.put = async () => ({ id: 'media-' + (produced += 1) });
+
+  await app.features.chatSession.run('c', { text: '给我看看你的样子', roleIds: ['a'] });
+  // 绘图是**分离任务**（run() 不 await 它）：不能等 `drawing()` 变空 —— 那条消息可能还没被置位。
+  // 判据只能落在库里：等到那条绘图记录真的落成 done。
+  const settleDraw = async (expected) => {
+    for (let i = 0; i < 400; i += 1) {
+      const list = await store.messages('c');
+      const drawn = list.filter(message => message.draw && message.draw.prompt);
+      if (drawn.length === expected && drawn.every(message => message.status === 'done')) return drawn;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error('timeout: 第 ' + expected + ' 条绘图记录始终没有落成 done');
+  };
+  const [firstDraw] = await settleDraw(1);
+
+  const messages = await store.messages('c');
+  const reply = messages.filter(message => message.kind === 'assistant' && message.text)[0];
+  assert.ok(reply, '这一轮应该留下一条带正文的 assistant 消息');
+  // ① 原文真的落库了 —— 这一条断言就是这次故障的哨兵。
+  assert.equal(Object.prototype.hasOwnProperty.call(reply, 'rawText'), true, '正文消息必须把 rawText 一起落库, 否则动作块进不了历史（模型只看得到一句承诺）');
+  assert.equal(reply.rawText, raw, 'rawText 必须是模型原样输出（含动作块）');
+  assert.equal(reply.text, '我画一张给你看吧。', '落库的 text 仍然是切过的正文, 界面不受影响');
+  // ② 绘图记录与图片照旧。
+  assert.equal(firstDraw.status, 'done', '这一轮要真的画出图来');
+  assert.equal(firstDraw.media.length, 1, '画出来的图要挂在那条绘图消息上');
+  assert.equal(messages.filter(message => message.kind === 'assistant' && !message.text && !message.draw).length, 0, '空正文的回复不许留下空气泡');
+
+  // ③ 纯动作轮（正文为空）：块只能靠绘图消息自己承载 —— 这条路径同样走全程。
+  await app.features.chatSession.run('c', { text: '再画一个', roleIds: ['a'] });
+  const all = await settleDraw(2);
+  const actionOnly = all.filter(message => message.draw.prompt === '窗台上的橘猫')[0];
+  assert.ok(actionOnly, '纯动作轮要留下那条绘图消息');
+  assert.equal(actionOnly.text, '', '纯动作轮没有正文');
+  assert.equal(Object.prototype.hasOwnProperty.call(actionOnly, 'rawText'), true, '纯动作轮必须把原文挂在绘图消息上');
+  assert.equal(actionOnly.rawText, actionOnlyRaw, '正文为空时, 绘图消息的 rawText 就是那条动作块唯一的载体');
+  assert.equal((await store.messages('c')).filter(message => message.kind === 'assistant' && !message.text && !message.draw).length, 0, '纯动作轮也不许留下空气泡');
+
+  // ④ 真组装一次：模型**真正收到**的上下文里必须有它自己写过的块 + 本机回执。
+  const messages2 = await store.messages('c');
+  const history = await app.services.llm.hydrateMessages(messages2, {}, await store.get('roles', 'a'), {}, {}, {});
+  const withBlock = history.filter(entry => entry.text && entry.text.includes('<<<chataxi-action'));
+  assert.equal(withBlock.length, 2, '两轮都写过块 ⇒ 上下文里必须恰好有两条带动作块的历史 —— 这就是模型「我当初怎么做的」范例');
+  assert.match(withBlock[0].text, /\{"type":"draw","prompt":"雨夜的旧车站"/);
+  assert.match(withBlock[1].text, /\{"type":"draw","prompt":"窗台上的橘猫"/);
+  const at = history.indexOf(withBlock[0]);
+  assert.equal(history[at + 1].speakerKind, 'draw-receipt', '回执必须紧跟在那条带动作块的消息之后');
+  assert.equal(history[at + 1].role, 'user');
+  assert.match(history[at + 1].text, /^\[本机系统消息\][\s\S]*成功执行你上一条消息里的绘图动作块/);
+});
+
+// 编辑绘图提示词时要把**真实进上下文的动作块**改成同一个值（业主 2026-09-27）。这是纯文本改写，
+// 所以判据只有两条：① 只动 prompt 那一个值，模型原文其余部分一字不差；② 找不到可改的块时返回空串，
+// 让调用方跳过 —— 旧记录没有块，绝不许伪造一个（那会凭空给出一个它从没写过的范例）。
+test('rewriting an existing action block touches only the prompt value, never the rest of the model text', () => {
+  const { app } = runtime();
+  const retarget = app.services.actions.retarget;
+  // 模型写得不规范（多空格、键序不同）也要只改值，其余一字不动。
+  const raw = '我画一张给你看吧。\n\n<<<chataxi-action\n{ "selfPortrait" : false , "type" : "draw" ,  "prompt"  :  "一只趴在窗台的橘猫" }\n>>>';
+  const next = retarget(raw, '雨夜的旧车站');
+  assert.equal(next, '我画一张给你看吧。\n\n<<<chataxi-action\n{ "selfPortrait" : false , "type" : "draw" ,  "prompt"  :  "雨夜的旧车站" }\n>>>', '只许替换 prompt 的值，键序、空白、正文一字不动');
+  assert.equal(next.includes('<<<chataxi-action'), true, '改完仍然是同一条动作块');
+  // 引号、反斜杠、换行必须按 JSON 转义 —— 否则改完的原文会被切成畸形块，动作直接失效。
+  const escaped = retarget(raw, 'a "quoted" \\ back\nnewline');
+  assert.equal(escaped.includes('"prompt"  :  "a \\"quoted\\" \\\\ back\\nnewline"'), true, '提示词里的引号、反斜杠、换行都要按 JSON 转义写回');
+  // 转义写对了，块就还能被切出来；`parse()` 会把提示词里的连续空白压成单空格（它原本就这么做），
+  // 所以这里比的是压过之后的值 —— 重点是"没被切成畸形块"。
+  assert.equal(app.services.actions.split(escaped).action.prompt, 'a "quoted" \\ back newline', '改完必须还能被 split 解析成一条有效的动作（不是畸形块）');
+  assert.equal(app.services.actions.split(escaped).invalid, false);
+  // 没有块 / 块里没有 prompt 键 / 原文本身就缺失 ⇒ 空串（调用方据此跳过，不伪造）。
+  assert.equal(retarget('只是聊聊天。', '雨夜的旧车站'), '');
+  assert.equal(retarget('', '雨夜的旧车站'), '');
+  assert.equal(retarget(undefined, '雨夜的旧车站'), '', '旧记录没有 rawText：绝不许凭空造一个块出来');
+  assert.equal(retarget('<<<chataxi-action\n{"type":"draw","selfPortrait":false}\n>>>', '雨夜的旧车站'), '');
+});
+
 test('the retention window is derived from the retention chars, not a fixed message count', async () => {
   const { app } = await fixture();
   const line = (id, length) => ({ id, kind: 'user', text: 'x'.repeat(length), status: 'done', createdAt: Number(id) });

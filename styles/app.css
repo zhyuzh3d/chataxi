@@ -574,8 +574,18 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 /* 画图中的占位（消息 status:"drawing"）。固定 216×216 的方块占住位置，出图后原地换成真图，
    列表不跳。这里刻意不用 aspect-ratio —— 本项目 WebView 红线是 Chrome 83（没有这个属性）。 */
 .message-draw { position: relative; display: flex; align-items: center; justify-content: center; width: 216px; max-width: 100%; height: 216px; margin-bottom: 10px; overflow: hidden; border-radius: 12px; background: var(--surface-muted); }
-.message-draw::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 60%; background: linear-gradient(90deg, transparent, var(--surface), transparent); animation: drawSweep 1.5s linear infinite; }
-@keyframes drawSweep { from { left: -60%; } to { left: 100%; } }
+/* 扫光（业主 2026-09-27: 「改为 45 度, 效果更淡更弱一些」）。原来是「一条 60% 宽的竖带用 left 从 -60% 滑到 100%」,
+   满不透明度 —— 在 --surface-muted 底上就是一道很硬的亮条。两处改动:
+   ① 斜过来。带子自身仍是均匀竖带（渐变保持 90deg, 这样两条长边一样柔）, 45 度交给 transform;
+      动画因此只动 transform, 不再动 left（顺手不再触发布局）。带子按容器居中摆好
+      （left 39% + 宽度 22% 的一半 = 50%; top -30% + 高度 160% 的一半 = 50%）,
+      长度取 160% ≈ 346px, 比容器对角线 305px 还长, 斜着扫过去四个角都不会露空档。
+   ② 更淡更弱。颜色仍取 --surface —— 明暗两套「比底色亮一点 / 暗一点」的关系原样保留,
+      强度整体压到 .28; 换成写死的半透明色会让另一套主题变成另一个效果。
+      位移按带子自己的宽度算（translateX 的百分比是自身宽度）: 带子厚 22% ≈ 47.5px,
+      要整条扫出容器得斜移 (305 + 47.5) / 2 ≈ 176px, 取 ±380% 留一点余量。 */
+.message-draw::after { content: ""; position: absolute; top: -30%; left: 39%; width: 22%; height: 160%; opacity: .28; background: linear-gradient(90deg, transparent, var(--surface), transparent); transform: rotate(45deg) translateX(-380%); animation: drawSweep 1.5s linear infinite; }
+@keyframes drawSweep { from { transform: rotate(45deg) translateX(-380%); } to { transform: rotate(45deg) translateX(380%); } }
 .message-draw span { position: relative; z-index: 1; padding: 0 14px; color: var(--text-soft); font-size: 12px; line-height: 1.5; text-align: center; }
 /* 绘制提示词：图片下方的一行小字，让用户知道这张图是照哪句话画的。 */
 .message-caption { margin-bottom: 10px; color: var(--text-soft); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -605,7 +615,7 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
    业主 2026-09-27 第四轮: 「工具箱的背景更透明一些」⇒ 底色的 alpha c4(196/255 ≈ 77%) → 99(≈ 60%)。
    再往下调就要动文字可读性了: 标签是 #f2f2ee 的 11px, 压在浅色照片上本来就靠这层深底撑着,
    60% 是"看得见画面、又还能读字"的平衡点 —— 继续降之前先在真机上对着亮图看一眼。 */
-.image-viewer-toolbar { position: absolute; z-index: 2; left: 50%; bottom: calc(16px + var(--safe-bottom)); transform: translateX(-50%); display: flex; align-items: stretch; padding: 4px; border-radius: 18px; background: #10121099; -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); box-shadow: 0 8px 26px #00000052; }
+.image-viewer-toolbar { position: absolute; z-index: 2; left: 50%; bottom: calc(16px + var(--safe-bottom)); transform: translateX(-50%); display: flex; align-items: stretch; padding: 4px; border-radius: 18px; background: #10121099; -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); box-shadow: 0 8px 26px #00000052; transition: opacity .18s ease, visibility .18s ease; }
 /* 紧凑横排: 三个按钮等宽（min-width 兜住"设为背景"四个字）, 彼此只隔 2px。
    Chrome 83 的 flex 不吃 gap（老 WebView 红线）⇒ 相邻兄弟用 margin 拉开。 */
 .image-viewer-action { display: flex; flex: 0 0 auto; min-width: 68px; flex-direction: column; align-items: center; padding: 8px 8px 7px; border: 0; border-radius: 14px; background: transparent; color: #f2f2ee; font-size: 11px; line-height: 1; }
@@ -613,6 +623,32 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 .image-viewer-action i { margin-bottom: 6px; font-size: 17px; }
 .image-viewer-action:active { background: #ffffff26; }
 .image-viewer-action[hidden] { display: none; }
+
+/* 左侧画廊侧栏（业主 2026-09-27 第六轮）：底部工具栏**最左边**那个「画廊」按钮推出来的一条抽屉，
+   列出这一组图片的缩略小图。它贴着屏幕左边缘 —— 所以**左边两角是直角、右边两角圆**，是"从侧边
+   推进来的面板"，而不是一块浮在画面中间的卡片。
+   关着的时候用 visibility: hidden 彻底藏起来（这样它的投影也不会露在屏幕边上），
+   并 pointer-events: none —— 否则它会趴在画面左边，把那一带的点击与滑动全吃掉。 */
+.image-viewer-gallery { position: absolute; z-index: 3; top: calc(14px + var(--safe-top)); bottom: calc(78px + var(--safe-bottom)); left: 0; display: flex; flex-direction: column; width: calc(88px + var(--safe-left)); padding: 10px 8px 10px calc(8px + var(--safe-left)); border-radius: 0 20px 20px 0; background: #101210cc; -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); box-shadow: 0 10px 30px #00000059; transform: translateX(-104%); visibility: hidden; pointer-events: none; transition: transform .22s ease, visibility .22s ease; }
+/* bottom 让开工具栏那一条（78px ≈ 工具栏自身高度 + 它的底边距）：抽屉与工具栏在左下角会撞上，
+   而抽屉的 z-index 更高 —— 真撞上的话它会把「画廊」按钮自己盖住，用户就再也关不掉抽屉了。 */
+.image-viewer-gallery.is-open { transform: none; visibility: visible; pointer-events: auto; }
+/* 缩略图列表自己滚。Chrome 83 的 flex 不吃 gap（老 WebView 红线）⇒ 相邻兄弟用 margin-bottom 拉开。
+   touch-action: pan-y 是给这一条竖滚用的：舞台那条 touch-action: none 管不到它（它不是舞台的子节点）。 */
+.image-viewer-gallery-list { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+.image-viewer-thumb { display: block; width: 100%; margin: 0 0 8px; padding: 0; border: 1px solid #ffffff1f; border-radius: 12px; background: #ffffff14; overflow: hidden; }
+.image-viewer-thumb img { display: block; width: 100%; height: 68px; object-fit: cover; }
+.image-viewer-thumb:active { border-color: #ffffff5c; }
+.image-viewer-thumb.is-current { border-color: #f2f2ee; box-shadow: 0 0 0 2px #f2f2ee59; }
+/* 地址取不到（旧记录 / 文件已释放）：压暗这一格，让"这张读不出来"看得出来，
+   而不是留一个永远转不出来的空框。 */
+.image-viewer-thumb[data-thumb-state="missing"] { opacity: .35; }
+
+/* 点一下画面 → 这个类挂到 .image-viewer 上：底部工具栏与左侧侧栏一起淡出。
+   **只藏不关** —— 抽屉的 is-open 状态保留着，再点一下画面回来时它还是打开的。
+   特异性 (0,3,0) 高于 .image-viewer-gallery.is-open 的 (0,2,0)，所以"打开了但被藏起来"能成立。 */
+.image-viewer.is-ui-hidden .image-viewer-toolbar,
+.image-viewer.is-ui-hidden .image-viewer-gallery { visibility: hidden; opacity: 0; pointer-events: none; }
 .typing-bubble { display: flex; align-items: center; gap: 5px; height: 24px; min-width: 45px; }
 .typing-bubble span { width: 6px; height: 6px; background: var(--text); border-radius: 50%; animation: typing 1.3s infinite; }
 .typing-bubble span:nth-child(2) { animation-delay: .15s; } .typing-bubble span:nth-child(3) { animation-delay: .3s; }

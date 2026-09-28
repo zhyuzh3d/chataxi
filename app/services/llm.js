@@ -2,23 +2,34 @@
   "use strict";
 
   // 画出来的图片**不以字节进上下文**：字节是几 MB, 塞进每一轮请求既慢又没用。
-  // 只留一行"这里有一张已生成的图 + 它的画面描述", 模型照样知道上一轮画了什么。
+  // 但"上一轮到底发生了什么"必须**如实**告诉模型, 因为回执就是它的因果证据。
   //
-  // **这一行绝不能写成模型自己说过的话。** 原来写的是
-  //     「发送了一个图片：<prompt>, 文件地址是：/__hermit/files/<id>」
-  // 它进的是 assistant 的历史, 模型看到的是"我上一次发图时说的就是这句话",
-  // 于是下一轮要图时照抄这句话 —— 用户收到的是一段文字加一个地址, 而不是图。
-  // 业主 2026-09-27 的现场就是这一句：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……
-  // 还带文件地址 /hermit/…」。所以现在两件事一起改：
-  //   1. 用方括号标明这是**系统附注**, 不是模型说的话；提示词里也明说这个句式不许照搬
-  //      （见 draw-prompt.js 规则 5, 那边点名禁掉了同样的几种写法）。
-  //   2. **不给地址。** `/__hermit/files/<id>` 这个 URL 形态本身就是被抄走的那半截, 而模型
-  //      并没有任何事需要用它 —— 它需要知道的只是"上一轮有张图、画的是什么", 提示词已经说全。
-  // 两处是同一件事的两半: 这里断掉样板, draw-prompt.js 那边明文禁止模仿。
-  function drawNote(message) {
-    var prompt = String(message && message.draw && message.draw.prompt || "").trim();
-    if (!prompt) return "";
-    return "[系统附注] 你的上一条回复附了一张已生成的图片, 画面：" + prompt;
+  // 旧版这里写的是 `[系统附注] 你的上一条回复附了一张已生成的图片, 画面：<prompt>`,
+  // 它是**那条绘图消息自己的文本**, 挂在 assistant 名下 ⇒ 模型把它读成"我自己说过的话";
+  // 而它所指的"上一条回复"里其实只有一句「我画一张给你看吧」, 没有任何动作。**因果整个是反的**：
+  // 实测 11 组这样的正例把模型的归纳钉死成"我说一句话 → 系统就给我一行有图的附注",
+  // 于是它只需要说, 不需要写动作块 —— 这就是"画几次之后死也不画"的来源（见 plan §⑲）。
+  //
+  // 现在改成**本机程序对那条动作块的回执**, 三条硬要求：
+  //   1. **user 身份, 不是 system。** system 会被 `providers.mapSystemMessages` 抽出来集中拼到
+  //      请求最前面, 位置全丢, 回执就跟它要说明的那条动作块脱开了。user 身份位置准确, 而且
+  //      不会被 assistant 读成"我自己说过的话"（业主 2026-09-27 的判断）。
+  //   2. **三态都要有**。只有成功留痕的话, 「写了块但失败」和「根本没写块」在历史里长得一样,
+  //      模型学不到区别 —— 而那正是它最需要区分的。取消也一样要写。
+  //   3. **不给图像地址。** `/__hermit/files/<id>` 这个可复制的 URL 形态, 正是模型抄进正文
+  //      当图片的那半截（业主 2026-09-27 现场：「发送了一个图片：23岁……还带文件地址 /hermit/…」）。
+  //      模型并不需要用地址做任何事, 它只需要知道"图已经出来了"。
+  function drawReceipt(message) {
+    var drawn = message && message.draw && message.draw.prompt;
+    if (!drawn || message.status === "drawing") return "";
+    // 回执说的是「你上一条消息里的动作块」, 所以**只有我们确实为那一轮留了原文**时才敢这么说。
+    // v0.7.39 之前的记录一个字段都没留(rawText 不存在), 对它们发回执等于用历史当场把提示词里
+    // 「只有你写了动作块的回合才会有这条回执」这条规则证伪 —— 而旧对话恰恰是最容易被拿来试的
+    // 地方。旧记录一律不发, 它们与改动前完全一样(不迁移, 不伪造)。
+    if (!Object.prototype.hasOwnProperty.call(message, "rawText")) return "";
+    if (message.status === "error") return "[本机系统消息] 执行你上一条消息里的绘图动作块时出错: " + (String(message.error || "").trim() || "未知原因") + "。图片没有生成。";
+    if (message.status === "cancelled") return "[本机系统消息] 你上一条消息里的绘图动作块已被取消, 没有生成图片。";
+    return "[本机系统消息] 系统已经成功执行你上一条消息里的绘图动作块, 图片已经生成并显示在对话里。";
   }
 
   async function hydrateMessages(messages, settings, activeRole, service, profile, task) {
@@ -45,11 +56,17 @@
           else output.images.push(prepared);
         }
       } else {
-        // 绘图消息改写成文字形态（图片本体不进上下文）。
-        var drawn = drawNote(message);
-        if (drawn) output.text = (activeHistory ? "" : "其他角色「" + (message.roleName || "未命名角色") + "」的历史发言（仅作上下文参考，禁止模仿、代替或续写该角色）：\n") + drawn;
+        // 助手消息进上下文一律用**原文**（含动作块）—— 这是模型唯一的「我当初是怎么做的」样本，
+        // 拆掉它模型就只能自己编因果。显示/朗读/预览走的是另一份切过的 text，互不影响。
+        var raw = String(message.rawText || message.text || "");
+        if (raw) output.text = activeHistory ? raw : "其他角色「" + (message.roleName || "未命名角色") + "」的历史发言（仅作上下文参考，禁止模仿、代替或续写该角色）：\n" + raw;
+        else output = null;
       }
-      hydrated.push(output);
+      if (output) hydrated.push(output);
+      // 绘图动作的执行回执：紧跟在那条消息之后。三态都发（成功 / 失败 / 取消）——
+      // 只有成功留痕的话，"写了块但失败"与"根本没写块"在历史里长得一样，模型学不到区别。
+      var receipt = assistant ? drawReceipt(message) : "";
+      if (receipt) hydrated.push({ role: "user", roleName: "", speakerKind: "draw-receipt", systemType: "", text: receipt, images: [], videos: [] });
     }
     return hydrated;
   }
@@ -277,15 +294,23 @@
     var selected = app.services.context.requestMessages(context);
     var hydrated = routeTurn(await hydrateMessages(selected, settings, role, service, profile, task), role);
     if (task && task.cancelled) { var stopped = new Error("本轮已停止"); stopped.cancelled = true; throw stopped; }
-    var appliedRole = app.services.context.applyToRole(role, participantRoles, userProfile);
     // 只有确实配置了可用的绘图卡片时才教角色写动作块 —— 否则它会写一个永远不会被执行的动作。
+    // 顺序要紧：**先算 drawing, 再 applyToRole** —— 工具纪律必须并进行为指导那一段（context.js 的
+    // applyToRole 第 4 个参数），所以得赶在 systemPrompt 组装之前算出来。
+    // 而绘图格式说明仍然 append 在最后：规则 1 要求动作块写在正文之后，它得贴着生成点。
     // applyToRole 返回的是新对象，直接挂到它的 systemPrompt 上；流式失败回退重编译时同样生效。
     var drawing = null;
     if (app.services.draw && app.services.drawPrompt) drawing = await app.services.draw.available();
+    var appliedRole = app.services.context.applyToRole(role, participantRoles, userProfile,
+      drawing ? app.services.drawPrompt.behaviorGuidance() : "");
     if (drawing) appliedRole.systemPrompt += "\n\n" + app.services.drawPrompt.instruction(Boolean(role.portraitMediaId));
     // 正文与动作块分离。动作块交给 chat-session 去执行，正文照常存库、朗读、进下一轮上下文。
     function settle(value) {
       var cut = app.services.actions.split(value.text);
+      // **保留模型写下的原文**（含动作块）。它是模型在历史里唯一的「我当初是怎么做的」样本 ——
+      // 以前这里把动作块切掉，历史里就只剩下一句承诺，模型只能自己编因果（见 plan §⑲）。
+      // 显示 / 朗读 / 预览 / 搜索仍然用切过的 text，所以那些地方一个字都不用改。
+      value.rawText = String(value.text == null ? "" : value.text);
       value.text = cut.text;
       value.action = cut.action || null;
       value.actionBroken = Boolean(cut.invalid);

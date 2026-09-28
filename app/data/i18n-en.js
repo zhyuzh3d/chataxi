@@ -265,6 +265,10 @@
     "图片操作": "Image actions",
     "下载": "Download",
     "设为背景": "Set as background",
+    // 画廊侧栏：底部工具栏最左边的按钮 + 从屏幕左侧推出来的缩略图抽屉
+    "画廊": "Gallery",
+    "本对话的图片": "Images in this chat",
+    "查看这张图片": "View this image",
     "设为对话背景？": "Set as the chat background?",
     "这张图片会成为当前对话的背景, 铺满整个界面。": "This image becomes the current chat's background and fills the whole screen.",
     "图片已保存到设备": "Image saved to this device",

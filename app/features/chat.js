@@ -435,7 +435,7 @@
       // 监听器里引用的话所有图片按钮都会拿到最后一条。原来的监听器只读 event.currentTarget,
       // 所以这个坑一直没露头; 现在要把 media 交给全屏看图的下载 / 设为背景, 就得用 IIFE 定住。
       imageButton.addEventListener('click', (function (entry) {
-        return function (event) { openImageViewer(entry, event.currentTarget.querySelector('img')); };
+        return ui.action(function (event) { return openImageViewer(entry, event.currentTarget.querySelector('img')); });
       })(media));
       lazyMedia.set(imageButton, media);
       bubble.appendChild(imageButton);
@@ -523,11 +523,67 @@
     }
     block.appendChild(meta); row.appendChild(block); if (user) row.appendChild(await messageAvatar(target.userProfile, 'message-avatar user-message-avatar', target, 'user')); return row;
   }
-  // ── 全屏看图的三个动作（业主 2026-09-27 第二轮）────────────────────────────────
+  // ── 全屏看图（业主 2026-09-27 第二轮；第六轮加了画廊侧栏）────────────────────────
   // 传的是**这条消息自己的 media 记录**: 下载要用它的宿主文件标识, 设为背景要用它的 mediaId。
-  function openImageViewer(media, image) {
-    app.components.imageViewer.open({
-      src: String(image && image.src || ''), alt: String(image && image.alt || ''),
+  // 第六轮起还要给它一份"本对话所有生成图"的清单 —— 底部那个「画廊」按钮靠它铺满侧栏,
+  // 未放大时上下滑动换图也靠它决定能翻到哪。
+  //
+  // **清单里每一项都自带两个动作回调**, 不是只有当前这张: 在看图里切到第二张再按「下载」,
+  // 存下来的必须是第二张（组件只照着回调转交, 它自己不认识 media）。
+  function entryOf(media, message) {
+    var prompt = String(message.draw && message.draw.prompt || '');
+    return {
+      media: media,
+      alt: prompt || String(media.alt || ''),
+      src: '',   // 能白拿的时候由 galleryEntries 填（见 loadedSources）
+      onDownload: ui.action(function () { return exportMediaImage(media); }),
+      onSetBackground: ui.action(function () { return useMediaAsBackground(media); }),
+      // 侧栏缩略图**进视口才要地址**（组件里那个观察器调它）。一个对话几十张图, 全部赋 src
+      // 会让引擎一次解码几十张 1MP 的图（每张展开约 4MB）, 在 WebView 里够呛。
+      source: function () { return app.data.media.displayUrl(media).catch(function () { return ''; }); }
+    };
+  }
+  // 消息列表里**已经加载出来**的那些缩略图地址是白拿的: 直接搬过来, 省掉一次读库 + 一次文件往返。
+  // 认节点靠懒加载那套的 lazyMedia 对照表（它是 WeakMap: 按钮 → media）。
+  function loadedSources() {
+    var map = {}, nodes = document.querySelectorAll('#messageList .message-image img');
+    for (var i = 0; i < nodes.length; i += 1) {
+      var button = nodes[i].parentNode, media = button && lazyMedia.get(button);
+      if (media && nodes[i].src) map[mediaKey(media)] = nodes[i].src;
+    }
+    return map;
+  }
+  // 本对话所有生成图, 按时间顺序（messageSnapshot 本身就是排好序的）。**每条绘图消息只取第一张图**
+  //（一条绘图消息就是一张）, 没有可用图片的整条跳过 —— 侧栏里不该出现点不开的空格。
+  function galleryEntries(target) {
+    var messages = target.messageSnapshot || [], known = loadedSources(), entries = [];
+    for (var i = 0; i < messages.length; i += 1) {
+      var message = messages[i];
+      if (!message.draw || message.status === 'drawing') continue;
+      var list = message.media || [];
+      for (var j = 0; j < list.length; j += 1) {
+        var item = list[j];
+        if ((item.kind || (/^video\//i.test(item.mime || '') ? 'video' : 'image')) !== 'image') continue;
+        var entry = entryOf(item, message);
+        entry.src = known[mediaKey(item)] || '';
+        entries.push(entry);
+        break;
+      }
+    }
+    return entries;
+  }
+  async function openImageViewer(media, image) {
+    var target = view, gallery = target ? galleryEntries(target) : [], index = -1;
+    for (var i = 0; i < gallery.length; i += 1) if (mediaKey(gallery[i].media) === mediaKey(media)) { index = i; break; }
+    // 这张图不在清单里（旧记录、或调用方手上只有一条 media）⇒ 退化成"只有它一张": 画廊能力关掉,
+    // 看图本身照常。为一个侧栏把整件事卡住是不划算的。
+    if (index < 0) gallery = [];
+    var src = String(image && image.src || '');
+    // 正常路径下缩略图早就加载好了、src 现成; 这里只兜住"地址还没解析出来就被点开"的边角情况。
+    if (!src) src = await app.data.media.displayUrl(media).catch(function () { return ''; });
+    return app.components.imageViewer.open({
+      src: src, alt: String(image && image.alt || ''),
+      gallery: gallery, index: index,
       onDownload: ui.action(function () { return exportMediaImage(media); }),
       onSetBackground: ui.action(function () { return useMediaAsBackground(media); })
     });
@@ -727,13 +783,50 @@
     revoke(target.draftUrls); target.draftUrls = urls;
     var tray = document.getElementById('attachmentTray'); tray.textContent = ''; tray.appendChild(fragment); tray.classList.toggle('is-hidden', !target.draft.media.length);
   }
+  // 编辑绘图提示词时，**真实进上下文的动作块必须跟着一起改**（业主 2026-09-27：气泡里的提示词
+  // 就是真实消息里动作块的内容，改的时候要一起保存）。气泡上显示的那行取自 `message.draw.prompt`
+  // （= 实际发给绘图模型的参数，是事实），而模型历史里看到的是 `rawText` 里那段
+  // `<<<chataxi-action …>>>`；两者是两份数据，不同步就会出现"界面上是 A、模型看到的还是 B"。
+  //
+  // 块在哪儿分两种情形：
+  //   ① 正文为空的那一轮 —— 块就在这条绘图消息**自己的** rawText 里（runDraw 接住了原文）；
+  //   ② 正文 + 块的那一轮 —— 块在**同轮的前一条** assistant 消息上（那一轮被拆成了两条消息）。
+  // 同轮的判据是 `replyTo` 相同：runDraw 建绘图消息时透传的就是 anchor 的 replyTo，
+  // 而不同轮的用户消息不同 ⇒ replyTo 必然不同，所以不会越过一轮去改到别人的块。
+  // 旧记录没有 rawText ⇒ retarget 返回空串 ⇒ 不改、也不伪造。
+  async function syncActionBlock(message, prompt) {
+    var own = app.services.actions.retarget(message.rawText, prompt);
+    if (own) message.rawText = own;
+    var extra = [];
+    if (!message.replyTo) return extra;
+    var messages = await store.messages(message.conversationId);
+    var index = messages.findIndex(function (item) { return item.id === message.id; });
+    if (index <= 0) return extra;
+    var previous = messages[index - 1];
+    if (!previous || previous.kind !== 'assistant' || previous.replyTo !== message.replyTo) return extra;
+    var fixed = app.services.actions.retarget(previous.rawText, prompt);
+    if (!fixed) return extra;
+    previous.rawText = fixed; previous.editedAt = Date.now();
+    extra.push(previous);
+    return extra;
+  }
   async function applyMessageEdit(target, message, text) {
     await app.services.tts.invalidate(message.id);
     // 图片消息改的是绘图提示词：气泡下面回显的那段文字就是发给绘图模型的那一段。
     // 定妆照注入的身份约束句只加在请求体上（见 draw.js），不落在消息里，所以改不到它。
-    if (message.draw) message.draw.prompt = text; else message.text = text;
     message.editedAt = Date.now();
-    await store.putMessage(message);
+    if (message.draw) {
+      message.draw.prompt = text;
+      // 图片的 alt 文本也是这个提示词的副本，一起改 —— 留着旧值就是又一处不一致。
+      var media = message.media || [];
+      for (var i = 0; i < media.length; i += 1) if (media[i].alt) media[i].alt = text;
+      var sameTurn = await syncActionBlock(message, text);
+      await store.putMessage(message);
+      for (var j = 0; j < sameTurn.length; j += 1) await store.putMessage(sameTurn[j]);
+    } else {
+      message.text = text;
+      await store.putMessage(message);
+    }
     target.messageSnapshot = null; await session.refreshPreview(target.conversation.id); await renderMessages(target, false);
     ui.toast(message.draw ? '绘图提示词已保存' : '消息已保存');
   }

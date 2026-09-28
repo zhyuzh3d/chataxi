@@ -49,7 +49,7 @@
   // 执行一条绘图动作。位置动作的语义：一个模型回复会被拆成「文本消息 + 图片消息」两条，
   // 这一条永远是新插入的 assistant 消息（text 恒为空 ⇒ 不朗读、不进下一轮的图片字节）。
   // 这里是**分离的异步任务**（调用方不 await），所以每一步都要自己落到库里。
-  async function runDraw(id, role, anchor, action, existing) {
+  async function runDraw(id, role, anchor, action, existing, rawText) {
     var conversation = await store.get("conversations", id);
     if (!conversation) return;
     var messages = await store.messages(id);
@@ -70,6 +70,9 @@
       roleName: role.name,
       replyTo: (anchor && anchor.replyTo) || "",
       text: "",
+      // 模型写下的**原文**（含动作块）。正文为空时这条绘图消息就是它的唯一载体，
+      // 上下文组装要靠它把"我当初是怎么写的"原样交给模型（见 plan §⑲）。
+      rawText: String(rawText || ""),
       media: [],
       draw: recorded,
       status: "drawing",
@@ -315,6 +318,16 @@
           ]);
           if (task.cancelled) throw cancelled();
           pending.text = result.text;
+          // **原文必须跟着一起落库**（含动作块）。`settle()` 把「切过的正文 text」和「模型原文 rawText」
+          // 都交给了我们，只抄 text 就等于把「我当初是怎么写动作块的」这份唯一的自我范例**在内存里丢掉** ——
+          // 2026-09-27 实测踩中：模型第一轮凭 systemPrompt 写出了块、正常出图（147 token），第二轮起
+          // 再也不写（输出掉到 49~65 token），因为历史里那条正例被抽掉了「因」（plan §㉑）。
+          // 显示 / 朗读 / 预览读的是 text，所以这一行不影响任何界面。
+          pending.rawText = String(result.rawText == null ? result.text : result.rawText);
+          // 畸形动作块（JSON 解析不出来）会被静默丢弃, 落库后与「模型压根没写」长得一模一样。
+          // 记下来是为了**判得出来**：设备上一读就知道这一轮是"没写"还是"写了没解析出来"。
+          // （根治畸形块不在本轮范围; 这里只保证记录说的是实话。）
+          pending.actionBroken = Boolean(result.actionBroken);
           pending.usage = result.usage;
           pending.reasoning = result.reasoning || "";
           pending.finishReason = result.finishReason || "";
@@ -346,9 +359,12 @@
         var completedMessage = pending;
         // 正文为空且这一轮带绘图动作：不产生文本消息，只留下即将出现的图片消息。
         // （模型本来就是一条回复拆两条；正文为空只是不生成第一条。）
+        // **但原文不能跟着一起丢**：它是那条动作块在历史里的唯一载体，下面交给绘图消息一起存。
         // 注意 pending 必须先留着：下面任何一次写库失败都会走外层 catch，靠它把消息落成
         // "可重试"的状态；提前置空就会留下一条永远 "pending" 的死消息。
+        var carryRaw = "";
         if (action && !completedMessage.text && completedMessage.status === "done") {
+          carryRaw = String(completedMessage.rawText || "");
           await store.removeMessage(completedMessage);
           if (!retry) {
             var index = messages.map(function (item) { return item.id; }).indexOf(completedMessage.id);
@@ -366,7 +382,7 @@
         // 也会把最后一条的自动朗读一直压住。进度与结果都通过 chat:changed 回来。
         if (action && completedMessage.status === "done") {
           changed(id, "media", { text: "正在按这一轮的要求绘制图片…" });
-          runDraw(id, role, completedMessage, action).catch(function (error) {
+          runDraw(id, role, completedMessage, action, null, carryRaw).catch(function (error) {
             changed(id, "notice", { text: "绘图失败：" + app.utils.cleanError(error) });
           });
         }

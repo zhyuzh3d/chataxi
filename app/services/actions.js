@@ -94,6 +94,27 @@
     return action && action.prompt ? action.prompt : "";
   }
 
+  // 改写**已存在**原文里那个动作块的 prompt —— 用户编辑绘图提示词时，气泡里显示的那一行
+  // 与这份原文里的块必须始终是同一个值（业主 2026-09-27：「确保生图消息气泡中的提示词就是
+  // 真实消息中动作块内容」）。
+  //
+  // 只替换 prompt 那一个值，原文其余部分**一字不动**：这份原文是模型在历史里唯一的
+  // 「我当初是怎么写的」样本（plan §⑲），把它整个 JSON.parse 再 stringify 就等于换成了我们的
+  // 拼装稿，键序、空白、模型自己的写法全没了。
+  //
+  // 原文里没有块、或块里的 prompt 不是 JSON 字符串形态时返回空串 —— 调用方据此认定
+  // 「这一轮没有可同步的块」并跳过，而不是伪造一个块出来（旧数据就是这样）。
+  function retarget(rawText, prompt) {
+    var value = String(rawText == null ? "" : rawText);
+    var at = value.indexOf(SENTINEL);
+    if (at < 0) return "";
+    var rest = value.slice(at);
+    var next = rest.replace(/("prompt"\s*:\s*)"(?:[^"\\]|\\.)*"/, function (_match, prefix) {
+      return prefix + JSON.stringify(String(prompt == null ? "" : prompt));
+    });
+    return next === rest ? "" : value.slice(0, at) + next;
+  }
+
   app.services.actions = {
     SENTINEL: SENTINEL,
     CLOSE: CLOSE,
@@ -101,6 +122,7 @@
     split: split,
     visible: visible,
     parse: parse,
-    describe: describe
+    describe: describe,
+    retarget: retarget
   };
 })(window.chataxi);

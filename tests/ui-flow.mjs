@@ -406,8 +406,11 @@ const opened = app.components.imageViewer.open({ src: '/__hermit/files/viewer-fi
 await tick();
 assert.ok(document.querySelector('.image-viewer'), '点图片必须打开全屏看图');
 // 底部那条工具栏是**唯一**的动作出口（业主 2026-09-27: 右上角那个单独的关闭按钮、以及底部的
-// 提示词都撤掉了, 三个动作收进一条磨砂工具栏）。所以这里同时核对"三个都在, 且就这三个"。
-assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]')).map(node => node.dataset.viewerAction), ['download', 'background', 'close'], '看图底部必须有 下载 / 设为背景 / 关闭 三个动作, 且只有这三个');
+// 提示词都撤掉了, 动作收进一条磨砂工具栏; 第六轮又在最左边加了「画廊」）。所以这里同时核对
+// "四个都在, 且就这四个", 以及次序 —— 业主明说画廊在底部菜单的**左侧**。
+assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]')).map(node => node.dataset.viewerAction), ['gallery', 'download', 'background', 'close'], '看图底部必须是 画廊 / 下载 / 设为背景 / 关闭 四个动作, 且次序如此');
+// 这一次打开没给画廊（只有一张图）⇒ 那个按钮必须自己藏起来。摆在那里点了没反应是最糟的样子。
+assert.equal(document.querySelector('[data-viewer-action="gallery"]').hidden, true, '只有一张图时「画廊」按钮必须隐藏');
 assert.equal(document.querySelector('.image-viewer-caption'), null, '底部不再显示提示词');
 assert.equal(document.querySelector('.image-viewer-close'), null, '右上角那个单独的关闭按钮已经撤掉');
 assert.equal(document.querySelector('.image-viewer img').style.transform, 'translate(0px,0px) scale(1)', '一打开就停在基线（高度充满），不是缩进屏幕里');
@@ -429,6 +432,90 @@ assert.equal(document.querySelector('.image-viewer'), null, '工具栏上的「�
 assert.equal(historyBacks, 1, '自己关掉时要调一次 history.back() 收掉压进去的那一格');
 history.back = backPressed;
 console.log('passed: full-screen viewer fills the height and the back gesture only closes the viewer');
+
+// ── 画廊侧栏 / 点画面切控件 / 上下滑动换图（业主 2026-09-27 第六轮）──────────────────────
+// 这三件事全发生在同一块画面上，而且彼此咬合：**「点一下」原来就是"关掉看图"**，现在改成了切控件；
+// 上下滑动又和放大后的平移抢同一根手指。所以静态门禁不够（它只能证明写法与它一致），必须走真实事件。
+const galleryHits = [];
+const galleryEntry = (index, name) => ({
+  src: '/__hermit/files/g' + index + '-fixture', alt: '图 ' + index,
+  onDownload: () => { galleryHits.push('download:' + name); },
+  onSetBackground: () => { galleryHits.push('background:' + name); }
+});
+// index = 1：一打开看的就必须是第二张（不是第一张）—— 这一条是"从某张图点进来就接着看它"的全部意义。
+const galleryOpened = app.components.imageViewer.open({
+  src: '/__hermit/files/g2-fixture', alt: '图 2', index: 1,
+  gallery: [galleryEntry(1, 'one'), galleryEntry(2, 'two'), galleryEntry(3, 'three')]
+});
+await tick();
+const viewerStage = document.querySelector('.image-viewer-stage');
+// linkedom 没有真实布局、也没有指针捕获，这两样就地打桩：这一段要验的是**判定逻辑**（点 / 划 /
+// 定轴 / 换图），不是引擎本身。桩打在同一批节点上，组件内部拿到的引用不受影响。
+viewerStage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+viewerStage.setPointerCapture = () => {};
+const viewerRoot = () => document.querySelector('.image-viewer');
+const galleryPanel = document.querySelector('.image-viewer-gallery');
+const currentSrc = () => String(document.querySelector('.image-viewer img').getAttribute('src') || '');
+// 切控件要等一个双击窗口（DOUBLE_TAP_MS = 320）才落地，所以下面每次手势之间都要让时间走过去。
+const settled = () => new Promise(resolve => setTimeout(resolve, 360));
+const firePointer = (type, x, y) => {
+  const event = new window.Event(type, { bubbles: true });
+  event.clientX = x; event.clientY = y; event.pointerId = 1; event.pointerType = 'touch';
+  viewerStage.dispatchEvent(event);
+};
+const tapStage = async () => { await settled(); firePointer('pointerdown', 10, 10); firePointer('pointerup', 10, 10); await settled(); };
+const swipeStage = async (fromY, toY) => {
+  await settled();  // 让上一次按下离这一次足够远：320ms 内的两次按下会被判成双击
+  firePointer('pointerdown', 10, fromY);
+  firePointer('pointermove', 10, Math.round((fromY + toY) / 2));
+  firePointer('pointermove', 10, toY);
+  firePointer('pointerup', 10, toY);
+  await tick(); await tick();
+};
+
+assert.ok(galleryPanel, '给了多张图时必须渲染出画廊侧栏');
+assert.equal(document.querySelectorAll('.image-viewer-thumb').length, 3, '侧栏要列出这一组里的每一张');
+assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]:not([hidden])')).map(node => node.dataset.viewerAction), ['gallery', 'download', 'background', 'close'], '有画廊时四个按钮都要露面, 且「画廊」在最左');
+assert.equal(document.querySelector('.image-viewer-thumb.is-current').dataset.galleryIndex, '1', '打开时"我正在看的那张"必须在侧栏里被标出来');
+assert.equal(galleryPanel.classList.contains('is-open'), false, '侧栏一开始是收着的');
+document.querySelector('[data-viewer-action="gallery"]').click();
+assert.equal(galleryPanel.classList.contains('is-open'), true, '点「画廊」必须把侧栏推出来');
+
+// 点第三张：换图，而且**两个动作要跟着换成这一张的** —— 不然切过去再按「下载」，存下来的还是第一张。
+document.querySelectorAll('.image-viewer-thumb')[2].click();
+await tick(); await tick(); await tick();
+assert.ok(/g3-fixture$/.test(currentSrc()), '点缩略图必须换成那一张');
+assert.equal(document.querySelector('.image-viewer-thumb.is-current').dataset.galleryIndex, '2', '当前是哪张要跟着动');
+assert.deepEqual(galleryHits, [], '光是换图不该触发任何动作');
+document.querySelector('[data-viewer-action="download"]').click();
+await tick(); await tick(); await tick();
+assert.deepEqual(galleryHits, ['download:three'], '换图之后按「下载」, 存的必须是当前这一张');
+
+// 点画面一下 = 切控件显隐（**不是**关掉看图 —— 同一个"点一下"不可能既是关闭又是切控件）。
+await tapStage();
+assert.equal(viewerRoot().classList.contains('is-ui-hidden'), true, '点一下画面必须把控件藏起来');
+assert.ok(viewerRoot(), '点画面只切控件, 不许把看图关掉');
+assert.equal(galleryPanel.classList.contains('is-open'), true, '藏控件只是"看不见", 侧栏的打开状态要留着');
+await tapStage();
+assert.equal(viewerRoot().classList.contains('is-ui-hidden'), false, '再点一下要把控件放回来');
+
+// 上下滑动换前后一张（未放大时纵向没有可平移的余地，这一划就不是平移而是换图）。
+await swipeStage(100, 320);
+assert.ok(/g2-fixture$/.test(currentSrc()), '手指往下划 = 上一张');
+await swipeStage(320, 100);
+assert.ok(/g3-fixture$/.test(currentSrc()), '手指往上划 = 下一张');
+// 位移不到门槛（SWIPE_MIN = 56）就不许翻页，否则手一抖就换了图。
+// **方向必须是"要是门槛低一点就真的会翻过去"的那一侧**：这里从最后一张往回（af 到上一张），
+// 所以一旦门槛被调低，这一划就会落到另一张图上、断言当场红。要是选成"往前翻"，因为已经在
+// 最后一张、本来就翻不动，这条断言会恒绿 —— 那正是"出现过型断言"的假绿。
+const beforeShallow = currentSrc();
+await swipeStage(120, 160);
+assert.equal(currentSrc(), beforeShallow, '滑动不到门槛时必须回位, 不许一抖就翻页');
+
+document.querySelector('[data-viewer-action="close"]').click();
+await galleryOpened; await tick();
+assert.equal(document.querySelector('.image-viewer'), null, '画廊开着也能照常关掉看图');
+console.log('passed: the gallery drawer switches images, a tap toggles the controls and a vertical swipe flips pages');
 
 // ── 图片消息：改提示词 / 重新生成 / 删除（业主 2026-09-27） ────────────────────────────
 // 三条都是"看起来行、点下去才知道"的东西，所以全部走真实点击路径：重新生成要真的再提交一次
@@ -469,6 +556,38 @@ assert.equal(redrawnMessage.draw.modelId, 'render', '图片消息要记下生图
 app.services.draw.available = originalDrawAvailable; app.services.draw.resolveCard = originalDrawResolveCard; app.services.draw.generate = originalDrawGenerate; app.data.media.put = originalDrawMediaPut;
 await app.features.chat.renderMessages(); await tick();
 
+// 1b) 编辑提示词必须**同步改写真实进上下文的动作块**（业主 2026-09-27：气泡里的提示词就是真实
+//     消息里动作块的内容，改的时候要一起保存）。气泡上那行取自 `draw.prompt`（= 实际发给绘图模型
+//     的参数，是事实），而模型历史里看到的是 `rawText` 里那段 `<<<chataxi-action …>>>`。两份数据
+//     不同步就是"界面上是 A、模型看到的还是 B"，而这种不一致在界面上**完全看不出来**，所以只能靠
+//     自己造记录来验。三种位置各造一条：
+//       ① 块在这条绘图消息**自己**身上（正文为空的那一轮就是这样）；
+//       ② 块在**同轮的前一条** assistant 消息上（正文 + 块的那一轮被拆成了两条消息）；
+//       ③ 紧挨着的**上一轮**也带块 —— 只有 replyTo 不同。它绝不许被改：这是"往前找"最容易犯的错。
+const blockText = prompt => '我画一张给你看吧。\n\n<<<chataxi-action\n{"type":"draw","prompt":"' + prompt + '","selfPortrait":false}\n>>>';
+assert.ok(drawnMessage.replyTo, '绘图消息要带着那一轮的用户消息 id —— 它就是判断"同轮"的依据');
+const layout = await app.data.store.messages(id);
+const at = layout.findIndex(message => message.id === drawnMessage.id);
+const beforeCreatedAt = at > 0 ? layout[at - 1].createdAt : drawnMessage.createdAt - 2;
+const between = (low, high) => (low + high) / 2;
+await app.data.store.putMessage(Object.assign({}, drawnMessage, { rawText: blockText('一只趴在窗台的橘猫') }));
+await app.data.store.putMessage({
+  id: 'message-sibling-block', conversationId: id, kind: 'assistant', roleId: drawnMessage.roleId, roleName: drawnMessage.roleName,
+  replyTo: drawnMessage.replyTo, text: '我画一张给你看吧。', rawText: blockText('一只趴在窗台的橘猫'),
+  media: [], status: 'done', createdAt: between(beforeCreatedAt, drawnMessage.createdAt)
+});
+await app.data.store.putMessage({
+  id: 'message-other-turn-block', conversationId: id, kind: 'assistant', roleId: drawnMessage.roleId, roleName: drawnMessage.roleName,
+  replyTo: 'message-another-turn', text: '上一轮。', rawText: blockText('上一轮的画面'),
+  media: [], status: 'done', createdAt: between(beforeCreatedAt - 1, beforeCreatedAt)
+});
+const withBlock = await app.data.store.messages(id);
+assert.equal(withBlock[withBlock.findIndex(message => message.id === drawnMessage.id) - 1].id, 'message-sibling-block', '同轮那一条必须正好排在绘图消息前面（否则这条用例验的不是"紧邻"）');
+assert.equal(drawnMessage.media[0].alt, '一只趴在窗台的橘猫', '编辑前 alt 是旧提示词');
+// 铅笔拿的是**渲染时缓存的那份记录**，所以造完记录必须重渲染一次，否则弹窗里那份还是旧快照
+// （旧快照没有 rawText，一保存就把刚造的那条块覆盖没了 —— 这条用例自己会骗自己）。
+await app.features.chat.renderMessages(); await tick();
+
 // 2) 铅笔改的是绘图提示词，不是那条恒为空的正文。
 drawnRow().querySelector('[aria-label="修改绘图提示词"]').click();
 await until(() => document.querySelector('#modalForm [name="text"]'), 'the drawing prompt editor opens');
@@ -486,6 +605,34 @@ assert.equal(afterPromptEdit.media.length, 1, '改提示词不能把已经画好
 assert.equal(document.querySelector('#toastRoot .toast').textContent, '绘图提示词已保存');
 await app.features.chat.renderMessages(); await tick();
 assert.match(drawnRow().querySelector('.message-caption').textContent, /雨夜的车站/, '气泡下面回显的必须换成新提示词');
+// 1b 的断言：保存时动作块必须跟着一起改（三种位置）。
+const editedPrompt = '雨夜的车站, 少女撑着伞侧身站着';
+const afterBlockEdit = await app.data.store.messages(id);
+const selfAfter = afterBlockEdit.filter(message => message.id === drawnMessage.id)[0];
+assert.ok(selfAfter.rawText.includes('"prompt":"' + editedPrompt + '"'), '① 这条绘图消息自己原文里的动作块必须跟着改成同一个提示词');
+assert.equal(selfAfter.rawText.includes('"prompt":"一只趴在窗台的橘猫"'), false, '① 旧提示词不许残留在动作块里');
+const siblingAfter = afterBlockEdit.filter(message => message.id === 'message-sibling-block')[0];
+assert.ok(siblingAfter.rawText.includes('"prompt":"' + editedPrompt + '"'), '② 同轮前一条消息里那个块也必须一起改 —— 正文 + 块的那一轮就靠它承载');
+assert.equal(siblingAfter.rawText.includes('我画一张给你看吧。'), true, '② 只改块里的提示词，那条消息的正文一个字都不许动');
+assert.equal(siblingAfter.editedAt > 0, true, '② 被同步改写过的记录要留下 editedAt');
+const otherTurnAfter = afterBlockEdit.filter(message => message.id === 'message-other-turn-block')[0];
+assert.ok(otherTurnAfter.rawText.includes('"prompt":"上一轮的画面"'), '③ 不同轮的消息里的块绝不许被改');
+assert.equal(otherTurnAfter.editedAt, undefined, '③ 没被改动的消息不许留下 editedAt');
+// ③ 上面那条还不够狠：那个块排在 index-2 上，本来就不会被看。真正要挡的是"前一条就在 index-1 上、
+//    也带着块，唯一区别是 replyTo 属于别的轮"。把同轮那条的 replyTo 改掉再编辑一次，它必须一字不动。
+const siblingRecord = (await app.data.store.messages(id)).filter(message => message.id === 'message-sibling-block')[0];
+await app.data.store.putMessage(Object.assign({}, siblingRecord, { replyTo: 'message-another-turn' }));
+await app.features.chat.renderMessages(); await tick();
+drawnRow().querySelector('[aria-label="修改绘图提示词"]').click();
+await until(() => document.querySelector('#modalForm [name="text"]'), 'the drawing prompt editor opens for the guard case');
+field('text', '凌晨的旧车站, 空无一人'); fireSubmit(document.querySelector('#modalForm'));
+await until(() => !document.querySelector('#modalForm'), 'the prompt editor closes for the guard case');
+const guardCase = await app.data.store.messages(id);
+assert.ok(guardCase.filter(message => message.id === drawnMessage.id)[0].rawText.includes('"prompt":"凌晨的旧车站, 空无一人"'), '自己那条照旧要跟着改');
+assert.ok(guardCase.filter(message => message.id === 'message-sibling-block')[0].rawText.includes('"prompt":"' + editedPrompt + '"'), 'replyTo 不同就不是同一轮：它就在前一条、也带着块，但绝不许被改');
+assert.equal(selfAfter.media[0].alt, editedPrompt, '图片的 alt 文本是提示词的副本，要跟着一起改');
+assert.equal(selfAfter.media.length, 1, '改提示词还是不能把已经画好的图弄丢');
+assert.equal(afterBlockEdit.filter(message => message.id === 'message-sibling-block')[0].text, '我画一张给你看吧。', '同步只落在 rawText 上，不进正文');
 
 // 4) 「设为背景」必须先确认（业主 2026-09-27 第三轮）：它改的是**对话设置**，而且一设就铺满整个
 //    界面 —— 在看图时误触一次，用户得再进对话设置里换回来。静态门禁只能证明"confirm 写在 save
