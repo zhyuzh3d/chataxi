@@ -15,6 +15,21 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME_ROOTS = ("index.html", "haminn.json", "guid.md", "app", "styles")
 FIXED_TIMESTAMP = (2026, 9, 13, 0, 0, 0)
 
+# Editor and operating-system droppings must never reach a shipped archive.
+# `.DS_Store` shows up from merely browsing `app/` in Finder, and an unfiltered
+# walk would bake it into the release (and into the website copy, which re-uses
+# these entry names).
+JUNK_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
+JUNK_DIRS = frozenset({"__pycache__", ".vscode", ".idea"})
+
+
+def is_runtime_file(path: pathlib.Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.name in JUNK_NAMES or path.name.startswith("._"):
+        return False
+    return not JUNK_DIRS.intersection(path.relative_to(ROOT).parts)
+
 
 def runtime_files() -> list[pathlib.Path]:
     files: list[pathlib.Path] = []
@@ -23,7 +38,7 @@ def runtime_files() -> list[pathlib.Path]:
         if target.is_file():
             files.append(target)
         elif target.is_dir():
-            files.extend(path for path in target.rglob("*") if path.is_file())
+            files.extend(path for path in target.rglob("*") if is_runtime_file(path))
         else:
             raise SystemExit(f"missing runtime path: {relative}")
     return sorted(files, key=lambda path: path.relative_to(ROOT).as_posix())
