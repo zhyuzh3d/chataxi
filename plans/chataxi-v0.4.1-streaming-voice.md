@@ -2,7 +2,7 @@
 
 本次修改把语言模型和朗读服务统一为能力驱动的增量链路。
 
-语言模型适配器为 OpenAI Responses、OpenAI Chat 兼容协议、Anthropic Messages 和 Gemini GenerateContent 构造原生流式请求，并解析各自的 SSE 文本增量。消息在生成过程中直接更新界面并定期保存部分文本。标准 WebView 响应流不可用或被服务跨域策略拒绝时，改用 Hermit 原生完整响应，并在消息上标记“兼容输出”，不伪装成流式结果。
+语言模型适配器为 OpenAI Responses、OpenAI Chat 兼容协议、Anthropic Messages 和 Gemini GenerateContent 构造原生流式请求，并解析各自的 SSE 文本增量。消息在生成过程中直接更新界面并定期保存部分文本。标准 WebView 响应流不可用或被服务跨域策略拒绝时，改用 Haminn 原生完整响应，并在消息上标记“兼容输出”，不伪装成流式结果。
 
 ElevenLabs 服务连接同时读取 `/v1/models` 和分页 `/v2/voices`，只保留支持文字转语音的模型，并保存模型能力、文本上限、语言和账户音色。角色按朗读服务、模型、音色逐级选择。OpenAI Speech 兼容服务与 ElevenLabs 共用模型解析、角色覆盖、音频生成、取消和播放队列。
 

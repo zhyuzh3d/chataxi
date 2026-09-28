@@ -12,8 +12,8 @@
     return darkScheme && darkScheme.matches ? "dark" : "light";
   }
   function reportTheme() {
-    if (!app.platform || !app.platform.hermit) return;
-    app.platform.hermit.call("appearance.reportTheme", { theme: resolvedTheme() }).catch(function () {});
+    if (!app.platform || !app.platform.haminn) return;
+    app.platform.haminn.call("appearance.reportTheme", { theme: resolvedTheme() }).catch(function () {});
   }
 
   function applyTheme(theme) {
@@ -22,7 +22,7 @@
     else document.documentElement.removeAttribute('data-theme');
     reportTheme();
   }
-  window.addEventListener("hermitready", reportTheme);
+  window.addEventListener("haminnready", reportTheme);
   if (darkScheme) {
     var systemThemeChanged = function () { if (themePreference === "system") reportTheme(); };
     if (darkScheme.addEventListener) darkScheme.addEventListener("change", systemThemeChanged);
@@ -183,7 +183,7 @@
       // 来源是"最近使用的对话"（meta/last-conversation），所以不用等用户进对话。
       if (app.features.chat && app.features.chat.refreshAppBackground) await app.features.chat.refreshAppBackground();
       await routeFromHash();
-      if (app.platform.hermit.available()) { try { await app.platform.hermit.api().app.ready(); } catch (_) {} }
+      if (app.platform.haminn.available()) { try { await app.platform.haminn.api().app.ready(); } catch (_) {} }
     } catch (error) {
       document.getElementById('mainContent').innerHTML = ui.empty('triangle-exclamation', '暂时无法准备好 chataxi', app.utils.cleanError(error), '<button class="button primary" type="button" id="reloadApp">重新加载</button>');
       document.getElementById('reloadApp').addEventListener('click', function () { location.reload(); });

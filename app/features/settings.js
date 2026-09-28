@@ -5,8 +5,8 @@
 
   function items(values, systemAvailable) { return values.map(function (item) { var system = (item.family || item.type) === "system"; return { id: item.id, name: item.name + (system && systemAvailable === false ? " · 当前不可用" : ""), disabled: system && systemAvailable === false }; }); }
   async function systemTtsAvailable() {
-    if (!(await app.platform.hermit.awaitReady(1200))) return false;
-    try { return Boolean((await app.platform.hermit.api().tts.availability()).operational); } catch (_) { return false; }
+    if (!(await app.platform.haminn.awaitReady(1200))) return false;
+    try { return Boolean((await app.platform.haminn.api().tts.availability()).operational); } catch (_) { return false; }
   }
   function toggle(name, label, text, checked) {
     return '<label class="switch-row"><span><strong>' + label + '</strong><small>' + text + '</small></span><input name="' + name + '" type="checkbox"' + (checked ? ' checked' : '') + '></label>';
@@ -69,8 +69,8 @@
   async function backupApp(button) {
     button.disabled = true;
     try {
-      if (!(await app.platform.hermit.awaitReady(1500))) throw new Error("当前不在 HermitApp 中，无法打包备份");
-      var result = await app.platform.hermit.call("app.backup");
+      if (!(await app.platform.haminn.awaitReady(1500))) throw new Error("当前不在 HaminnApp 中，无法打包备份");
+      var result = await app.platform.haminn.call("app.backup");
       if (result && result.cancelled) { ui.toast("已取消备份"); return; }
       // 「备份完成 · 文件名 · 大小」是拼装句：界面语言层靠 i18nEnPatterns 的整句规则翻译，
       // 而「备份完成」这段中文本身要能被字典单独覆盖（check-i18n 按字面量逐段审计）。
@@ -84,7 +84,7 @@
     var tts = (await store.list("tts-profiles")).filter(function (item) { return item.enabled !== false; });
     var asr = (await store.list("asr-profiles")).filter(function (item) { return item.enabled !== false; });
     var runtimeCapabilities = await Promise.all([systemTtsAvailable(), app.services.asr.systemCapability(false)]);
-    var info = await app.platform.hermit.info(), appInfo = await app.platform.hermit.appInfo();
+    var info = await app.platform.haminn.info(), appInfo = await app.platform.haminn.appInfo();
     if (app.state.route !== "settings") return;
     ui.pageHeader("设置", tabNames[tab]);
     var main = document.getElementById("mainContent"); main.className = "main";
@@ -118,7 +118,7 @@
       '<section class="settings-panel system-panel' + (tab === "system" ? '' : ' is-hidden') + '" data-settings-panel="system">' +
       '<button class="button primary full system-backup" type="button" data-backup-app>' + ui.icon("box-archive") + '备份软件和数据</button>' +
       '<p class="helper">把当前应用与全部数据打包到自选位置，备份不加密。</p>' +
-      '<div class="system-hero"><img class="system-mark" src="./app/assets/icon.webp" alt=""><div><h2>chataxi <span class="badge">v' + u.escapeHtml(app.version) + '</span></h2><p>想聊就聊，自由自在</p></div></div><p class="system-copy">chataxi 是运行在 HermitApp 中的个人 AI 对话应用。你可以连接自己的模型服务，创建独立角色，并进行单聊或多人对话。</p><dl class="facts"><div><dt>作者</dt><dd>zhyuzh3d</dd></div><div><dt>数据保存</dt><dd>' + (store.backend() === "hermit" ? "Hermit 应用数据" : "当前浏览器") + '</dd></div><div><dt>运行方式</dt><dd>' + modeValue + '</dd></div><div><dt>Hermit Bridge</dt><dd>' + (app.platform.hermit.available() ? "已就绪" : "未连接") + '</dd></div></dl>' + (info.runtimeMode === "live" && appInfo.localAvailable ? '<button class="button secondary full runtime-switch" type="button" data-enable-local>' + ui.icon("gear") + '改为本地运行</button>' : '') + '<p class="helper">角色、对话和服务配置保存在当前设备。清除应用数据会删除本机记录；页面代码在请求模型服务时可以读取保存在当前 happ 数据空间中的密钥。</p><button class="button danger data-clear-button" type="button" data-clear-data>' + ui.icon("trash") + '清除数据</button></section></section>';
+      '<div class="system-hero"><img class="system-mark" src="./app/assets/icon.webp" alt=""><div><h2>chataxi <span class="badge">v' + u.escapeHtml(app.version) + '</span></h2><p>想聊就聊，自由自在</p></div></div><p class="system-copy">chataxi 是运行在 HaminnApp 中的个人 AI 对话应用。你可以连接自己的模型服务，创建独立角色，并进行单聊或多人对话。</p><dl class="facts"><div><dt>作者</dt><dd>zhyuzh3d</dd></div><div><dt>数据保存</dt><dd>' + (store.backend() === "haminn" ? "Haminn 应用数据" : "当前浏览器") + '</dd></div><div><dt>运行方式</dt><dd>' + modeValue + '</dd></div><div><dt>Haminn Bridge</dt><dd>' + (app.platform.haminn.available() ? "已就绪" : "未连接") + '</dd></div></dl>' + (info.runtimeMode === "live" && appInfo.localAvailable ? '<button class="button secondary full runtime-switch" type="button" data-enable-local>' + ui.icon("gear") + '改为本地运行</button>' : '') + '<p class="helper">角色、对话和服务配置保存在当前设备。清除应用数据会删除本机记录；页面代码在请求模型服务时可以读取保存在当前 happ 数据空间中的密钥。</p><button class="button danger data-clear-button" type="button" data-clear-data>' + ui.icon("trash") + '清除数据</button></section></section>';
 
     var form = document.getElementById("generalForm");
     function selectTab(selected) { app.state.settingsTab = selected; main.querySelectorAll("[data-settings-tab]").forEach(function (item) { item.setAttribute("aria-selected", String(item.dataset.settingsTab === selected)); }); main.querySelectorAll("[data-settings-panel]").forEach(function (panel) { panel.classList.toggle("is-hidden", panel.dataset.settingsPanel !== selected); }); form.querySelector("[data-settings-save]").classList.toggle("is-hidden", selected === "system"); document.getElementById("pageSubtitle").textContent = tabNames[selected]; }
@@ -149,9 +149,9 @@
       } finally { button.disabled = false; }
     }));
     var liveButton = main.querySelector("[data-enable-live]"), tapCount = 0, tapTimer = 0;
-    if (liveButton) liveButton.addEventListener("click", ui.action(async function () { clearTimeout(tapTimer); tapCount += 1; tapTimer = setTimeout(function () { tapCount = 0; }, 1400); if (tapCount < 3) return; tapCount = 0; clearTimeout(tapTimer); liveButton.disabled = true; await app.platform.hermit.setRuntimeMode("live"); }));
+    if (liveButton) liveButton.addEventListener("click", ui.action(async function () { clearTimeout(tapTimer); tapCount += 1; tapTimer = setTimeout(function () { tapCount = 0; }, 1400); if (tapCount < 3) return; tapCount = 0; clearTimeout(tapTimer); liveButton.disabled = true; await app.platform.haminn.setRuntimeMode("live"); }));
     var localButton = main.querySelector("[data-enable-local]");
-    if (localButton) localButton.addEventListener("click", ui.action(async function () { localButton.disabled = true; await app.platform.hermit.setRuntimeMode("local"); }));
+    if (localButton) localButton.addEventListener("click", ui.action(async function () { localButton.disabled = true; await app.platform.haminn.setRuntimeMode("local"); }));
     main.querySelector("[data-backup-app]").addEventListener("click", ui.action(function () { return backupApp(main.querySelector("[data-backup-app]")); }));
     main.querySelector("[data-clear-data]").addEventListener("click", openClearData);
   }

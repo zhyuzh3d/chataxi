@@ -38,15 +38,15 @@
     }
   };
 
-  var hermitBackend = {
-    get: async function (collection, key) { return app.platform.hermit.api().data.get({ collection: collection, key: key }); },
-    put: async function (collection, key, value) { return app.platform.hermit.api().data.put({ collection: collection, key: key, value: value }); },
-    delete: async function (collection, key) { return app.platform.hermit.api().data.delete({ collection: collection, key: key }); },
+  var haminnBackend = {
+    get: async function (collection, key) { return app.platform.haminn.api().data.get({ collection: collection, key: key }); },
+    put: async function (collection, key, value) { return app.platform.haminn.api().data.put({ collection: collection, key: key, value: value }); },
+    delete: async function (collection, key) { return app.platform.haminn.api().data.delete({ collection: collection, key: key }); },
     scan: async function (collection, keyPrefix) {
       var all = [];
       var afterKey = null;
       do {
-        var page = await app.platform.hermit.api().data.scan({ collection: collection, prefix: keyPrefix || "", afterKey: afterKey || undefined, limit: 100 });
+        var page = await app.platform.haminn.api().data.scan({ collection: collection, prefix: keyPrefix || "", afterKey: afterKey || undefined, limit: 100 });
         all = all.concat(page.items || []);
         afterKey = page.nextAfterKey;
       } while (afterKey);
@@ -54,7 +54,7 @@
     }
   };
 
-  function api() { return backend === "hermit" ? hermitBackend : localBackend; }
+  function api() { return backend === "haminn" ? haminnBackend : localBackend; }
 
   function stableSuffix(value) {
     var hash = 2166136261, text = String(value || "");
@@ -94,8 +94,8 @@
   }
 
   async function init() {
-    backend = (await app.platform.hermit.awaitReady(3500)) ? "hermit" : "local";
-    if (backend === "local" && window.hermit) throw new Error("Hermit 尚未就绪，请重新加载；不会把宿主数据写入浏览器预览区");
+    backend = (await app.platform.haminn.awaitReady(3500)) ? "haminn" : "local";
+    if (backend === "local" && window.haminn) throw new Error("Haminn 尚未就绪，请重新加载；不会把宿主数据写入浏览器预览区");
     await seed();
     return backend;
   }
@@ -525,8 +525,8 @@
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = typeof candidates[i] === "string" ? { mediaId: candidates[i] } : candidates[i] || {};
       if (candidate.mediaId && !used[candidate.mediaId]) await app.data.media.remove(candidate.mediaId);
-      if (candidate.logicalFileId && !usedLogical[candidate.logicalFileId] && app.platform.hermit.available()) {
-        await app.platform.hermit.api().files.delete({ logicalFileId: candidate.logicalFileId }).catch(function () {});
+      if (candidate.logicalFileId && !usedLogical[candidate.logicalFileId] && app.platform.haminn.available()) {
+        await app.platform.haminn.api().files.delete({ logicalFileId: candidate.logicalFileId }).catch(function () {});
       }
     }
   }

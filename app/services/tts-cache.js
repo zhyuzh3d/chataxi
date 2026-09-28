@@ -44,7 +44,7 @@
     return ("00000000" + hash.toString(16)).slice(-8);
   }
 
-  // crypto.subtle 要安全上下文; chataxi 跑在 https 的 .apps.hermit.invalid 上, 通常有。
+  // crypto.subtle 要安全上下文; chataxi 跑在 https 的 .apps.haminn.invalid 上, 通常有。
   // 拿不到就退回 64 位 FNV-1a —— 在"最多 100 条"的规模下碰撞概率可以忽略, 但毕竟是弱哈希,
   // 所以放在后面当兜底而不是首选。
   async function digest(text) {
@@ -79,8 +79,8 @@
     if (!record || !record.hash) return false;
     await app.data.store.remove(COLLECTION, record.hash).catch(function () {});
     if (record.mediaId) await app.data.media.remove(record.mediaId).catch(function () {});
-    if (record.kind === "file" && record.logicalFileId && app.platform.hermit.available()) {
-      await app.platform.hermit.api().files.delete({ logicalFileId: record.logicalFileId }).catch(function () {});
+    if (record.kind === "file" && record.logicalFileId && app.platform.haminn.available()) {
+      await app.platform.haminn.api().files.delete({ logicalFileId: record.logicalFileId }).catch(function () {});
     }
     return true;
   }

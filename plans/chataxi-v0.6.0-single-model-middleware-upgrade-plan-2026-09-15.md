@@ -223,7 +223,7 @@ CanonicalTranscriptionRequest = {
 };
 ```
 
-统一事件为 `transcript.started`、`transcript.text.delta`、`transcript.segment`、`transcript.completed`、`transcript.failed`。批量文件转录和实时 PCM/WebSocket 是两种传输，不因同属一个模型系列而互相推断。Android 系统语音识别通过 Hermit Bridge 适配为同一结果事件，但可用语言必须来自设备查询结果。
+统一事件为 `transcript.started`、`transcript.text.delta`、`transcript.segment`、`transcript.completed`、`transcript.failed`。批量文件转录和实时 PCM/WebSocket 是两种传输，不因同属一个模型系列而互相推断。Android 系统语音识别通过 Haminn Bridge 适配为同一结果事件，但可用语言必须来自设备查询结果。
 
 ## 5. 注册表设计
 
@@ -367,7 +367,7 @@ OptionDomain = {
 
 - 模型来自当前连接实际目录或带来源的官方后备目录；
 - TTS 音色来自当前账号目录、设备查询或精确的模型—音色注册表，并先按具体模型过滤；
-- 系统 TTS 的语言、音色和 ASR 的识别语言只来自 Hermit Bridge 对当前设备的查询结果；
+- 系统 TTS 的语言、音色和 ASR 的识别语言只来自 Haminn Bridge 对当前设备的查询结果；
 - 推理强度、声音风格、输出格式等枚举只来自当前精确模型的 `ParameterSpec`；
 - 目录失败时不显示预先堆叠的猜测选项。可以保留旧选择为不可用状态，但不能把它当作当前可选值。
 
@@ -580,7 +580,7 @@ LLM 最小测试只发送一句短文本，并要求极短输出；TTS 使用短
 
 ### 阶段 E：多模态、流式和 Native 前置能力
 
-- 完成 Hermit 前台流式网络、可取消文件上传及需要鉴权 Header 的 WebSocket 合同；
+- 完成 Haminn 前台流式网络、可取消文件上传及需要鉴权 Header 的 WebSocket 合同；
 - 验收 OpenAI、Gemini、Ark、Qwen、Kimi 的已登记图片/视频模型；
 - 验收 TTS 音频分块、真实渐进解码、三秒起播、暂停续播和中断；
 - 验收实时 ASR 音频块和部分结果。

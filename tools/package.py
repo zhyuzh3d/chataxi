@@ -12,7 +12,7 @@ import zipfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME_ROOTS = ("index.html", "hermit.json", "guid.md", "app", "styles")
+RUNTIME_ROOTS = ("index.html", "haminn.json", "guid.md", "app", "styles")
 FIXED_TIMESTAMP = (2026, 9, 13, 0, 0, 0)
 
 
@@ -30,7 +30,7 @@ def runtime_files() -> list[pathlib.Path]:
 
 
 def release_info() -> tuple[str, pathlib.Path]:
-    manifest = json.loads((ROOT / "hermit.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ROOT / "haminn.json").read_text(encoding="utf-8"))
     version = manifest["version"]["name"]
     relative = f"release/chataxi-v{version}.zip"
     return relative, ROOT / relative
@@ -66,7 +66,7 @@ def build(output: pathlib.Path) -> str:
 
 def write_install_manifest(package_path: str, digest: str) -> None:
     content = {"schema": 1, "package": package_path, "sha256": digest}
-    (ROOT / "hermit-install.json").write_text(
+    (ROOT / "haminn-install.json").write_text(
         json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
@@ -74,10 +74,10 @@ def write_install_manifest(package_path: str, digest: str) -> None:
 def verify(package_path: str, output: pathlib.Path) -> None:
     if not output.is_file():
         raise SystemExit(f"release archive missing: {output}")
-    install = json.loads((ROOT / "hermit-install.json").read_text(encoding="utf-8"))
+    install = json.loads((ROOT / "haminn-install.json").read_text(encoding="utf-8"))
     expected = sha256(output)
     if install != {"schema": 1, "package": package_path, "sha256": expected}:
-        raise SystemExit("hermit-install.json does not match the release archive")
+        raise SystemExit("haminn-install.json does not match the release archive")
     if package_path.startswith("/") or any(part in {"", ".", ".."} for part in package_path.split("/")):
         raise SystemExit("install package must be a safe same-origin relative path")
     expected_files = {path.relative_to(ROOT).as_posix() for path in runtime_files()}
@@ -96,7 +96,7 @@ def verify(package_path: str, output: pathlib.Path) -> None:
         )
         if changed:
             raise SystemExit(f"release content mismatch: {', '.join(changed)}")
-        if "index.html" not in names or "hermit.json" not in names:
+        if "index.html" not in names or "haminn.json" not in names:
             raise SystemExit("release archive lacks required root files")
     print(f"verified {output.relative_to(ROOT)} sha256={expected}")
 

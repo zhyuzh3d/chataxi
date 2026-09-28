@@ -7,7 +7,7 @@
 
   // CVP 插件的默认地址：插件装在 ComfyUI 里，所以主机就是跑 ComfyUI 的那台机器（A1X 掌机）。
   // 只写到「主机 : 端口」这一层 —— 换机器时用户只改 IP，端口与 /cvp 路径都不用碰
-  //（model-services.js 的 cvpBase 会把 /cvp 或 /vibedraw 后缀吃掉，写不写都对）。
+  //（model-services.js 的 cvpBase 会把 /cvp 或 /hamdraw 后缀吃掉，写不写都对）。
   //
   // 默认值放在这里，而不是 catalog.js 的 imageFamilies.endpoint：那个字段代表「服务商预设」，
   // 填了它输入框清空就会自动变回默认值，validateConnection 的「请填写服务地址」守卫也就
@@ -222,7 +222,7 @@
         } else if (kind === "image") {
           // 绘图能力的测试就是再读一次 /cvp/info：它同时回答"地址通不通""密码对不对""能力在不在"
           // "插件为这个能力选好模型没有"。比另造一个测试请求更准，也不需要插件加接口。
-          if (chosen.ready === false) throw new Error("插件的“" + (chosen.name || chosen.id) + "”能力还没有选好模型，请在 ComfyUI 的 VibeDraw 配置节点里设置");
+          if (chosen.ready === false) throw new Error("插件的“" + (chosen.name || chosen.id) + "”能力还没有选好模型，请在 ComfyUI 的 HamDraw 配置节点里设置");
           await app.services.modelServices.discover("image", profile, { persist: false });
           profile.validationState = "verified"; profile.validatedAt = Date.now(); profile.validationBaseline = baseline;
           service = Object.assign(service, profile);
@@ -247,7 +247,7 @@
     form.querySelector("[data-fetch-models]").addEventListener("click", ui.action(fetchModels));
     form.querySelector("[data-test-model]").addEventListener("click", ui.action(testModel));
     async function pasteSecret(name, label) {
-      var text = String(await app.platform.hermit.readClipboardText() || "").trim();
+      var text = String(await app.platform.haminn.readClipboardText() || "").trim();
       if (!text) throw new Error("剪贴板里没有可粘贴的" + label);
       var input = form.elements.namedItem(name); input.value = text; input.dispatchEvent(new Event("input", { bubbles: true })); input.focus(); input.select(); ui.toast(label + "已粘贴");
     }

@@ -13,9 +13,9 @@
     if (kind !== "tts") return null;
     if (!refresh && systemRuntimeCache.tts && Date.now() - systemRuntimeCache.tts.at < 30000) return systemRuntimeCache.tts.value;
     var value;
-    if (!(await app.platform.hermit.awaitReady(1200))) value = { available: false, operational: false, voices: [], languages: [], message: "Android 系统朗读只在 HermitApp 中可用" };
+    if (!(await app.platform.haminn.awaitReady(1200))) value = { available: false, operational: false, voices: [], languages: [], message: "Android 系统朗读只在 HaminnApp 中可用" };
     else {
-      var api = app.platform.hermit.api(), availability = await api.tts.availability(), catalog = { voices: [], languages: [] };
+      var api = app.platform.haminn.api(), availability = await api.tts.availability(), catalog = { voices: [], languages: [] };
       if (availability.operational) { try { catalog = await api.tts.voices(); } catch (_) {} }
       value = Object.assign({}, availability, catalog, { voices: Array.isArray(catalog.voices) ? catalog.voices : [], languages: Array.isArray(catalog.languages) ? catalog.languages : [] });
     }
@@ -55,7 +55,7 @@
     content.querySelectorAll("[data-edit-service]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var service = await store.get(collection(kind), button.dataset.editService); if (kind === "tts" && familyOf(kind, service).id === "system") return openSystemTts(service); if (kind === "asr" && familyOf(kind, service).id === "system") return openSystemAsr(service); return openService(kind, service); })); });
     content.querySelectorAll("[data-clone-service]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var source = await store.get(collection(kind), button.dataset.cloneService), clone = Object.assign({}, source, { id: u.id(kind), directorySourceId: source.id, name: "", externalModelId: "", model: "", defaultModelId: "", models: [], enabledModelIds: [], validationState: "unverified", validatedAt: 0, createdAt: Date.now(), updatedAt: Date.now() }); return openService(kind, clone); })); });
     content.querySelectorAll("[data-remove-service]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var service = await store.get(collection(kind), button.dataset.removeService); if (await ui.confirm({ title: "删除“" + service.name + "”？", message: kind === "llm" ? "角色正在使用时不能删除此模型。" : kind === "image" ? "删除后对话里的绘图动作会失效，直到重新配置一张可用的绘图模型卡片。" : "相关设置会回落到 Android 系统模型。", confirmText: "删除模型", danger: true })) { await app.services.profiles.remove(kind, service.id); ui.toast("模型已删除"); await renderServices(kind); } })); });
-    content.querySelectorAll("[data-test-service]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var id = button.dataset.testService, service = await store.get(collection(kind), id); if (kind === "asr") return openAsrTest(service); testing[id] = true; await renderServices(kind); try { if (kind === "llm") { var available = app.services.modelServices.models(kind, service), selected = available.find(function (item) { return item.id === service.defaultModelId; }) || available[0]; if (!selected) throw new Error("服务没有已启用模型，请先编辑并连接服务"); await app.services.llm.test(service, selected.id); } else if (kind === "image") { var capability = app.services.modelServices.allModels("image", service)[0]; if (!capability) throw new Error("卡片没有已保存的绘图能力，请先编辑并获取目录"); if (capability.ready === false) throw new Error("插件的“" + (capability.name || capability.id) + "”能力还没有选好模型，请在 ComfyUI 的 VibeDraw 配置节点里设置"); await app.services.modelServices.discover("image", service, { persist: false }); } else await app.services.tts.speak("你好！欢迎使用朗读功能。", { ttsProfileId: id }); ui.toast(kind === "llm" ? "默认模型连接成功" : kind === "image" ? "插件连接成功，绘图能力可用" : "已使用默认模型与音色开始试听"); } finally { delete testing[id]; await renderServices(kind); } })); });
+    content.querySelectorAll("[data-test-service]").forEach(function (button) { button.addEventListener("click", ui.action(async function () { var id = button.dataset.testService, service = await store.get(collection(kind), id); if (kind === "asr") return openAsrTest(service); testing[id] = true; await renderServices(kind); try { if (kind === "llm") { var available = app.services.modelServices.models(kind, service), selected = available.find(function (item) { return item.id === service.defaultModelId; }) || available[0]; if (!selected) throw new Error("服务没有已启用模型，请先编辑并连接服务"); await app.services.llm.test(service, selected.id); } else if (kind === "image") { var capability = app.services.modelServices.allModels("image", service)[0]; if (!capability) throw new Error("卡片没有已保存的绘图能力，请先编辑并获取目录"); if (capability.ready === false) throw new Error("插件的“" + (capability.name || capability.id) + "”能力还没有选好模型，请在 ComfyUI 的 HamDraw 配置节点里设置"); await app.services.modelServices.discover("image", service, { persist: false }); } else await app.services.tts.speak("你好！欢迎使用朗读功能。", { ttsProfileId: id }); ui.toast(kind === "llm" ? "默认模型连接成功" : kind === "image" ? "插件连接成功，绘图能力可用" : "已使用默认模型与音色开始试听"); } finally { delete testing[id]; await renderServices(kind); } })); });
   }
 
   function languageItems(values) {
@@ -64,8 +64,8 @@
   }
 
   async function openSystemTts(service) {
-    if (!(await app.platform.hermit.awaitReady(1500))) throw new Error("系统朗读设置只在 HermitApp 中可用");
-    var api = app.platform.hermit.api(), availability = await api.tts.availability(), preferences = await api.tts.preferences(), result = await api.tts.voices();
+    if (!(await app.platform.haminn.awaitReady(1500))) throw new Error("系统朗读设置只在 HaminnApp 中可用");
+    var api = app.platform.haminn.api(), availability = await api.tts.availability(), preferences = await api.tts.preferences(), result = await api.tts.voices();
     if (!availability.operational) throw new Error(availability.message || "Android 系统朗读当前不可用");
     var voices = (result.voices || []).map(function (voice) { return { id: voice.id, name: (voice.locale ? voice.locale + " · " : "") + voice.id, locale: voice.locale || "", networkRequired: Boolean(voice.networkRequired), quality: voice.quality, latency: voice.latency, features: voice.features || [] }; });
     var languages = languageItems(result.languages || voices.map(function (voice) { return voice.locale; })), languageIds = languages.map(function (item) { return item.id; });
@@ -94,9 +94,9 @@
   }
 
   async function openSystemAsr(service) {
-    if (!(await app.platform.hermit.awaitReady(1500))) throw new Error("系统语音输入设置只在 HermitApp 中可用");
+    if (!(await app.platform.haminn.awaitReady(1500))) throw new Error("系统语音输入设置只在 HaminnApp 中可用");
     var availability = await systemRuntime("asr", true); if (!availability.available) throw new Error(availability.message || "Android 系统语音识别当前不可用");
-    var api = app.platform.hermit.api(), preferences = await api.speech.preferences(), languages = languageItems(availability.languages), languageIds = languages.map(function (item) { return item.id; });
+    var api = app.platform.haminn.api(), preferences = await api.speech.preferences(), languages = languageItems(availability.languages), languageIds = languages.map(function (item) { return item.id; });
     var language = [service.language, preferences.language, availability.preferredLanguage].find(function (value) { return languageIds.indexOf(value) >= 0; }) || "";
     var languageControl = languages.length ? ui.picker("language", "默认识别语言", "", "由当前系统识别服务提供") : '<input type="hidden" name="language" value=""><p class="helper">当前识别服务没有公开语言目录，将跟随系统默认识别语言。</p>';
     var html = '<div class="form-grid system-service-editor"><div class="capability-note"><strong>Android 系统语音识别可用</strong><small>' + u.escapeHtml(availability.streamingAvailable ? "支持实时识别、部分结果和录音电平。" : "设备只提供系统单次识别界面。") + '</small></div>' + languageControl + (availability.onDeviceAvailable ? '<label class="switch-row"><span><strong>优先设备端识别</strong><small>当前设备确认提供设备端识别</small></span><input name="onDevice" type="checkbox"' + (service.onDevice ? ' checked' : '') + '></label>' : '') + '<button class="button secondary full" type="button" data-preview-asr>' + ui.icon("microphone") + '录音测试</button></div>';
@@ -108,7 +108,7 @@
 
   async function openAsrTest(service) {
     var settings = await store.get("meta", "settings"), profile = app.services.modelServices.resolveAsr(service, {}, settings), system = (service.family || service.type) === "system", availability = null;
-    if (system) { if (!(await app.platform.hermit.awaitReady(1500))) throw new Error("系统语音识别只在 HermitApp 中可用"); availability = await app.platform.hermit.api().speech.availability(); if (!availability.available) throw new Error(availability.message || "系统没有可用的语音识别服务"); }
+    if (system) { if (!(await app.platform.haminn.awaitReady(1500))) throw new Error("系统语音识别只在 HaminnApp 中可用"); availability = await app.platform.haminn.api().speech.availability(); if (!availability.available) throw new Error(availability.message || "系统没有可用的语音识别服务"); }
     var bars = Array.apply(null, { length: 30 }).map(function (_, index) { return '<i style="--wave-index:' + index + '"></i>'; }).join("");
     var recording = false, subscriptionId = "", recordingId = "", logicalFileId = "", offs = [], closed = false;
     var form = ui.openSubsheet({ title: (service.name || "语音输入") + " · 录音测试", submitText: null, cancelText: "完成", html: '<div class="asr-test"><div class="asr-waveform" data-asr-waveform aria-label="实时录音波形">' + bars + '</div><p class="asr-test-status" data-asr-status>' + (system ? "点击开始，说完后再点停止。" : "点击开始录音；停止后会把录音提交给当前识别服务。") + '</p><div class="asr-transcript" data-asr-transcript aria-live="polite"><span>识别文字会显示在这里</span></div><button class="button primary full" type="button" data-asr-record>' + ui.icon("microphone") + '<span>开始录音</span></button></div>', onDismiss: function () { closed = true; cleanup(); } });
@@ -116,24 +116,24 @@
     function setLevel(value) { var level = Math.max(0, Math.min(1, Number(value || 0))); wave.classList.toggle("is-active", recording); waveBars.forEach(function (bar, index) { var distance = Math.abs(index - (waveBars.length - 1) / 2) / waveBars.length, shaped = recording ? Math.max(.06, Math.min(1, level * 1.75 + Math.sin(index * 1.9 + Date.now() / 140) * .07 - distance * .25)) : .05; bar.style.transform = "scaleY(" + shaped.toFixed(3) + ")"; }); }
     function setRecording(value) { recording = value; button.classList.toggle("recording", value); button.querySelector("span").textContent = value ? "停止并识别" : "开始录音"; setLevel(0); }
     function showText(value, partial) { transcript.innerHTML = '<p' + (partial ? ' class="is-partial"' : '') + '>' + u.escapeHtml(value || "没有识别到文字") + '</p>'; }
-    function cleanup() { offs.splice(0).forEach(function (off) { off(); }); if (system && recording) app.services.asr.cancelSystem().catch(function () {}); if (!system && recordingId && app.platform.hermit.available()) app.platform.hermit.api().audio.cancelRecording({ recordingId: recordingId }).catch(function () {}); if (logicalFileId && app.platform.hermit.available()) app.platform.hermit.api().files.delete({ logicalFileId: logicalFileId }).catch(function () {}); recording = false; }
+    function cleanup() { offs.splice(0).forEach(function (off) { off(); }); if (system && recording) app.services.asr.cancelSystem().catch(function () {}); if (!system && recordingId && app.platform.haminn.available()) app.platform.haminn.api().audio.cancelRecording({ recordingId: recordingId }).catch(function () {}); if (logicalFileId && app.platform.haminn.available()) app.platform.haminn.api().files.delete({ logicalFileId: logicalFileId }).catch(function () {}); recording = false; }
     async function finishThirdParty() {
-      var api = app.platform.hermit.api(), file = await api.audio.stopRecording({ recordingId: recordingId, name: "chataxi-asr-test.m4a" }); recordingId = ""; logicalFileId = file.logicalFileId; setRecording(false); button.disabled = true; status.textContent = "正在提交录音并识别…";
+      var api = app.platform.haminn.api(), file = await api.audio.stopRecording({ recordingId: recordingId, name: "chataxi-asr-test.m4a" }); recordingId = ""; logicalFileId = file.logicalFileId; setRecording(false); button.disabled = true; status.textContent = "正在提交录音并识别…";
       try { var text = await app.services.asr.transcribeFile(file, profile); if (closed) return; showText(text, false); status.textContent = "识别完成，可以再次测试。"; }
       catch (error) { if (!closed) status.textContent = u.cleanError(error); throw error; }
       finally { if (logicalFileId) await api.files.delete({ logicalFileId: logicalFileId }).catch(function () {}); logicalFileId = ""; if (!closed) button.disabled = false; }
     }
     async function startThirdParty() {
-      if (!(await app.platform.hermit.awaitReady(1500))) throw new Error("第三方录音测试需要在 HermitApp 中使用");
-      var api = app.platform.hermit.api();
-      offs.push(app.platform.hermit.on("audio.recording.level", function (data) { if (!recordingId || data.recordingId !== recordingId) return; setLevel(data.level); }));
-      offs.push(app.platform.hermit.on("audio.recording.limit", function (data) { if (!recordingId || data.recordingId !== recordingId) return; finishThirdParty().catch(function (error) { status.textContent = u.cleanError(error); button.disabled = false; }); }));
+      if (!(await app.platform.haminn.awaitReady(1500))) throw new Error("第三方录音测试需要在 HaminnApp 中使用");
+      var api = app.platform.haminn.api();
+      offs.push(app.platform.haminn.on("audio.recording.level", function (data) { if (!recordingId || data.recordingId !== recordingId) return; setLevel(data.level); }));
+      offs.push(app.platform.haminn.on("audio.recording.limit", function (data) { if (!recordingId || data.recordingId !== recordingId) return; finishThirdParty().catch(function (error) { status.textContent = u.cleanError(error); button.disabled = false; }); }));
       var started = await api.audio.startRecording({ maxDurationMs: 30000 }); recordingId = started.recordingId; setRecording(true); status.textContent = "正在录音，最长 30 秒。";
     }
     async function startSystem() {
       if (!availability.streamingAvailable && availability.oneShotAvailable) {
         button.disabled = true; status.textContent = "请在系统语音输入界面完成录音。";
-        try { var once = await app.platform.hermit.api().speech.recognizeOnce({ language: profile.language, maxResults: 3, preferOffline: Boolean(profile.onDevice) }); if (!once.cancelled) showText(((once.alternatives || [])[0] || {}).text || "", false); status.textContent = once.cancelled ? "已取消识别。" : "识别完成，可以再次测试。"; } finally { button.disabled = false; }
+        try { var once = await app.platform.haminn.api().speech.recognizeOnce({ language: profile.language, maxResults: 3, preferOffline: Boolean(profile.onDevice) }); if (!once.cancelled) showText(((once.alternatives || [])[0] || {}).text || "", false); status.textContent = once.cancelled ? "已取消识别。" : "识别完成，可以再次测试。"; } finally { button.disabled = false; }
         return;
       }
       setRecording(true); status.textContent = "正在听，请开始说话。";

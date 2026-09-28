@@ -497,7 +497,7 @@
     if (frozen) { var frozenBadge = document.createElement('span'); frozenBadge.className = 'context-badge frozen-badge'; frozenBadge.innerHTML = ui.icon('compress') + '<span>已压缩</span>'; frozenBadge.title = '这条消息已经压缩进概要，不再按原文参与上下文，也不能单独修改'; meta.appendChild(frozenBadge); }
     if (assistant && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
     if (message.text) {
-      var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'icon-button'; copy.setAttribute('aria-label', '复制这条消息'); copy.innerHTML = ui.icon('copy'); copy.addEventListener('click', ui.action(async function () { await app.platform.hermit.copyText(message.text); ui.toast('已复制'); })); meta.appendChild(copy);
+      var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'icon-button'; copy.setAttribute('aria-label', '复制这条消息'); copy.innerHTML = ui.icon('copy'); copy.addEventListener('click', ui.action(async function () { await app.platform.haminn.copyText(message.text); ui.toast('已复制'); })); meta.appendChild(copy);
       if (assistant && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id)) return; return app.services.tts.speak(message.text, role); })); meta.appendChild(speak); }
     }
     // 铅笔与重新生成：已经压缩进概要的消息仍然保留按钮，但按钮呈禁用态，
@@ -602,7 +602,7 @@
   async function exportMediaImage(media) {
     var logicalFileId = await mediaLogicalFileId(media);
     if (!logicalFileId) throw new Error('这张图片没有可导出的文件');
-    var api = app.platform.hermit.available() ? app.platform.hermit.api() : null;
+    var api = app.platform.haminn.available() ? app.platform.haminn.api() : null;
     if (!api || !api.files || typeof api.files.export !== 'function') throw new Error('当前环境不支持保存到设备');
     var result = await api.files.export({ logicalFileId: logicalFileId });
     if (result && result.cancelled) return;
@@ -729,10 +729,10 @@
   async function chooseImage(target) {
     if (!target.mediaCapabilities.image) throw new Error('本轮角色的模型没有确认图片输入能力');
     if (target.draft.media.length >= 4) { ui.toast('每条消息最多选择四张图片'); return; }
-    if (!app.platform.hermit.available()) { document.getElementById('imagePicker').click(); return; }
+    if (!app.platform.haminn.available()) { document.getElementById('imagePicker').click(); return; }
     target.io = true; syncComposer(target);
     try {
-      var selected = await app.platform.hermit.api().files.pickImage({ maxDimension: 1280, maxBytes: 420 * 1024 });
+      var selected = await app.platform.haminn.api().files.pickImage({ maxDimension: 1280, maxBytes: 420 * 1024 });
       if (!selected || selected.cancelled || !alive(target)) return;
       var parts = u.dataUrlToParts(selected.dataUrl);
       if (!parts || !u.isAllowedImageUrl(selected.dataUrl)) throw new Error('没有取得可用图片');
@@ -750,10 +750,10 @@
   async function chooseVideo(target) {
     if (!target.mediaCapabilities.video) throw new Error('本轮角色的模型或当前接入方式不能接收视频');
     if ((target.draft.media || []).some(function (item) { return (item.kind || '').toLowerCase() === 'video'; })) throw new Error('每条消息最多选择一段视频');
-    if (!app.platform.hermit.available()) { document.getElementById('videoPicker').click(); return; }
+    if (!app.platform.haminn.available()) { document.getElementById('videoPicker').click(); return; }
     target.io = true; syncComposer(target);
     try {
-      var selected = await app.platform.hermit.api().files.import({ accept: 'video/*' });
+      var selected = await app.platform.haminn.api().files.import({ accept: 'video/*' });
       if (!selected || selected.cancelled || !alive(target)) return;
       if (!/^video\//i.test(selected.mime || '')) throw new Error('所选文件不是视频');
       await addMedia(target, {
@@ -1027,7 +1027,7 @@
   // 选择器取图，自己归一化后存成宿主文件，只把 URL 交回来，原图再大也不报错。
   var BACKGROUND_MAX_BYTES = 10 * 1024 * 1024;
 
-  // 相册背景在对话记录里只留宿主文件库的 URL（/__hermit/files/<id>）与取景参数，
+  // 相册背景在对话记录里只留宿主文件库的 URL（/__haminn/files/<id>）与取景参数，
   // 不存 base64 —— 一张真实照片的 base64 有十几 MB，而 store 单条记录的硬上限是
   // 63KB（store.js），塞进去必炸。
   function backgroundPreset(background) {
@@ -1216,7 +1216,7 @@
     var url = String(picked.url || '');
     if (!url || url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
       if (picked.release) await picked.release();
-      ui.toast('当前环境不能保存相册背景，请在 HermitApp 中选择');
+      ui.toast('当前环境不能保存相册背景，请在 HaminnApp 中选择');
       return null;
     }
     if (Number(picked.size || 0) > BACKGROUND_MAX_BYTES) {
@@ -1297,9 +1297,9 @@
       var profile = app.services.modelServices.resolveAsr(service, target.conversation, target.settings);
       if (profile.type !== 'system') {
         target.speechStarting = false;
-        if (!app.platform.hermit.available()) { document.getElementById('audioPicker').click(); return; }
+        if (!app.platform.haminn.available()) { document.getElementById('audioPicker').click(); return; }
         target.io = true; syncComposer(target); status(target, '请选择一段短音频…');
-        var selected = await app.platform.hermit.api().files.pickInline({ accept: 'audio/*', maxBytes: 650 * 1024 });
+        var selected = await app.platform.haminn.api().files.pickInline({ accept: 'audio/*', maxBytes: 650 * 1024 });
         target.io = false;
         if (!selected || selected.cancelled || !alive(target)) { status(target, '已取消语音输入'); return; }
         var parts = u.dataUrlToParts(selected.dataUrl); if (!parts || !/^audio\//i.test(parts.mime)) throw new Error('所选文件不是有效音频');

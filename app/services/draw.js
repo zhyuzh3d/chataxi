@@ -1,7 +1,7 @@
 (function (app) {
   "use strict";
-  // 绘图客户端 —— 只实现 CVP 这一种合同（vibedraw 的 ComfyUI 插件那套 `cvp/1`）。
-  // 协议细节与 vibedraw/app/services/providers.js 的 cvpGenerate 同源：提交 → 轮询 → 取图，
+  // 绘图客户端 —— 只实现 CVP 这一种合同（hamdraw 的 ComfyUI 插件那套 `cvp/1`）。
+  // 协议细节与 hamdraw/app/services/providers.js 的 cvpGenerate 同源：提交 → 轮询 → 取图，
   // 这里的差别只有一处：chataxi 只要一张图、一个参考图，所以把参数收敛到插件自报的默认值。
   //
   // 三条硬规矩（对应 plans/chataxi-v0.7.26-… 的三条不变量）：
@@ -78,7 +78,7 @@
   function readable(error) {
     var payload = error && error.payload, code = payload && (payload.error || payload.code), message = payload && payload.message;
     if (code === "unauthorized") return new Error("绘图插件的访问密码不正确，请在模型页核对密码");
-    if (code === "no_model") return new Error("插件还没有为这个绘制能力配好模型，请在 ComfyUI 的 VibeDraw 配置节点里设置");
+    if (code === "no_model") return new Error("插件还没有为这个绘制能力配好模型，请在 ComfyUI 的 HamDraw 配置节点里设置");
     if (code === "unsupported_capability") return new Error("插件不认识这个绘制能力，请升级插件");
     if (code === "unsupported_size" || code === "unsupported_steps") return new Error("插件不接受这张卡片的画幅或步数，请在模型页重新获取一次目录");
     if (code === "bad_image") return new Error("交给绘图模型的参考图不是合法的 PNG / JPEG");

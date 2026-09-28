@@ -19,8 +19,8 @@
       bus.ambience.gain.cancelScheduledValues(now);
       bus.ambience.gain.setTargetAtTime(muted ? 0 : ambienceLevel, now, 0.2);
     }
-    if (current && current.playbackId && app.platform.hermit.available()) {
-      var audioApi = app.platform.hermit.api().audio;
+    if (current && current.playbackId && app.platform.haminn.available()) {
+      var audioApi = app.platform.haminn.api().audio;
       if (typeof audioApi.setPlaybackVolume === "function") audioApi.setPlaybackVolume({ playbackId: current.playbackId, volume: muted ? 0 : 1 }).catch(function () {});
     }
     emit(lastState); return muted;
@@ -545,7 +545,7 @@
     if (clip.url) { URL.revokeObjectURL(clip.url); clip.url = ""; }
     // cacheOwned 的 clip 属于朗读缓存（见 tts-cache.js）: 那个宿主文件是缓存条目的本体, 播完
     // 不能删, 删了缓存记录第二天就指向一个不存在的文件。它的生命周期由 LRU 淘汰负责。
-    if (clip.logicalFileId && !clip.cacheOwned && app.platform.hermit.available()) await app.platform.hermit.api().files.delete({ logicalFileId: clip.logicalFileId }).catch(function () {});
+    if (clip.logicalFileId && !clip.cacheOwned && app.platform.haminn.available()) await app.platform.haminn.api().files.delete({ logicalFileId: clip.logicalFileId }).catch(function () {});
     clip.logicalFileId = ""; clip.blob = null;
   }
 
@@ -719,7 +719,7 @@
       if (streamed) return await audioClipFromBytes(streamed, cacheKey, text, profile);
     }
     var response = await app.platform.network.request({ url: request.url, method: "POST", headers: request.headers, bodyText: request.bodyText, contentType: request.contentType, timeoutMs: 90000, task: task });
-    if (task.cancelled) { if (response.file && response.file.logicalFileId && app.platform.hermit.available()) await app.platform.hermit.api().files.delete({ logicalFileId: response.file.logicalFileId }).catch(function () {}); return null; }
+    if (task.cancelled) { if (response.file && response.file.logicalFileId && app.platform.haminn.available()) await app.platform.haminn.api().files.delete({ logicalFileId: response.file.logicalFileId }).catch(function () {}); return null; }
     if (sseProtocol) {
       var sseText = await app.platform.network.readText(response);
       if (response.status < 200 || response.status >= 300) throw responseError(response.status, sseText);
@@ -845,12 +845,12 @@
       function releaseClip() { return owner.preserveActiveClip ? Promise.resolve() : disposeClip(clip); }
       if (token !== generation || owner.cancelled) { await releaseClip(); resolve(); return; }
       owner.activeClip = clip; owner.playbackResolve = resolve;
-      if (clip.logicalFileId && app.platform.hermit.available()) {
+      if (clip.logicalFileId && app.platform.haminn.available()) {
         var finished = false, offs = [];
         function done(error) { if (finished) return; finished = true; offs.splice(0).forEach(function (off) { off(); }); owner.playbackId = null; owner.activeClip = null; owner.playbackResolve = null; releaseClip().then(function () { error ? reject(error) : resolve(); }); }
-        offs.push(app.platform.hermit.on("audio.playback.done", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(); }));
-        offs.push(app.platform.hermit.on("audio.playback.error", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(new Error("音频播放失败")); }));
-        try { var playback = await app.platform.hermit.api().audio.play({ logicalFileId: clip.logicalFileId, volume: muted ? 0 : 1 }); if (owner.cancelled || token !== generation) { await app.platform.hermit.api().audio.stopPlayback({ playbackId: playback.playbackId }).catch(function () {}); done(); return; } owner.playbackId = playback.playbackId; }
+        offs.push(app.platform.haminn.on("audio.playback.done", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(); }));
+        offs.push(app.platform.haminn.on("audio.playback.error", function (data) { if (!owner.playbackId || data.playbackId === owner.playbackId) done(new Error("音频播放失败")); }));
+        try { var playback = await app.platform.haminn.api().audio.play({ logicalFileId: clip.logicalFileId, volume: muted ? 0 : 1 }); if (owner.cancelled || token !== generation) { await app.platform.haminn.api().audio.stopPlayback({ playbackId: playback.playbackId }).catch(function () {}); done(); return; } owner.playbackId = playback.playbackId; }
         catch (error) { done(error); }
         return;
       }
@@ -892,12 +892,12 @@
     if (owner.socket) { owner.socket.onopen = null; owner.socket.onmessage = null; owner.socket.onerror = null; owner.socket.onclose = null; try { owner.socket.close(); } catch (_) {} owner.socket = null; }
     if (owner.audioGain && typeof owner.audioGain.disconnect === "function") { try { owner.audioGain.disconnect(); } catch (_) {} }
     owner.audioGain = null;
-    if (owner.playbackId && app.platform.hermit.available()) await app.platform.hermit.api().audio.stopPlayback({ playbackId: owner.playbackId }).catch(function () {});
+    if (owner.playbackId && app.platform.haminn.available()) await app.platform.haminn.api().audio.stopPlayback({ playbackId: owner.playbackId }).catch(function () {});
     owner.playbackId = null;
     if (owner.activeClip && !owner.preserveActiveClip) await disposeClip(owner.activeClip); owner.activeClip = null;
     if (owner.playbackResolve) owner.playbackResolve(); owner.playbackResolve = null;
     while (owner.clips && owner.clips.length) await disposeClip(owner.clips.shift());
-    if (owner.utteranceId && app.platform.hermit.available()) await app.platform.hermit.api().tts.stop().catch(function () {});
+    if (owner.utteranceId && app.platform.haminn.available()) await app.platform.haminn.api().tts.stop().catch(function () {});
   }
 
   async function stop(options) {
@@ -911,10 +911,10 @@
   }
 
   async function speakSystem(text, profile, settings, owner, token) {
-    if (!(await app.platform.hermit.awaitReady(1000))) throw new Error("系统朗读需要在 HermitApp 中使用");
-    var api = app.platform.hermit.api(), catalog = await api.tts.voices();
+    if (!(await app.platform.haminn.awaitReady(1000))) throw new Error("系统朗读需要在 HaminnApp 中使用");
+    var api = app.platform.haminn.api(), catalog = await api.tts.voices();
     if (token !== generation) return;
-    owner.offs = ["tts.done", "tts.error"].map(function (event) { return app.platform.hermit.on(event, function (data) {
+    owner.offs = ["tts.done", "tts.error"].map(function (event) { return app.platform.haminn.on(event, function (data) {
       if (token !== generation || owner.utteranceId && data.utteranceId !== owner.utteranceId) return;
       if (event === "tts.error") app.events.emit("tts:error", { message: "系统朗读失败，请检查系统语音服务" });
       stop();

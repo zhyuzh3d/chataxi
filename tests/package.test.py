@@ -18,7 +18,7 @@ class PackageTests(unittest.TestCase):
         for folder in ("app", "styles", "docs"):
             (PACKAGE.ROOT / folder).mkdir()
         (PACKAGE.ROOT / "index.html").write_text("<!doctype html><title>fixture</title>")
-        (PACKAGE.ROOT / "hermit.json").write_text(json.dumps({"version": {"name": "test"}}))
+        (PACKAGE.ROOT / "haminn.json").write_text(json.dumps({"version": {"name": "test"}}))
         (PACKAGE.ROOT / "guid.md").write_text("# guid fixture\n")
         (PACKAGE.ROOT / "app/app.js").write_text("'use strict';")
         (PACKAGE.ROOT / "app/assets").mkdir()

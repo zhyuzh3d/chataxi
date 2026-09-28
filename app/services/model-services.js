@@ -13,10 +13,10 @@
     return list.find(function (item) { return item.id === id; }) || list.find(function (item) { return item.id === "custom"; }) || list[0] || {};
   }
 
-  // CVP 插件地址归一化：允许用户填到 /cvp 或旧名 /vibedraw 为止，客户端都退回它前面的根。
-  // 与 vibedraw/plans/cvp-spec.md 的客户端约定一致（规范承诺路径不变，这里的容错只为省心）。
+  // CVP 插件地址归一化：允许用户填到 /cvp 或旧名 /hamdraw 为止，客户端都退回它前面的根。
+  // 与 hamdraw/plans/cvp-spec.md 的客户端约定一致（规范承诺路径不变，这里的容错只为省心）。
   function cvpBase(endpoint) {
-    var value = String(endpoint || "").replace(/\/+$/, ""), marker = value.search(/\/(?:cvp|vibedraw)(?:\/|$)/i);
+    var value = String(endpoint || "").replace(/\/+$/, ""), marker = value.search(/\/(?:cvp|hamdraw)(?:\/|$)/i);
     return marker > 0 ? value.slice(0, marker) : value;
   }
 
@@ -632,9 +632,9 @@
     Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
     var result = await app.platform.network.requestJson({ url: base + "/cvp/info", method: "GET", headers: headers, timeoutMs: 30000 });
     var document = result.data || {};
-    if (!document.spec) throw new Error("这个地址不是 CVP 服务：请在 ComfyUI 中确认已安装 VibeDraw 插件并重启");
+    if (!document.spec) throw new Error("这个地址不是 CVP 服务：请在 ComfyUI 中确认已安装 HamDraw 插件并重启");
     var auth = document.auth || {};
-    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 VibeDraw 配置节点里核对密码");
+    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 HamDraw 配置节点里核对密码");
     var capabilities = (document.capabilities || []).filter(function (item) { return item && item.id && (item.category || []).indexOf("render") >= 0; });
     if (!capabilities.length) throw new Error("插件没有提供成品图（category: render）能力，请升级插件");
     service.plugin = document.plugin || {};

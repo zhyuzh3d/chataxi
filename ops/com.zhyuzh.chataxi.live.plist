@@ -7,14 +7,14 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/zhyuzh/BaiduTongbu/2026.09.10hermitapp/chataxi/tools/serve.py</string>
+        <string>/Users/zhyuzh/BaiduTongbu/2026.09.10haminnapp/chataxi/tools/serve.py</string>
         <string>--host</string>
         <string>0.0.0.0</string>
         <string>--port</string>
         <string>4180</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10hermitapp/chataxi</string>
+    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10haminnapp/chataxi</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -22,8 +22,8 @@
     <key>ThrottleInterval</key>
     <integer>5</integer>
     <key>StandardOutPath</key>
-    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10hermitapp/chataxi/.server-state/live.log</string>
+    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10haminnapp/chataxi/.server-state/live.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10hermitapp/chataxi/.server-state/live-error.log</string>
+    <string>/Users/zhyuzh/BaiduTongbu/2026.09.10haminnapp/chataxi/.server-state/live-error.log</string>
 </dict>
 </plist>

@@ -13,7 +13,7 @@
   function bindCopyUrls(root) {
     (root || document).querySelectorAll("[data-copy-url]:not([data-copy-url-bound])").forEach(function (button) {
       button.setAttribute("data-copy-url-bound", "true");
-      button.addEventListener("click", action(async function () { await app.platform.hermit.copyText(button.dataset.copyUrl); toast("地址已复制"); }));
+      button.addEventListener("click", action(async function () { await app.platform.haminn.copyText(button.dataset.copyUrl); toast("地址已复制"); }));
     });
   }
   function avatar(name, color, className, iconName, mediaId) {
@@ -36,14 +36,14 @@
       } catch (_) { node.removeAttribute("data-avatar-loaded"); }
     }));
   }
-  // 相册取图：宿主用系统照片选择器返回持久化的 HermitFile（url + logicalFileId），
+  // 相册取图：宿主用系统照片选择器返回持久化的 HaminnFile（url + logicalFileId），
   // 不返回也不持久化 Base64。maxDimension / maxBytes 会被宿主收敛到 [320, 2048] 与
   // [64KiB, 700KiB]（宿主 pickStoredImage），所以这里只是表达偏好，不是硬上限；
   // 真正超限的相册原图由宿主自己降采样，不会像 pickInline 那样直接报错。
   async function pickLocalImage(options) {
     var settings = options || {};
-    if (app.platform.hermit.available()) {
-      var files = app.platform.hermit.api().files;
+    if (app.platform.haminn.available()) {
+      var files = app.platform.haminn.api().files;
       var picked = await files.pickImage({ maxDimension: Number(settings.maxDimension) || 2000, maxBytes: Number(settings.maxBytes) || 700 * 1024 });
       if (!picked || picked.cancelled) return null;
       if (!picked.url) { if (picked.logicalFileId && files.delete) await files.delete({ logicalFileId: picked.logicalFileId }).catch(function () {}); throw new Error(settings.emptyMessage || "没有取得可用头像图片"); }
@@ -92,7 +92,7 @@
   }
   // 统一的取景弹窗，头像与对话背景共用。
   //   mode "blob"    交出裁好的 JPEG（头像）；mode "framing" 交出缩放与平移量（背景，原图不动）。
-  //   keepSource     成功后保留源文件（背景要把这个 HermitFile 直接存进对话记录）。
+  //   keepSource     成功后保留源文件（背景要把这个 HaminnFile 直接存进对话记录）。
   async function cropPicture(source, options) {
     var settings = options || {}, labels = settings.labels || {};
     var blob = source instanceof Blob ? source : null, mime = blob ? blob.type || "" : source && source.type || "", size = blob ? blob.size : Number(source && source.size || 0);

@@ -6,10 +6,10 @@
   async function systemCapability(refresh) {
     if (!refresh && systemCache && Date.now() - systemCache.at < 30000) return systemCache.value;
     var value;
-    if (!(await app.platform.hermit.awaitReady(1200))) {
-      value = { available: false, state: "unavailable", languages: [], languageSelectionSupported: false, message: "系统语音识别只在 HermitApp 中可用" };
+    if (!(await app.platform.haminn.awaitReady(1200))) {
+      value = { available: false, state: "unavailable", languages: [], languageSelectionSupported: false, message: "系统语音识别只在 HaminnApp 中可用" };
     } else {
-      var api = app.platform.hermit.api(), availability = await api.speech.availability(), catalog = { languages: [], languageSelectionSupported: false };
+      var api = app.platform.haminn.api(), availability = await api.speech.availability(), catalog = { languages: [], languageSelectionSupported: false };
       if (availability.available && typeof api.speech.languages === "function") {
         try { catalog = await api.speech.languages(); }
         catch (error) { catalog = { languages: [], languageSelectionSupported: false, message: app.utils.cleanError(error) }; }
@@ -28,9 +28,9 @@
     var session = { off: [], id: null, ended: false }; active = session;
     var api;
     try {
-      if (!(await app.platform.hermit.awaitReady(1200))) throw new Error("系统语音识别只在 HermitApp 中可用");
+      if (!(await app.platform.haminn.awaitReady(1200))) throw new Error("系统语音识别只在 HaminnApp 中可用");
       if (active !== session) throw new Error("语音识别已取消");
-      api = app.platform.hermit.api();
+      api = app.platform.haminn.api();
       var capability = await systemCapability(false);
       if (!capability.available) throw new Error(capability.message || "系统没有可用的语音识别服务，可在设置中配置短音频识别");
       if (active !== session) throw new Error("语音识别已取消");
@@ -41,7 +41,7 @@
       if (kind === "final" || kind === "error") { session.ended = true; cleanup(session); }
     }
     ["ready", "begin", "rms", "partial", "final", "error", "end"].forEach(function (kind) {
-      session.off.push(app.platform.hermit.on("speech." + kind, function (data) {
+      session.off.push(app.platform.haminn.on("speech." + kind, function (data) {
         if (session.id && data.subscriptionId && data.subscriptionId !== session.id) return;
         finish(kind, data);
         if (kind === "end" && active === session) {
@@ -62,12 +62,12 @@
     } catch (error) { cleanup(session); throw error; }
   }
   async function stopSystem(subscriptionId) {
-    if (!app.platform.hermit.available()) return;
-    await app.platform.hermit.api().speech.stop({ subscriptionId: subscriptionId || undefined });
+    if (!app.platform.haminn.available()) return;
+    await app.platform.haminn.api().speech.stop({ subscriptionId: subscriptionId || undefined });
   }
   async function cancelSystem() {
     if (active) cleanup(active);
-    if (app.platform.hermit.available()) await app.platform.hermit.api().speech.cancel();
+    if (app.platform.haminn.available()) await app.platform.haminn.api().speech.cancel();
   }
 
   function multipart(fields, file) {

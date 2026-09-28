@@ -1,14 +1,14 @@
 # chataxi
 
-chataxi 是运行在 [Hermit](https://hermit.airen.life/) 宿主里的个人 AI 对话 happ。它用纯原生 HTML,CSS,JavaScript 写成,不依赖任何运行时框架,npm 或编译步骤,源文件就是可直接运行的页面。
+chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 对话 happ。它用纯原生 HTML,CSS,JavaScript 写成,不依赖任何运行时框架,npm 或编译步骤,源文件就是可直接运行的页面。
 
 产品定位是「比 chatbox 更强大,比 chatterUI 更好用」：重心是真实的流式真人感语音和真正的多角色群聊,配置上只要粘贴 API Key 就能接通模型,模型和数据放在哪里由你自己决定。
 
-> 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://hermit.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
+> 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://haminn.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.44`(versionCode `123`,见 `hermit.json`)
-- 形态：HermitApp 的普通 happ,不能脱离宿主单独安装
+- 当前源码版本：`0.7.44`(versionCode `123`,见 `haminn.json`)
+- 形态：HaminnApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点
 
@@ -33,10 +33,10 @@ chataxi 是运行在 [Hermit](https://hermit.airen.life/) 宿主里的个人 AI 
 
 ## 安装使用
 
-chataxi 是 HermitApp 的 happ,**不能脱离宿主单独安装**。
+chataxi 是 HaminnApp 的 happ,**不能脱离宿主单独安装**。
 
-1. 先安装 Hermit：[下载页](https://hermit.airen.life/pages/download.html)(Android 10 及以上),或到 [Releases](https://github.com/zhyuzh3d/hermitapp/releases) 取 APK。
-2. 再添加 chataxi：打开 [应用广场](https://hermit.airen.life/pages/happs.html) 找到 chataxi,扫描二维码,或复制它的官方安装清单地址(形如 `https://hermit.airen.life/downloads/happs/<happId>/hermit-install.json`,`<happId>` 以应用广场页面显示的为准),回到 Hermit 点「从网址」粘贴。产品网站 <https://chataxi.airen.life/> 也提供同一套二维码与安装地址。
+1. 先安装 Haminn：[下载页](https://haminn.airen.life/pages/download.html)(Android 10 及以上),或到 [Releases](https://github.com/zhyuzh3d/haminnapp/releases) 取 APK。
+2. 再添加 chataxi：打开 [应用广场](https://haminn.airen.life/pages/happs.html) 找到 chataxi,扫描二维码,或复制它的官方安装清单地址(形如 `https://haminn.airen.life/downloads/happs/<happId>/haminn-install.json`,`<happId>` 以应用广场页面显示的为准),回到 Haminn 点「从网址」粘贴。产品网站 <https://chataxi.airen.life/> 也提供同一套二维码与安装地址。
 
 ## 快速上手
 
@@ -51,19 +51,19 @@ chataxi 是 HermitApp 的 happ,**不能脱离宿主单独安装**。
 
 ```text
 index.html            入口
-hermit.json           包清单(schema 2,happId life.airen.chataxi)
+haminn.json           包清单(schema 2,happId life.airen.chataxi)
 guid.md               写给智能体插件的短说明
 app/app.js            启动与装配
 app/core/             纯逻辑,不碰 DOM 与宿主:namespace / events / i18n / utils
 app/data/             store / i18n-en / role-templates(生成物)/ media
 app/features/         chat / conversations / roles / models / settings 等用例编排
-app/platform/         hermit.js(Bridge 唯一出口)/ network.js
+app/platform/         haminn.js(Bridge 唯一出口)/ network.js
 app/services/         llm / tts / asr / context(压缩)/ providers / model-registry 等
 app/components/ui.js  弹窗,Sheet,Toast,图标等通用组件
 styles/               tokens / base / components / app
 ```
 
-依赖方向固定 `core → platform → services → components → features`,只有 `platform/` 直接接触 Bridge 与网络。运行包(发布 ZIP)只包含 `index.html`,`hermit.json`,`guid.md`,`app/` 与 `styles/`,`docs/`,`plans/`,`tools/`,`tests/`,`templates/` 不进运行包。
+依赖方向固定 `core → platform → services → components → features`,只有 `platform/` 直接接触 Bridge 与网络。运行包(发布 ZIP)只包含 `index.html`,`haminn.json`,`guid.md`,`app/` 与 `styles/`,`docs/`,`plans/`,`tools/`,`tests/`,`templates/` 不进运行包。
 
 ## 开发与验证
 
@@ -78,8 +78,8 @@ python3 tools/check-secrets.py     # 提交前:确认没有凭据泄漏
 本地预览与发布打包：
 
 ```sh
-python3 tools/serve.py --port 4180   # 局域网预览(在 Hermit 里用「从网址」加 http://<开发机IP>:4180/)
-python3 tools/package.py             # 生成 release/chataxi-v<版本>.zip 并同步 hermit-install.json 的路径与 sha256
+python3 tools/serve.py --port 4180   # 局域网预览(在 Haminn 里用「从网址」加 http://<开发机IP>:4180/)
+python3 tools/package.py             # 生成 release/chataxi-v<版本>.zip 并同步 haminn-install.json 的路径与 sha256
 python3 tools/package.py --check     # 只校验不写入
 ```
 
@@ -87,25 +87,25 @@ python3 tools/package.py --check     # 只校验不写入
 
 仓库使用 `.githooks/pre-commit` 与 `.githooks/pre-push` 在提交前扫描暂存快照,推送前扫描全部 Git 历史,扫描范围包含发布 ZIP 内的文本文件。首次克隆后运行 `git config core.hooksPath .githooks` 启用本地钩子。GitHub 仓库同时开启 Secret Scanning 与 Push Protection。
 
-真机热更新(需要设备开发地址与密码,见手机 Hermit 的「开发配置」)：
+真机热更新(需要设备开发地址与密码,见手机 Haminn 的「开发配置」)：
 
 ```sh
-python3 ~/.workbuddy/skills/hermit-dev-plugin/hermit-agent.py develop-dir <目录> --quiet
-python3 ~/.workbuddy/skills/hermit-dev-plugin/hermit-agent.py update-dir  <目录> --bump patch
+python3 ~/.workbuddy/skills/haminn-dev-plugin/haminn-agent.py develop-dir <目录> --quiet
+python3 ~/.workbuddy/skills/haminn-dev-plugin/haminn-agent.py update-dir  <目录> --bump patch
 ```
 
-版本号需同步 `hermit.json`,`app/core/namespace.js` 与 `README.md`,修改运行内容后必须递增版本,已有版本 ZIP 不能被不同内容覆盖。
+版本号需同步 `haminn.json`,`app/core/namespace.js` 与 `README.md`,修改运行内容后必须递增版本,已有版本 ZIP 不能被不同内容覆盖。
 
-## Hermit 家族
+## Haminn 家族
 
-**Hermit 家族 —— 一个安卓宿主 + 若干可自由改造的应用**
+**Haminn 家族 —— 一个安卓宿主 + 若干可自由改造的应用**
 
-- **Hermit**(宿主,先装这个)：<https://hermit.airen.life/> · <https://github.com/zhyuzh3d/hermitapp>
+- **Haminn**(宿主,先装这个)：<https://haminn.airen.life/> · <https://github.com/zhyuzh3d/haminnapp>
 - **chataxi**(多角色 AI 群聊)：<https://chataxi.airen.life/> · <https://github.com/zhyuzh3d/chataxi> —— **本仓库**
-- **VibeDraw**(实时 AI 绘图)：<https://vibedraw.airen.life/> · <https://github.com/zhyuzh3d/vibedraw>
+- **HamDraw**(实时 AI 绘图)：<https://hamdraw.airen.life/> · <https://github.com/zhyuzh3d/hamdraw>
 - **PoseGi**(3D 摆姿生图)：<https://posegi.airen.life/> · <https://github.com/zhyuzh3d/PoseGi>
 
-三个 happ 都必须先装 Hermit 宿主,再在[应用广场](https://hermit.airen.life/pages/happs.html)添加。chataxi 与 VibeDraw,PoseGi 互不依赖,只做相互推荐——你可以只装 chataxi,也可以用 VibeDraw 画图,用 PoseGi 摆姿后再对话。
+三个 happ 都必须先装 Haminn 宿主,再在[应用广场](https://haminn.airen.life/pages/happs.html)添加。chataxi 与 HamDraw,PoseGi 互不依赖,只做相互推荐——你可以只装 chataxi,也可以用 HamDraw 画图,用 PoseGi 摆姿后再对话。
 
 ## 贡献
 

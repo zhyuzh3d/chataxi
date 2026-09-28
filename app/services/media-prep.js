@@ -8,7 +8,7 @@
     var info = profile && profile.modelInfo || {};
     if (kind === "image") return info.imageInput === true;
     if (kind !== "video" || info.videoInput !== true) return false;
-    return app.platform.hermit.available() && ["ark", "gemini", "kimi"].indexOf(providerOf(profile)) >= 0;
+    return app.platform.haminn.available() && ["ark", "gemini", "kimi"].indexOf(providerOf(profile)) >= 0;
   }
 
   function header(headers, name) {
@@ -46,7 +46,7 @@
 
   function assertLocalFile(media) {
     if (!media.logicalFileId) throw new Error("这段视频没有可上传的本地原文件，请重新选择");
-    if (!app.platform.hermit.available()) throw new Error("视频上传需要在新版 HermitApp 中使用");
+    if (!app.platform.haminn.available()) throw new Error("视频上传需要在新版 HaminnApp 中使用");
   }
 
   async function pollJson(url, headers, task, ready, failed) {

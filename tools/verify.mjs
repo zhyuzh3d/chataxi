@@ -8,24 +8,24 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-const hermit = JSON.parse(fs.readFileSync(path.join(root, "hermit.json"), "utf8"));
+const haminn = JSON.parse(fs.readFileSync(path.join(root, "haminn.json"), "utf8"));
 
-assert.equal(hermit.schema, 2);
-assert.equal(hermit.happId, "life.airen.chataxi", "chataxi ships under the shared life.airen namespace");
-assert.equal(hermit.entry, "index.html");
-assert.equal(hermit.routing, "hash");
-assert.equal(hermit.icon, "app/assets/icon.webp");
-assert.deepEqual(hermit.display, { orientation: "portrait", keyboard: "resize" }, "chataxi must stay portrait while the host keeps focused fields above the keyboard");
+assert.equal(haminn.schema, 2);
+assert.equal(haminn.happId, "life.airen.chataxi", "chataxi ships under the shared life.airen namespace");
+assert.equal(haminn.entry, "index.html");
+assert.equal(haminn.routing, "hash");
+assert.equal(haminn.icon, "app/assets/icon.webp");
+assert.deepEqual(haminn.display, { orientation: "portrait", keyboard: "resize" }, "chataxi must stay portrait while the host keeps focused fields above the keyboard");
 assert.match(html, /interactive-widget=resizes-content/, "the page viewport must expose the keyboard-reduced content area");
-assert.match(hermit.liveUrl, /^http:\/\/192\.168\.124\.161:4180\/$/, "the package needs a reachable live runtime target");
-const iconPath = path.join(root, hermit.icon);
+assert.match(haminn.liveUrl, /^http:\/\/192\.168\.124\.161:4180\/$/, "the package needs a reachable live runtime target");
+const iconPath = path.join(root, haminn.icon);
 assert.ok(fs.statSync(iconPath).isFile(), "manifest icon must exist");
 const iconBytes = fs.readFileSync(iconPath);
 assert.equal(iconBytes.subarray(0, 4).toString("ascii"), "RIFF", "manifest icon must be a WebP RIFF file");
 assert.equal(iconBytes.subarray(8, 12).toString("ascii"), "WEBP", "manifest icon must use the WebP codec");
 assert.ok(iconBytes.length <= 160 * 1024, "manifest icon should remain reasonably compressed");
 const namespace = fs.readFileSync(path.join(root, "app/core/namespace.js"), "utf8");
-assert.equal(namespace.match(/chataxi.version = "([^\"]+)"/)[1], hermit.version.name, "runtime version differs from manifest");
+assert.equal(namespace.match(/chataxi.version = "([^\"]+)"/)[1], haminn.version.name, "runtime version differs from manifest");
 const ttsSource = fs.readFileSync(path.join(root, "app/services/tts.js"), "utf8");
 assert.doesNotMatch(ttsSource, /use_pvc_as_ivc/, "deprecated ElevenLabs PVC fallback must never be inferred or sent");
 assert.match(ttsSource, /AudioContext[\s\S]*pointerdown[\s\S]*touchstart/, "inline TTS playback needs a user-gesture-unlocked Web Audio path");
@@ -132,8 +132,8 @@ assert.match(modelEditorSource, /catalogVoices[\s\S]*saveModelDirectory/, "provi
 assert.match(modelEditorSource, /data-paste-key[\s\S]*data-paste-headers[\s\S]*data-toggle-secret/, "saved credentials must stay editable, accept explicit clipboard paste and expose a visibility toggle");
 assert.doesNotMatch(modelEditorSource, /data-copy-key|data-copy-secret|data-copy-headers/, "credential controls must not copy secrets back to the clipboard");
 const uiComponentSource = fs.readFileSync(path.join(root, "app/components/ui.js"), "utf8");
-assert.match(uiComponentSource, /url:\s*picked\.url[\s\S]*release:\s*function[\s\S]*files\.delete/, "Hermit image picking must pass the current object URL directly to the cropper and defer temporary-file cleanup");
-assert.doesNotMatch(uiComponentSource, /fetch\(picked\.url/, "Hermit object URLs must not be fetched as ordinary network resources");
+assert.match(uiComponentSource, /url:\s*picked\.url[\s\S]*release:\s*function[\s\S]*files\.delete/, "Haminn image picking must pass the current object URL directly to the cropper and defer temporary-file cleanup");
+assert.doesNotMatch(uiComponentSource, /fetch\(picked\.url/, "Haminn object URLs must not be fetched as ordinary network resources");
 assert.match(uiComponentSource, /cropCanvas[\s\S]*context\.drawImage\(image/, "the crop preview must render through canvas after the managed object URL is decoded");
 // 宿主 CSP（default-src 'self' data: blob:）挡的是 HTML 里解析出来的 style 属性；
 // CSSOM 写入（element.style.foo = …）不受它约束 —— 用真实 Chrome 加载同一条策略实测过。
@@ -215,7 +215,7 @@ assert.doesNotMatch(chatSource, /pickInline\(\{\s*accept:\s*['"]image\/\*['"]/, 
 assert.match(chatSource, /function pickBackgroundImage[\s\S]*ui\.pickLocalImage\(/, "a gallery background must be picked through the album picker the host normalizes itself");
 assert.match(chatSource, /ui\.screenAspect\(\)/, "the background crop frame must follow the screen aspect rather than a square");
 // 相册背景的持久化三件套（业主 2026-09-27）：光有 url 不够 —— 宿主对象 URL 是**相对路径**
-// （FileStore.kt 的 objectUrl = "/__hermit/files/<id>"，与 media.objectAddress 同形），
+// （FileStore.kt 的 objectUrl = "/__haminn/files/<id>"，与 media.objectAddress 同形），
 // 恢复成新实例后 url 仍成立，靠的是 logicalFileId 在实例域内被保留（design.md §恢复）。
 // 所以记录里必须同时留 logicalFileId，并且它要被 releaseMedia / 删对话两条清理路径认到，
 // 否则要么恢复后指向空文件，要么换一次背景就把还在用的文件删掉。
@@ -752,7 +752,7 @@ assert.match(storeSource, /delete settings\.enterToSend;/, "loading old settings
 // 标记里必须直接带 data-backup-app：只查字符串存在会被下面的点击处理器蒙过去。
 assert.match(settingsSource, /data-settings-panel="system">'\s*\+\s*'<button class="button primary full system-backup" type="button" data-backup-app>'\s*\+\s*ui\.icon\("box-archive"\)\s*\+\s*'备份软件和数据<\/button>'/, "the system panel must open with the hooked software-and-data backup button");
 assert.match(settingsSource, /main\.querySelector\("\[data-backup-app\]"\)\.addEventListener\("click"/, "the backup button must be wired to the host call");
-assert.match(settingsSource, /hermit\.call\("app\.backup"\)/, "the button must go through the host's self-backup method");
+assert.match(settingsSource, /haminn\.call\("app\.backup"\)/, "the button must go through the host's self-backup method");
 assert.match(settingsSource, /result\.cancelled[\s\S]*已取消备份/, "a dismissed picker must be reported instead of silently ignored");
 assert.match(settingsSource, /备份完成" \+ " · " \+[\s\S]*sizeText/, "the receipt must report the produced file and its size");
 assert.match(styles, /\.system-backup i\s*\{[^}]*margin-right:/s, "the backup icon needs an explicit legacy-WebView text gap");
@@ -834,7 +834,7 @@ assert.match(receiptBody, /hasOwnProperty\.call\(message, "rawText"\)/, "回执�
 assert.match(receiptBody, /你上一条消息里的绘图动作块/, "回执必须把因果指回**上一条消息里的动作块**，而不是含糊说「已生成」");
 assert.equal((receiptBody.match(/message\.status === "/g) || []).length, 3, "回执必须区分「正在画」「出错」「取消」三态（成功走默认分支）：少一态就等于又让一种失败在历史里沉默");
 assert.equal((receiptBody.match(/没有生成/g) || []).length, 2, "失败与取消两态必须各自明说没有生成图片：少一条, 那一态就会被读成「画好了」");
-assert.equal(/发送了一个图片|文件地址是|__hermit\/files|objectAddress/.test(receiptBody), false, "回执里不许再出现「发送了一个图片：… / 文件地址是：… / __hermit/files/…」：那正是被模型照抄进正文的那半截");
+assert.equal(/发送了一个图片|文件地址是|__haminn\/files|objectAddress/.test(receiptBody), false, "回执里不许再出现「发送了一个图片：… / 文件地址是：… / __haminn/files/…」：那正是被模型照抄进正文的那半截");
 // 回执必须以 **user 身份**紧跟在那条消息之后。不能留在 assistant 名下（模型会读成"我自己说过的话"，
 // 旧版 [系统附注] 的病根）；也不能用 system —— `providers.mapSystemMessages` 会把所有 system 消息
 // 抽出来集中拼到请求最前面，位置全丢，回执就跟它要说明的那条动作块脱开了。
@@ -874,12 +874,12 @@ assert.match(chatSource, /app\.services\.actions\.retarget\(previous\.rawText, p
 assert.match(chatSource, /previous\.replyTo !== message\.replyTo\) return extra;/, "只许改**同轮**的前一条（replyTo 相同）：不同轮的 replyTo 必然不同，越过一轮会改坏别人的块");
 assert.match(chatSource, /if \(media\[i\]\.alt\) media\[i\]\.alt = text;/, "图片的 alt 文本是这个提示词的副本，编辑时要一起改");
 // 提示词必须把「用文字/地址冒充图片」这条堵死（业主 2026-09-27：它一直在回
-// 「…发送了一个图片：23岁…还带文件地址 /hermit/…」）。**禁法要点名到具体写法**：
+// 「…发送了一个图片：23岁…还带文件地址 /haminn/…」）。**禁法要点名到具体写法**：
 // 只说「要画图」挡不住，因为那几句话是模型从自己的历史里学来的（样板由上面的 drawNote 门禁断掉）。
 assert.match(instructionBody, /没有 C。/, "判定必须写成二值的：不要画面 / 要给画面 —— 没有「用文字描述」这第三条路");
 assert.match(instructionBody, /正文里绝对不许出现这些写法/, "必须明文禁止「用文字/地址冒充图片」的写法，不能只说「要写动作块」");
 assert.match(instructionBody, /发送了一个图片/, "禁止清单要点名到「发送了一个图片：…」这一句 —— 那正是它现在会写的");
-assert.match(instructionBody, /\/hermit\//, "禁止清单要点名到 /hermit/… 这种地址形态");
+assert.match(instructionBody, /\/haminn\//, "禁止清单要点名到 /haminn/… 这种地址形态");
 assert.match(instructionBody, /不是你自己说过的话/, "必须说明：历史里 [系统附注] 那几行是系统写的，不许照搬那个句式");
 // 历史里能看到自己写过的动作块 + 回执的含义（业主 2026-09-27 定稿，plan §⑲）。这两段是配套的：
 // 原文进上下文给了正例，提示词把因果讲清楚，模型才不会继续归纳成"说一句就有图"。
@@ -1185,7 +1185,7 @@ assert.match(viewerSource, /var next = swipe < 0 \? at \+ 1 : at - 1;/, "手指�
 assert.match(viewerSource, /if \(Math\.abs\(swipe\) < SWIPE_MIN\) \{ bound\(\); paint\(\); return; \}/, "滑动距离不到门槛时要回位，不能一抖就翻页");
 
 // 7) 定妆照必须真的作为参考图进 CVP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
-//    字段名 `image_base64` 来自插件规范（vibedraw 的 cvp-spec.md / capabilities.py），不是自拟的。
+//    字段名 `image_base64` 来自插件规范（hamdraw 的 cvp-spec.md / capabilities.py），不是自拟的。
 assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CVP 请求体");
 assert.match(chatSessionSource, /if \(action\.selfPortrait && role\.portraitMediaId\)[\s\S]{0,600}draw\.portraitReference\(role\.portraitMediaId\)/, "selfPortrait 为真时要把角色的定妆照顶上去当参考图");
 assert.match(chatSessionSource, /catch \(error\) \{ return fail\(new Error\("定妆照没能读出来/, "定妆照读不出来必须就地报错：静默当成没有参考图会画成另一张脸");
@@ -1211,7 +1211,7 @@ assert.match(drawSource, /async function resolveCard\(profileId, modelId\)/, "�
 
 const references = [...html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
 for (const reference of references) {
-  if (reference.startsWith("/__hermit/")) continue;
+  if (reference.startsWith("/__haminn/")) continue;
   assert.ok(reference.startsWith("./"), `runtime asset must use a relative path: ${reference}`);
   const target = path.join(root, reference.slice(2));
   assert.ok(fs.existsSync(target) && fs.statSync(target).isFile(), `missing runtime asset: ${reference}`);
@@ -1233,7 +1233,7 @@ for (const relative of ["app", "tools", "tests"]) {
 }
 for (const file of jsFiles) execFileSync(process.execPath, ["--check", file], { stdio: "pipe" });
 
-const runtimeFiles = ["index.html", "hermit.json", ...references.filter((item) => item.startsWith("./")).map((item) => item.slice(2))];
+const runtimeFiles = ["index.html", "haminn.json", ...references.filter((item) => item.startsWith("./")).map((item) => item.slice(2))];
 const referencedScripts = new Set(references.filter((item) => item.endsWith(".js")).map((item) => path.join(root, item.slice(2))));
 for (const file of jsFiles.filter((file) => file.startsWith(path.join(root, "app") + path.sep))) assert.ok(referencedScripts.has(file), `runtime script is not loaded: ${file}`);
 const uniqueRuntimeFiles = new Set(runtimeFiles);

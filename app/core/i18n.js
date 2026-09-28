@@ -127,7 +127,7 @@
   function systemChoice(language) { return String(language || "").toLowerCase() === "zh" ? "zh-CN" : "en"; }
 
   async function syncSystemLanguage() {
-    var api = app.platform && app.platform.hermit && app.platform.hermit.api && app.platform.hermit.api();
+    var api = app.platform && app.platform.haminn && app.platform.haminn.api && app.platform.haminn.api();
     if (!api || !api.system || typeof api.system.language !== "function") return current;
     try {
       var value = await api.system.language({});
@@ -159,8 +159,8 @@
       observe();
     }) : null;
     apply(true);
-    window.addEventListener("hermitready", function () { syncSystemLanguage(); });
-    if (app.platform && app.platform.hermit && app.platform.hermit.available && app.platform.hermit.available()) syncSystemLanguage();
+    window.addEventListener("haminnready", function () { syncSystemLanguage(); });
+    if (app.platform && app.platform.haminn && app.platform.haminn.available && app.platform.haminn.available()) syncSystemLanguage();
   }
 
   app.i18n = {

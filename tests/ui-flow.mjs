@@ -24,8 +24,8 @@ const context = vm.createContext({ window, document, location, history, navigato
 const scripts = [...fs.readFileSync(root + 'index.html', 'utf8').matchAll(/<script src="\.\/([^\"]+)"/g)].map(match => match[1]);
 for (const script of scripts) vm.runInContext(fs.readFileSync(root + script, 'utf8'), context, { filename: script });
 const app = window.chataxi;
-app.platform.hermit.awaitReady = async () => false;
-app.platform.hermit.info = async () => ({ runtimeMode: 'browser', bridgeMode: 'none' });
+app.platform.haminn.awaitReady = async () => false;
+app.platform.haminn.info = async () => ({ runtimeMode: 'browser', bridgeMode: 'none' });
 app.services.tts.stop = async () => {};
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(fn, description) { for (let i = 0; i < 250; i++) { if (fn()) return; await tick(); } throw Error(description + '\n' + document.body.textContent.slice(-1500)); }
@@ -37,7 +37,7 @@ document.dispatchEvent(new window.Event('DOMContentLoaded'));
 await until(() => document.querySelector('[data-create]'), 'boot');
 assert.equal(document.querySelector('#pageSubtitle').textContent, '想聊就聊，自由自在');
 assert.ok(document.querySelector('.welcome-emblem .fa-comment-dots'));
-let copiedGuideAddress = ''; app.platform.hermit.copyText = async value => { copiedGuideAddress = value; };
+let copiedGuideAddress = ''; app.platform.haminn.copyText = async value => { copiedGuideAddress = value; };
 click('[data-connection-guide]');
 await until(() => document.querySelector('.subsheet [data-guide-tab="beginner"]'), 'connection guide');
 assert.ok(document.querySelector('.subsheet.connection-guide-sheet'));
@@ -402,7 +402,7 @@ console.log('passed: drawing is always its own message and 重新绘制这张图
 const backPressed = history.back.bind(history);
 let historyBacks = 0;
 history.back = () => { historyBacks += 1; return backPressed(); };
-const opened = app.components.imageViewer.open({ src: '/__hermit/files/viewer-fixture', alt: '测试图', onDownload: () => {}, onSetBackground: () => {} });
+const opened = app.components.imageViewer.open({ src: '/__haminn/files/viewer-fixture', alt: '测试图', onDownload: () => {}, onSetBackground: () => {} });
 await tick();
 assert.ok(document.querySelector('.image-viewer'), '点图片必须打开全屏看图');
 // 底部那条工具栏是**唯一**的动作出口（业主 2026-09-27: 右上角那个单独的关闭按钮、以及底部的
@@ -422,7 +422,7 @@ assert.equal(document.querySelector('.image-viewer'), null, '系统返回（含�
 assert.equal(document.body.style.overflow, '', '关闭后必须还原页面滚动');
 // 自己关掉（这里走工具栏的「关闭」）时要把那一格历史收回来，否则它会吞掉用户的下一次返回。
 historyBacks = 0;
-const reopened = app.components.imageViewer.open({ src: '/__hermit/files/viewer-fixture', alt: '测试图' });
+const reopened = app.components.imageViewer.open({ src: '/__haminn/files/viewer-fixture', alt: '测试图' });
 await tick();
 // 没给回调的两个动作必须自己藏起来 —— 摆在那里点了没反应是最糟的样子。
 assert.deepEqual(Array.from(document.querySelectorAll('.image-viewer-toolbar [data-viewer-action]:not([hidden])')).map(node => node.dataset.viewerAction), ['close'], '没有下载 / 设为背景回调时, 那两个按钮必须隐藏, 只留关闭');
@@ -438,13 +438,13 @@ console.log('passed: full-screen viewer fills the height and the back gesture on
 // 上下滑动又和放大后的平移抢同一根手指。所以静态门禁不够（它只能证明写法与它一致），必须走真实事件。
 const galleryHits = [];
 const galleryEntry = (index, name) => ({
-  src: '/__hermit/files/g' + index + '-fixture', alt: '图 ' + index,
+  src: '/__haminn/files/g' + index + '-fixture', alt: '图 ' + index,
   onDownload: () => { galleryHits.push('download:' + name); },
   onSetBackground: () => { galleryHits.push('background:' + name); }
 });
 // index = 1：一打开看的就必须是第二张（不是第一张）—— 这一条是"从某张图点进来就接着看它"的全部意义。
 const galleryOpened = app.components.imageViewer.open({
-  src: '/__hermit/files/g2-fixture', alt: '图 2', index: 1,
+  src: '/__haminn/files/g2-fixture', alt: '图 2', index: 1,
   gallery: [galleryEntry(1, 'one'), galleryEntry(2, 'two'), galleryEntry(3, 'three')]
 });
 await tick();
@@ -525,7 +525,7 @@ const fireSubmit = node => node.dispatchEvent(new window.Event('submit', { bubbl
 // **必须赶在这一段的第一次 renderMessages 之前装上** —— renderMessages 按消息签名做节点缓存
 // （chat.js:313），签名不变就复用旧节点；等渲染完了再装桩，缩略图那一格仍然是"图片不可用"。
 const renderedDisplayUrl = app.data.media.displayUrl;
-app.data.media.displayUrl = async value => String((value && value.mediaId) || value || '') === 'draw-media-fixture' ? '/__hermit/files/draw-fixture' : '';
+app.data.media.displayUrl = async value => String((value && value.mediaId) || value || '') === 'draw-media-fixture' ? '/__haminn/files/draw-fixture' : '';
 await app.features.chat.renderMessages(); await tick();
 const drawnMessage = actionOnlyTurn.at(-1);
 const drawnRow = () => document.querySelector('[data-message-id="' + drawnMessage.id + '"]');
@@ -690,7 +690,7 @@ assert.ok(lazyMessage, '这一段需要一条带图片的消息');
 lazyMessage.updatedAt = Date.now();
 await app.data.store.putMessage(lazyMessage);
 let thumbResolves = 0;
-app.data.media.displayUrl = async () => { thumbResolves += 1; return '/__hermit/files/draw-fixture'; };
+app.data.media.displayUrl = async () => { thumbResolves += 1; return '/__haminn/files/draw-fixture'; };
 await app.features.chat.renderMessages(); await tick();
 assert.ok(ioSeen.length, '有图片的消息必须把缩略图交给观察器，而不是渲染时就去取地址');
 assert.equal(document.querySelectorAll('.message-image[data-media-pending="1"]').length, ioSeen.length, '每一张待取的缩略图都要带占位标记（CSS 靠它给出 9:16 的尺寸）');
@@ -742,9 +742,9 @@ assert.ok(systemPanel, 'the system panel exists');
 assert.equal(systemPanel.firstElementChild.dataset.backupApp, '', 'the backup button is the first thing in the system panel');
 assert.equal(document.querySelector('.settings-tabs [data-settings-tab="about"]'), null, 'the About tab is now the system tab');
 assert.match(systemPanel.textContent, /备份软件和数据[\s\S]*zhyuzh3d/, 'the app facts stay under the backup button');
-// 测试宿主里没有 HermitApp 桥：点它必须如实报错，而不是静默什么都不做。
+// 测试宿主里没有 HaminnApp 桥：点它必须如实报错，而不是静默什么都不做。
 click('[data-backup-app]'); await tick(); await tick(); await tick();
-assert.match(document.querySelector('#toastRoot .toast').textContent, /不在 HermitApp 中/);
+assert.match(document.querySelector('#toastRoot .toast').textContent, /不在 HaminnApp 中/);
 click('.settings-tabs [data-settings-tab="interface"]');
 click('[data-picker="theme"]'); await until(() => document.querySelector('.subsheet [data-choice="dark"]'), 'custom theme sheet');
 click('.subsheet [data-choice="dark"]'); await tick(); assert.equal(general.querySelector('[name="theme"]').value, 'dark');
@@ -834,7 +834,7 @@ const secretProfile = await app.data.store.get('llm-profiles', 'xai-empty');
 secretProfile.apiKey = 'demoCredentialAlphaOmega';
 secretProfile.customHeaders = JSON.stringify({ Authorization: 'Bearer demoHeaderAlphaOmega', 'X-Client-Key': 'demoClientAlphaOmega' });
 await app.data.store.put('llm-profiles', secretProfile.id, secretProfile); await app.features.models.renderServices('llm');
-let clipboardSecret = ''; app.platform.hermit.readClipboardText = async () => clipboardSecret;
+let clipboardSecret = ''; app.platform.haminn.readClipboardText = async () => clipboardSecret;
 click('[data-edit-service="xai-empty"]'); await until(() => document.querySelector('#modalForm [name="apiKey"]'), 'edit model');
 assert.equal(document.querySelector('[name="apiKey"]').type, 'password'); assert.equal(document.querySelector('[name="apiKey"]').value, 'demoCredentialAlphaOmega');
 assert.equal(document.querySelectorAll('.secret-editor [name="apiKey"]').length, 1); assert.equal(document.querySelector('[name="clear_apiKey"]'), null);

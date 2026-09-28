@@ -145,7 +145,7 @@
     var settings = await store.get("meta", "settings"), ttsProfiles = (await store.list("tts-profiles")).filter(function (item) { return item.enabled !== false || existing && item.id === existing.ttsProfileId; });
     ttsProfiles = await Promise.all(ttsProfiles.map(repairElevenLabsVoiceNames));
     var systemTtsAvailable = true;
-    if (ttsProfiles.some(function (item) { return (item.family || item.type) === "system"; })) { systemTtsAvailable = false; if (await app.platform.hermit.awaitReady(1200)) { try { systemTtsAvailable = Boolean((await app.platform.hermit.api().tts.availability()).operational); } catch (_) {} } }
+    if (ttsProfiles.some(function (item) { return (item.family || item.type) === "system"; })) { systemTtsAvailable = false; if (await app.platform.haminn.awaitReady(1200)) { try { systemTtsAvailable = Boolean((await app.platform.haminn.api().tts.availability()).operational); } catch (_) {} } }
     var first = llms[0] || {}, editing = Boolean(existing);
     var role = existing || { id: u.id("role"), name: "", systemPrompt: "", behaviorGuidance: defaultBehaviorGuidance(), llmProfileId: first.id || "", model: modelId("llm", first), temperature: null, temperatureOverride: false, maxOutputTokens: null, maxOutputOverride: false, topP: null, topPOverride: false, topK: null, topKOverride: false, reasoningEffort: "", allowImageGeneration: false, ttsProfileId: "", ttsModel: "", ttsVoice: "", voicePrompt: "", ttsSpeechRate: 0, ttsPitchRate: 0, ttsLoudnessRate: 0, avatarMediaId: "", portraitMediaId: "", enabled: true };
     var inheritedTts = ttsProfiles.find(function (item) { return item.id === settings.defaultTtsProfileId; });
@@ -216,7 +216,7 @@
     // （576×1024 的 JPEG）与上传（整张进宿主文件库）都省不掉。能省的是另外两件事, 也正是
     // "点保存会卡住"的来源（业主 2026-09-27）:
     //   1. **不再把同一份字节读成 base64 data URL 只为了预览** —— 媒体记录里本来就有宿主对象
-    //      地址（/__hermit/files/<id>）, 那就是稳定地址, 而且重新打开编辑器时 syncPortrait 走
+    //      地址（/__haminn/files/<id>）, 那就是稳定地址, 而且重新打开编辑器时 syncPortrait 走
     //      displayUrl 拿到的也是它。省掉的是一次 200~400 KB 的读 + 一次同量级字符串的 innerHTML;
     //   2. **不再让上传挡在预览前面**: 先用本地 objectURL 立刻把图显示出来, 上传在后台继续,
     //      落地后换成宿主地址。等待期从"整条路径"缩到"一个字"。

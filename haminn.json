@@ -4,14 +4,14 @@
   "name": "chataxi",
   "author": "zhyuzh",
   "version": {
-    "code": 123,
-    "name": "0.7.44"
+    "code": 124,
+    "name": "0.7.45"
   },
   "entry": "index.html",
   "routing": "hash",
   "icon": "app/assets/icon.webp",
   "liveUrl": "http://192.168.124.161:4180/",
-  "updateUrl": "http://192.168.124.161:4180/hermit-install.json",
+  "updateUrl": "http://192.168.124.161:4180/haminn-install.json",
   "display": {
     "orientation": "portrait",
     "keyboard": "resize"

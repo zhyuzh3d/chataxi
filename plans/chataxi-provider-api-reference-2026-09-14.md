@@ -4,7 +4,7 @@
 
 ## 1. 证据范围与使用方式
 
-文档证据、源码证据、本地配置证据和实际调用验证分别记录。本轮查阅 chataxi 0.4.19 的 `catalog/model-services/providers/llm/tts`、服务与角色编辑流程，以及 Hermit 的 `NativeHttpClient` 和公共 SDK。没有进行付费推理、合成或手机新版本验收。因此“官方支持”只代表接口合同，不能写成“当前账号下全部模型已经可用”。
+文档证据、源码证据、本地配置证据和实际调用验证分别记录。本轮查阅 chataxi 0.4.19 的 `catalog/model-services/providers/llm/tts`、服务与角色编辑流程，以及 Haminn 的 `NativeHttpClient` 和公共 SDK。没有进行付费推理、合成或手机新版本验收。因此“官方支持”只代表接口合同，不能写成“当前账号下全部模型已经可用”。
 
 查证快照与发布日期不同。来源未标注更新时间时，仅保留查证日期；预览型号、即将迁移的域名和互相冲突的文档在相关条目注明。无法获取正式网页正文时，以已读取的官方 SDK/示例作为次一级证据，并列出尚待确认的合同，不用第三方教程填补事实。
 
@@ -241,7 +241,7 @@ V3 HTTP SSE便于稳定接入；bidirection才是同会话持续文字输入。�
 
 官方支持 `POST https://api.x.ai/v1/tts`，Bearer Key。核心输入是 `text`、`voice_id`、`language`，不是OpenAI的 `model/input/voice`；语言必需，可用auto。提供输出格式对象、speed等参数。`GET /v1/tts/voices` 返回系统声音；`GET /v1/custom-voices` 返回账户自定义声音，后者不在系统音色清单中。自定义声音创建本身存在地区/企业资格限制，但普通TTS不能因此被整体隐藏。[^106][^107]
 
-同路径 `wss://api.x.ai/v1/tts` 用query设voice/language/format，Bearer在握手header。客户端发送text.delta/text.done，接收audio.delta/base64与audio.done。可在一条连接上做多个utterance，并有clear机制。直接的浏览器WebSocket不能随意设置Authorization header；Hermit需新增受控 Native WebSocket 公共合同，或采用另一个确有官方支持的认证方式，不应把长期Key拼入URL。[^107]
+同路径 `wss://api.x.ai/v1/tts` 用query设voice/language/format，Bearer在握手header。客户端发送text.delta/text.done，接收audio.delta/base64与audio.done。可在一条连接上做多个utterance，并有clear机制。直接的浏览器WebSocket不能随意设置Authorization header；Haminn需新增受控 Native WebSocket 公共合同，或采用另一个确有官方支持的认证方式，不应把长期Key拼入URL。[^107]
 
 没有必要给这个TTS预设伪造一个“grok-4”模型下拉。若官方TTS没有暴露可选model字段，角色页面只选择服务和音色，隐藏模型二级项。聊天LLM和TTS可引用同一个用户提供的Key，但认证、目录、可用性分别验证。
 

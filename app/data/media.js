@@ -2,7 +2,7 @@
   "use strict";
   // 媒体层（0.7.26 起：宿主文件库优先）
   //
-  // 为什么必须改：宿主的备份边界**不含 IndexedDB**（hermitapp-product-technical-design.md:415
+  // 为什么必须改：宿主的备份边界**不含 IndexedDB**（haminnapp-product-technical-design.md:415
   // 明写"Web 存储须接受其备份边界"），而恢复会保留实例域内的 logicalFileId（:538，"使任意
   // JSON 中的附件引用仍成立"）⇒ 只有把字节放进宿主文件库、引用写成 logicalFileId，
   // 头像 / 个人头像 / 对话头像 / 对话背景 / 消息图片 / 生成图 / 定妆照才能在"导出备份 →
@@ -30,13 +30,13 @@
   var objectUrls = {};
 
   function hostFiles() {
-    var api = app.platform.hermit.available() ? app.platform.hermit.api() : null;
+    var api = app.platform.haminn.available() ? app.platform.haminn.api() : null;
     if (!api || !api.files) return null;
     var files = api.files;
     return typeof files.beginWrite === "function" && typeof files.appendBytes === "function" && typeof files.finishWrite === "function" ? files : null;
   }
   function hostReady() { return Boolean(hostFiles()); }
-  function objectAddress(logicalFileId) { return "/__hermit/files/" + String(logicalFileId || ""); }
+  function objectAddress(logicalFileId) { return "/__haminn/files/" + String(logicalFileId || ""); }
 
   function database() {
     if (!window.indexedDB) return Promise.resolve(null);
@@ -54,7 +54,7 @@
 
   async function blobWrite(record) {
     var db = await database();
-    if (!db) throw new Error("当前环境不能持久保存媒体，请在 HermitApp 中打开；文字对话仍可使用");
+    if (!db) throw new Error("当前环境不能持久保存媒体，请在 HaminnApp 中打开；文字对话仍可使用");
     await new Promise(function (resolve, reject) {
       var tx = db.transaction("media", "readwrite");
       tx.objectStore("media").put(record);

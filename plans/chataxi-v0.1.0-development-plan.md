@@ -8,7 +8,7 @@
 
 ## 目标与完成定义
 
-交付可直接运行的 chataxi happ、局域网服务与版本化安装包。在连接的 Honor Android 11 设备上完成安装、启动、核心配置、真实 llmserver 文本对话、群聊、图片输入输出和系统 TTS 验收；对缺少真实第三方凭据的能力只做合同测试，不虚构通过。若真机暴露 HermitApp 公共能力缺口，只做支持当前产品所需的最小、用户主动触发且有体积上限的宿主扩展，不改写权限模型。
+交付可直接运行的 chataxi happ、局域网服务与版本化安装包。在连接的 Honor Android 11 设备上完成安装、启动、核心配置、真实 llmserver 文本对话、群聊、图片输入输出和系统 TTS 验收；对缺少真实第三方凭据的能力只做合同测试，不虚构通过。若真机暴露 HaminnApp 公共能力缺口，只做支持当前产品所需的最小、用户主动触发且有体积上限的宿主扩展，不改写权限模型。
 
 ## 阶段 S0：合同冻结
 
@@ -16,7 +16,7 @@
 
 退出条件：
 
-- 普通 happ 与 HermitUI 权限边界清楚。
+- 普通 happ 与 HaminnUI 权限边界清楚。
 - `source` 与 `runtimeMode` 分离，局域网实时运行和本地 release 路径清楚。
 - LLM/TTS/ASR 的首版支持矩阵、降级策略和宿主限制有明确结论。
 - 数据、密钥、图片和模型输出的安全边界可执行。
@@ -26,13 +26,13 @@
 交付：
 
 - `index.html`、语义样式 token、移动端三入口壳、弹层/Toast/空状态等原生组件。
-- Hermit Bridge 适配、浏览器降级、逐实体数据仓库、IndexedDB 媒体仓库。
-- `hermit.json` 与无构建脚本加载顺序。
+- Haminn Bridge 适配、浏览器降级、逐实体数据仓库、IndexedDB 媒体仓库。
+- `haminn.json` 与无构建脚本加载顺序。
 
 退出条件：
 
 - 无外部资源与框架；JS 可解析。
-- Hermit 未就绪时页面有降级说明而非白屏。
+- Haminn 未就绪时页面有降级说明而非白屏。
 - 创建的数据在页面重载后仍可读取。
 
 ## 阶段 S2：设置、角色与对话管理
@@ -83,7 +83,7 @@
 
 交付：
 
-- 零依赖 Python 静态服务、确定性 ZIP 打包与 `/hermit-install.json`。
+- 零依赖 Python 静态服务、确定性 ZIP 打包与 `/haminn-install.json`。
 - 自动验证脚本与协议 fixture。
 - Mac 局域网服务；Honor Android 11 上的 chataxi 实例和验收记录。
 
@@ -92,7 +92,7 @@
 1. 运行 JS/HTML/manifest/资源闭包/秘密扫描检查。
 2. 生成 `release/chataxi-v0.1.0.zip` 并验证 SHA-256。
 3. 在空闲端口启动 `0.0.0.0:4180` 服务，以本机 IP 和手机 curl/浏览路径确认可达。
-4. 在 HermitUI 中添加局域网 URL，安装同源 release 并打开。
+4. 在 HaminnUI 中添加局域网 URL，安装同源 release 并打开。
 5. 检查 Bridge、持久化、导航和弹层。
 6. 配置只对该测试实例有效的 llmserver 客户端 Token，执行一次最短文本请求。
 7. 建立两角色群聊，验证顺序与局部失败处理。
@@ -107,18 +107,18 @@
 
 ## 质量门禁与停止条件
 
-以下情况必须停止扩大范围并如实报告：缺少或未授权设备、HermitApp 版本低于合同、局域网不可达、真实供应商凭据缺失、第三方服务账户或额度不可用。不得为绕过这些问题把密钥写入仓库、关闭 TLS 校验、开放公网端口、修改 HermitApp 权限模型或引入云代理。
+以下情况必须停止扩大范围并如实报告：缺少或未授权设备、HaminnApp 版本低于合同、局域网不可达、真实供应商凭据缺失、第三方服务账户或额度不可用。不得为绕过这些问题把密钥写入仓库、关闭 TLS 校验、开放公网端口、修改 HaminnApp 权限模型或引入云代理。
 
-代码完成后更新本计划状态和验收记录。若真机暴露必须修改 HermitApp 公共合同的问题，单独列为宿主需求，不在 chataxi 仓库伪造兼容实现。
+代码完成后更新本计划状态和验收记录。若真机暴露必须修改 HaminnApp 公共合同的问题，单独列为宿主需求，不在 chataxi 仓库伪造兼容实现。
 
 ## 执行与验收记录
 
-完成环境：Honor `CMA-AN00`、Android 11、HermitApp 1.8.0；开发机地址 `192.168.124.161`，chataxi 实时服务为 `http://192.168.124.161:4180/`，模型服务为局域网 llmserver `http://192.168.124.161:4815/v1/responses`，测试模型 `codex-luna`。
+完成环境：Honor `CMA-AN00`、Android 11、HaminnApp 1.8.0；开发机地址 `192.168.124.161`，chataxi 实时服务为 `http://192.168.124.161:4180/`，模型服务为局域网 llmserver `http://192.168.124.161:4815/v1/responses`，测试模型 `codex-luna`。
 
 - S0—S3 已完成：产品合同、组件式原生运行壳、持久化、设置/角色/对话 CRUD、四类协议适配、单聊和有界群聊均已实现。自动检查通过 20 个 JavaScript 文件、23 个运行资源引用和 7 个协议/显示 fixture。
-- 文本真机通过：连接测试返回 `OK`；单聊严格返回 `SINGLE_OK`；Alice、Bob 群聊按顺序分别返回 `GROUP_OK Alice`、`GROUP_OK Bob`。llmserver 的分块 JSON 响应通过 Hermit 逻辑文件读取后正常解析。
+- 文本真机通过：连接测试返回 `OK`；单聊严格返回 `SINGLE_OK`；Alice、Bob 群聊按顺序分别返回 `GROUP_OK Alice`、`GROUP_OK Bob`。llmserver 的分块 JSON 响应通过 Haminn 逻辑文件读取后正常解析。
 - 图片真机通过：系统选择器选取测试图后页面预览并发给模型，模型正确识别为 Gradle 大象标识；Responses `image_generation` 真实生成黄色出租车图标，较大响应落盘后读取、转 Blob、持久化和消息显示均通过。
 - TTS 真机通过：系统试听和自动朗读均触发设备上的 iFlytek TTS 音轨，可手动停止。
 - ASR 结果受设备限制：该手机的 `SpeechRecognizer.isRecognitionAvailable()` 为 false，页面显示“系统没有可用的语音识别服务”并保持文字输入可用，因此不能把系统 ASR 写成通过。外部 ASR 的短音频选择与 multipart 请求合同已经实现，但没有用户提供的真实服务凭据，未做收费端到端调用。
 - 真机修复已完成：增加明确授权的 Native 图片/短音频选择；让网络超时可由 happ 请求并由 Host 限幅至 120 秒；允许最多 8 MiB 的显式大 JSON 读取；修复分块响应、长对话输入栏溢出、卡片按钮原生灰底、重启后悬挂生成、重试遗漏图片和媒体 URL 生命周期。
-- 部署保持为局域网实时运行；手机同时从原地址重装了最终本地包。最初的 `0.0.0.0:4180` 服务依附开发终端，终端结束后不再监听，导致应用卡片进入时显示“实时页面无法访问”。现改由 `com.zhyuzh.chataxi.live` 用户 LaunchAgent 在登录时启动并在异常退出后自动拉起。电脑休眠、关机或离开当前局域网仍属于实时模式的正常不可用边界。`release/chataxi-v0.1.0.zip` 与 `/hermit-install.json` 已做确定性校验，最终 SHA-256 为 `dd02bd2e3de929eab129b946dfc12a7afeaced5656b1d81ccfa5d888071a5efc`。
+- 部署保持为局域网实时运行；手机同时从原地址重装了最终本地包。最初的 `0.0.0.0:4180` 服务依附开发终端，终端结束后不再监听，导致应用卡片进入时显示“实时页面无法访问”。现改由 `com.zhyuzh.chataxi.live` 用户 LaunchAgent 在登录时启动并在异常退出后自动拉起。电脑休眠、关机或离开当前局域网仍属于实时模式的正常不可用边界。`release/chataxi-v0.1.0.zip` 与 `/haminn-install.json` 已做确定性校验，最终 SHA-256 为 `dd02bd2e3de929eab129b946dfc12a7afeaced5656b1d81ccfa5d888071a5efc`。

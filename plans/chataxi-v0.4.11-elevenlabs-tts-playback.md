@@ -8,7 +8,7 @@ ElevenLabs 的标准 Create Speech 与 Stream Speech 接口都通过 `model_id` 
 
 静态兜底模型目录只包含当前 Text to Speech HTTP 集成确认支持的 `eleven_multilingual_v2`、`eleven_flash_v2_5` 和 `eleven_v3`。`eleven_v3_conversational` 的实时合同主要属于 Agents 与 Text to Dialogue；只有 `/v1/models` 对当前账户真实返回并声明 `can_do_text_to_speech` 时，chataxi 才把额外模型加入可选列表。
 
-自动朗读现在有一致语义：开启后总会播放最后一位角色的回复。关闭流式播放时，完整回复和整段音频生成完毕后自动播放；开启时，语言模型增量按句送往 TTS 并在累计约三秒后提前播放。Android WebView 要求网页媒体播放由用户手势启动，因此本版在首次触摸或按键时解锁一个 Web Audio 上下文，后续异步取得的内联 MP3 通过该上下文解码播放。Hermit 返回持久文件时仍优先走原生 `audio.play`。
+自动朗读现在有一致语义：开启后总会播放最后一位角色的回复。关闭流式播放时，完整回复和整段音频生成完毕后自动播放；开启时，语言模型增量按句送往 TTS 并在累计约三秒后提前播放。Android WebView 要求网页媒体播放由用户手势启动，因此本版在首次触摸或按键时解锁一个 Web Audio 上下文，后续异步取得的内联 MP3 通过该上下文解码播放。Haminn 返回持久文件时仍优先走原生 `audio.play`。
 
 参考的供应商合同：
 

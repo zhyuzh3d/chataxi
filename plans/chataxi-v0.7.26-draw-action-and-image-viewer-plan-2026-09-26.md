@@ -1,8 +1,8 @@
 # chataxi 对话内调用生图模型（Action · draw）与图片全屏查看开发计划
 
-日期：2026-09-26（第三版：按业主 5 条修订重写，并按追加要求把「角色头像 / 个人头像 / 对话头像必须一并走 `hermit.files` 并计入备份恢复验收」写成 §5.5 与 §9.2 验收项）
-状态：**已实现，待真机验收**（P1–P6 落地，本地四套测试全绿；实施记录与偏差见 §12）；只涉及 `chataxi/`，不动 hermitapp / hermitweb / vibedraw，不构建 APK
-上位依据：chataxi 0.7.25 现行源码（逐文件核对）、`hermitapp/sdk/hermit-api.d.ts`、`hermitapp/docs/webapp-authoring.md`、`hermitapp/docs/hermitapp-product-technical-design.md` §11、`vibedraw/plans/cvp-spec.md`、`vibedraw/comfyui-plugin/vibedraw_comfy/capabilities.py`、技能 `a1x-comfy-device`
+日期：2026-09-26（第三版：按业主 5 条修订重写，并按追加要求把「角色头像 / 个人头像 / 对话头像必须一并走 `haminn.files` 并计入备份恢复验收」写成 §5.5 与 §9.2 验收项）
+状态：**已实现，待真机验收**（P1–P6 落地，本地四套测试全绿；实施记录与偏差见 §12）；只涉及 `chataxi/`，不动 haminnapp / haminnweb / hamdraw，不构建 APK
+上位依据：chataxi 0.7.25 现行源码（逐文件核对）、`haminnapp/sdk/haminn-api.d.ts`、`haminnapp/docs/webapp-authoring.md`、`haminnapp/docs/haminnapp-product-technical-design.md` §11、`hamdraw/plans/cvp-spec.md`、`hamdraw/comfyui-plugin/hamdraw_comfy/capabilities.py`、技能 `a1x-comfy-device`
 实验模型：A1X 掌机 `http://192.168.124.31:8189` 的 CVP 能力 **`render`**（别名 `qwen`，family `qwen_image_21`）
 
 ---
@@ -12,7 +12,7 @@
 | # | 修订 | 落点 |
 |---|---|---|
 | R1 | 动作块插图时**不打断当前（下一个）数据流,也不打断 TTS 播放** | §3.1 三条硬不变量 + §7 P5 |
-| R2 | 图片**必须走 `hermit.files`,必须进备份**（含现有头像）——"恢复备份时这些图片要都在" | §5 媒体层改造（新增 P2）+ §9 备份往返验收 |
+| R2 | 图片**必须走 `haminn.files`,必须进备份**（含现有头像）——"恢复备份时这些图片要都在" | §5 媒体层改造（新增 P2）+ §9 备份往返验收 |
 | R3 | 图片消息**只以文字形式进上下文,真图不进**：`角色-发送了一个图片：（提示词），文件地址是：xxx。` | §6 上下文编解码 |
 | R4 | **允许正文为空只有动作**——一条模型输出本就该拆成"文本消息 + 生图消息"两条,没正文就不生成第一条 | §7 P5 空正文路径 |
 | R5 | **每轮最多 1 张参考图、只生成 1 张图**;参考图不由模型决定,模型只输出"是否画角色自己的照片",是则由 action 机制把定妆照当参考图 | §4 动作协议 + §8 参考图规则 |
@@ -61,11 +61,11 @@
 | `app/services/tts-cache.js:64-73,110-122` | **TTS 音频缓存**只在 \`clip.blob\` 时 \`media.put\`，\`clipOf\` 要求 \`stored.blob\`（Web Audio 混响只能吃内存里的 blob）⇒ **本计划明确不动它**（例外，见 §5.5） |
 | `app/services/media-prep.js:182` | 发给模型的图片靠 `media.toDataUrl(mediaId)`（data URL）；视频靠 `logicalFileId` 走 multipart |
 | `app/platform/network.js:52,129-135,204` | `request()` / `requestByteStream()` 都会 **`options.task.controller = controller`** ⇒ 传入主 task 会抢走 LLM 流的中断句柄 |
-| `hermitapp/sdk/hermit-api.d.ts:46-59` | `files.import / pickImage / pickInline / writeText / beginWrite / appendBytes / finishWrite / abortWrite / readText / list / export / delete / share` |
-| `hermitapp/docs/webapp-authoring.md:210-224` | 单次调用上限 **256 KiB**；大对象走 `beginWrite` → `appendBytes`（每块 ≤ 64 KiB Base64）→ `finishWrite` 原子提交；中途放弃用 `abortWrite`；**写句柄只属于创建它的页面会话** |
-| `hermitapp/.../LocalContentGateway.kt:104` | 页面 CSP = `default-src 'self' data: blob:; connect-src 'none'; …` ⇒ 同源 `/__hermit/files/…` 的 `<img>` **可显示**，`fetch` 被禁 |
-| `hermitapp/.../FileStore.kt:379` | `objectUrl(logicalFileId) = "/__hermit/files/<id>"` ⇒ URL 是 logicalFileId 的确定函数 |
-| `hermitapp/docs/hermitapp-product-technical-design.md:415,530,536,538` | IndexedDB **明文写在备份边界之外**；备份包含"记录数据、附件"；**恢复保留实例域内 `logicalFileId`，使任意 JSON 中的附件引用仍成立** |
+| `haminnapp/sdk/haminn-api.d.ts:46-59` | `files.import / pickImage / pickInline / writeText / beginWrite / appendBytes / finishWrite / abortWrite / readText / list / export / delete / share` |
+| `haminnapp/docs/webapp-authoring.md:210-224` | 单次调用上限 **256 KiB**；大对象走 `beginWrite` → `appendBytes`（每块 ≤ 64 KiB Base64）→ `finishWrite` 原子提交；中途放弃用 `abortWrite`；**写句柄只属于创建它的页面会话** |
+| `haminnapp/.../LocalContentGateway.kt:104` | 页面 CSP = `default-src 'self' data: blob:; connect-src 'none'; …` ⇒ 同源 `/__haminn/files/…` 的 `<img>` **可显示**，`fetch` 被禁 |
+| `haminnapp/.../FileStore.kt:379` | `objectUrl(logicalFileId) = "/__haminn/files/<id>"` ⇒ URL 是 logicalFileId 的确定函数 |
+| `haminnapp/docs/haminnapp-product-technical-design.md:415,530,536,538` | IndexedDB **明文写在备份边界之外**；备份包含"记录数据、附件"；**恢复保留实例域内 `logicalFileId`，使任意 JSON 中的附件引用仍成立** |
 | `capabilities.py` | `render`：`needs {prompt:true, image:true, mask:false}`、`ignores ["negative_prompt"]`、`defaults {size [1024,1024], steps 20, ref_strength 0.95}`、`typical_seconds 45`、`prompt.language "any"` |
 | `tools/check-i18n.mjs:43` | `PROMPT_FILES` 白名单免英文审计；其余文件新增中文界面文案必须补 `app/data/i18n-en.js` |
 
@@ -150,7 +150,7 @@ changed(id, "removed", { messageId: pending.id });
 
 1. `media.js` 只写 IndexedDB；宿主设计文档 `:415` 明确"IndexedDB 等 Web 存储……须接受其**备份边界**"，`:530` 备份只含"记录数据、附件"，`:536` 归档"文件和文件清单"。
 2. `:538` 恢复时**保留实例域内 `logicalFileId`**，"使任意 JSON 中的附件引用仍成立" ⇒ 只要引用是 logicalFileId，恢复后图片就都在。
-3. `FileStore.objectUrl(id) = "/__hermit/files/<id>"` ⇒ 对象地址是 logicalFileId 的确定函数，无需入库保存也能重建。
+3. `FileStore.objectUrl(id) = "/__haminn/files/<id>"` ⇒ 对象地址是 logicalFileId 的确定函数，无需入库保存也能重建。
 4. chataxi 自己的对话背景**已经这么做了**（`chat.js:681-690,905`），`chat.js:842` 的注释也把这件事写成既定方向。本计划只是把这个方向落实到全部媒体。
 
 ### 5.2 `app/data/media.js` 重写（对外 API 不变）
@@ -159,7 +159,7 @@ changed(id, "removed", { messageId: pending.id });
 
 | 步骤 | 说明 |
 |---|---|
-| `put` | 在 Hermit 中：`files.beginWrite({name, mime})` → 按 `maxChunkBytes` 分块 `appendBytes({chunkBase64})`（每块 ≤ 64 KiB Base64，遵守 256 KiB 单调用上限）→ `finishWrite` 得 `HermitFile`；然后把**索引记录**写进宿主集合 `media`：`{id, logicalFileId, url, name, mime, kind, size, sha256, width, height, duration, createdAt}`。无 Bridge（浏览器预览）⇒ 退回 IndexedDB，行为不变。 |
+| `put` | 在 Haminn 中：`files.beginWrite({name, mime})` → 按 `maxChunkBytes` 分块 `appendBytes({chunkBase64})`（每块 ≤ 64 KiB Base64，遵守 256 KiB 单调用上限）→ `finishWrite` 得 `HaminnFile`；然后把**索引记录**写进宿主集合 `media`：`{id, logicalFileId, url, name, mime, kind, size, sha256, width, height, duration, createdAt}`。无 Bridge（浏览器预览）⇒ 退回 IndexedDB，行为不变。 |
 | `get` | 先查索引记录；没有则查 IndexedDB（老记录）⇒ 命中就**惰性搬迁**到宿主文件并补索引（引用 id 不变，所以 `role.avatarMediaId` / `message.media[].mediaId` 都不用改）。 |
 | `remove` | 删宿主文件（按索引里的 `logicalFileId`）+ 删索引 + 删 IndexedDB 副本。 |
 | `toDataUrl` | 索引记录 ⇒ 同源 `<img src="{url}">` 载入 → canvas → `toDataURL('image/jpeg', 0.92)`。**不能 fetch**：页面 CSP 是 `connect-src 'none'`（`:104`），同源图片走 `img-src`（被 `default-src 'self'` 覆盖）没问题。 |
@@ -169,7 +169,7 @@ changed(id, "removed", { messageId: pending.id });
 
 ### 5.3 写入路径的必测点（实施第一步就探针）
 
-- `hermit.files.beginWrite` 在**当前安装的 APK** 上是否存在。代码侧已确认：实现在 `MainActivity.kt:2223-2231` + `FileStore.kt:87/112/130`，由提交 `57d79a0` 引入，**含在宿主 v1.11.0 及以上**（本机主线当前 1.11.1）。仍按纪律在设备上探一条（能力清单 + 一次真实写入），失败即明确降级到 IndexedDB 并告诉用户"宿主版本过旧，图片不会进备份"，**不静默**。
+- `haminn.files.beginWrite` 在**当前安装的 APK** 上是否存在。代码侧已确认：实现在 `MainActivity.kt:2223-2231` + `FileStore.kt:87/112/130`，由提交 `57d79a0` 引入，**含在宿主 v1.11.0 及以上**（本机主线当前 1.11.1）。仍按纪律在设备上探一条（能力清单 + 一次真实写入），失败即明确降级到 IndexedDB 并告诉用户"宿主版本过旧，图片不会进备份"，**不静默**。
 - 一次 2 MiB 图片的入库耗时（44 次 `appendBytes`）与配额表现。若单张 1024² PNG 约 1.5–2 MiB，200 张就是 300–400 MB ⇒ 要**如实告知配额风险**，并在 `E_QUOTA` 时给可读错误 + 指路"删除旧对话可释放"（`releaseMedia` 已有链路）。若配额成为实际瓶颈，再改为入库前转 JPEG q0.92（≈200–400 KB/张）——**先量再定，不预设**。
 
 ### 5.4 与既有引用的兼容
@@ -181,7 +181,7 @@ changed(id, "removed", { messageId: pending.id });
 
 ### 5.5 全部"用户媒体"必须一并迁走（业主追加要求，本版显式列为验收项）
 
-业主原话：「你要确保一并修改**角色头像和个人头像**机制, 确保使用 `hermit.files` 机制, 会被正确备份和恢复。」
+业主原话：「你要确保一并修改**角色头像和个人头像**机制, 确保使用 `haminn.files` 机制, 会被正确备份和恢复。」
 
 `media.js` 对外 API 不变，所以只要 §5.2 落地，所有走 `media.put` 的东西**自动**进宿主文件库。但"自动"不等于"验收过了"，因此把清单写死，逐项在 §9.2 第 2 条验收：
 
@@ -218,7 +218,7 @@ changed(id, "removed", { messageId: pending.id });
 `hydrateMessages()`（`llm.js:4`）里对**带 `draw` 的助手消息**改为产出文字：
 
 ```text
-发送了一个图片：（提示词），文件地址是：/__hermit/files/<logicalFileId>
+发送了一个图片：（提示词），文件地址是：/__haminn/files/<logicalFileId>
 ```
 
 - 其余角色看到时，外面仍套现有那句"其他角色「X」的历史发言（仅作上下文参考，禁止模仿、代替或续写该角色）："；
@@ -244,12 +244,12 @@ changed(id, "removed", { messageId: pending.id });
 
 按 §5 重写 `media.js`（宿主文件优先 + `transient` 仍走 IndexedDB）+ `store.js` 三处（`collections` 加 `media`、`releaseMedia` 补 `portraitMediaId`、`profileCollection` 不加）+ 启动一次性迁移。判据：**导出一份备份 → 换新实例恢复 → §5.5 的 M1–M7 全在**（角色头像 / 个人头像 / 对话头像 / 对话背景 / 历史图片 / 生成图 / 定妆照，这是 R2 唯一算数的验收，见 §9.2）。浏览器预览下行为不变。
 
-实施第一步先探针（§5.3）：设备上 `hermit.files.beginWrite` 是否存在 + 一次真实写入 → 不存在就按降级路径走并如实告知"图片不会进备份"。
+实施第一步先探针（§5.3）：设备上 `haminn.files.beginWrite` 是否存在 + 一次真实写入 → 不存在就按降级路径走并如实告知"图片不会进备份"。
 
 ### P3 CVP 客户端 `app/services/draw.js`
 
 - `available()`：取 `image-profiles` 中第一个 `enabled !== false` 且有 `externalModelId` 的卡片；没有 ⇒ `null`（不注入提示词、不执行动作）。
-- `info(profile)`：`GET <base>/cvp/info`，60 s 缓存；`base` 用 vibedraw 同款截断规则。
+- `info(profile)`：`GET <base>/cvp/info`，60 s 缓存；`base` 用 hamdraw 同款截断规则。
 - `capability(profile, id)`：按 id / aliases 找（`render` ↔ `qwen`）。
 - `generate(profile, input)`：`POST /cvp/jobs` → 700 ms 轮询 `/progress` → 完成后读一次 `/jobs/{id}` → `GET outputs[0].url` 取字节。
 - 请求体：`{capability:"render", prompt, seed, size, steps, ref_strength}`（值取 §8 的锁定规则），有参考图时加 `image_base64`；**不发送** `ignores` 里声明的字段。
@@ -289,7 +289,7 @@ changed(id, "removed", { messageId: pending.id });
 
 ### P7 版本、门禁、验收
 
-四处同步版本（`hermit.json` / `app/core/namespace.js` / `README.md` / `~/hermit/happ-dev.json`）→ 热更新到设备 → 本地四套测试 + i18n 门禁 → §9 真机人工验收。**不出 zip、不打 tag**（除非明确要求发版）。
+四处同步版本（`haminn.json` / `app/core/namespace.js` / `README.md` / `~/haminn/happ-dev.json`）→ 热更新到设备 → 本地四套测试 + i18n 门禁 → §9 真机人工验收。**不出 zip、不打 tag**（除非明确要求发版）。
 
 ---
 
@@ -305,7 +305,7 @@ changed(id, "removed", { messageId: pending.id });
 | 尺寸 / 步数 | 从 `/cvp/info` 的 `defaults` **显式发送**（`size` / `steps` / `ref_strength`），拿不到 info 就不提交并提示"请先在模型页测试连接" |
 | 负向提示词 | `render` 的 `ignores` 里有 `negative_prompt` ⇒ 不发 |
 | 参考图强度 | 先用插件默认 `ref_strength 0.95`（它把参考图当"要贴近的图"），**然后在真机上对比 0.95 与约 0.6 两种效果再定**——这是唯一需要调参的地方，用实测决定，不猜 |
-| 参考图预算 | 定妆照从媒体层读出后重编码为长边 ≤ 1024 的 JPEG，并受 `hermit.messageChars` 约束（同 vibedraw `image-engine.js` 的算法）；**不改用户原图** |
+| 参考图预算 | 定妆照从媒体层读出后重编码为长边 ≤ 1024 的 JPEG，并受 `haminn.messageChars` 约束（同 hamdraw `image-engine.js` 的算法）；**不改用户原图** |
 
 ---
 
@@ -315,7 +315,7 @@ changed(id, "removed", { messageId: pending.id });
 
 - `tools/verify.mjs` 新增源码门禁：动作块哨兵常量；`onDelta` 用了 `visible()`；`chat-session` 有 `runDraw` 且**没有**把主 task 传进绘图链路；`draw.js` 只出现 `/cvp/` 路径；`image-profiles` 与 `media` 已在白名单；`media.js` 调用了 `beginWrite/appendBytes/finishWrite`**且保留了 `transient`→IndexedDB 分支**；`roles.js` 有 `portraitMediaId` 且 `store.releaseMedia` 登记了它；`tts-cache.js` 仍要求 `stored.blob`（M8 例外不被顺手改掉）；`image-viewer` 手势关键串；`cropPortrait` 的 3:4 参数；`i18n-en.js` 含新词条。
 - `tests/runtime.test.mjs`（linkedom）：`actions.split/visible` 表驱动（正常块 / 无块 / 半个哨兵 / 缺 `>>>` / 被围栏包裹 / JSON 破损 / 正文为空 / 块在中间 / prompt 超长）。
-- 新增 `tests/media-host.test.mjs`：假 `hermit.files` 覆盖 `put → get → toDataUrl → remove` 与**惰性搬迁**、`E_QUOTA` 失败、`beginWrite` 不存在时的降级。
+- 新增 `tests/media-host.test.mjs`：假 `haminn.files` 覆盖 `put → get → toDataUrl → remove` 与**惰性搬迁**、`E_QUOTA` 失败、`beginWrite` 不存在时的降级。
 - 新增 `tests/draw.test.mjs`：假网络覆盖提交 / 排队 / 完成 / 失败 / 超时 / 取字节 / 私有 task 不被主 task 影响。
 - `tests/ui-flow.mjs`：第四个 Tab 存在；角色编辑窗口有定妆照控件；点气泡图片打开全屏层、Esc 后 `body.overflow` 还原；空文本绘图消息不渲染朗读按钮。
 - `tools/check-i18n.mjs --check` + `tests/i18n-ui.mjs`。
@@ -358,7 +358,7 @@ changed(id, "removed", { messageId: pending.id });
 - 多张出图、多张参考图、模型自选参考图；
 - 角色级绘图开关与绘图历史画廊；
 - 供应商原生 tool / function call 通道；
-- 任何 hermitapp / hermitweb / vibedraw 侧改动，任何 APK 构建与覆盖安装。
+- 任何 haminnapp / haminnweb / hamdraw 侧改动，任何 APK 构建与覆盖安装。
 
 ---
 
@@ -380,7 +380,7 @@ changed(id, "removed", { messageId: pending.id });
 | `app/data/media.js` | 重写 | 宿主文件库优先；`transient === true` 或宿主不可用 ⇒ 走 IndexedDB。`displayUrl()` 给同源对象地址；`migrate()` 启动一次性全量搬迁（失败不置标记、下次重试） |
 | `app/data/store.js` | 改 | 白名单加 `"image-profiles"` 与 `"media"`；`profileCollection` 加 `image-profiles`；`releaseMedia` 登记 `portraitMediaId`；`seed()` 给老角色补 `portraitMediaId` |
 | `app/services/tts-cache.js` | 改 | 写入时显式 `transient: true`（**唯一不进备份的用户媒体**，另加注释说明为什么搬不过去） |
-| `app/services/llm.js` | 改 | `drawNote()` 把绘图消息变成「发送了一个图片：提示词, 文件地址是：/__hermit/files/<id>」且不给字节；`stream()` 的 `onDelta` 走 `actions.visible()`；`complete()` 在有可用绘图卡片时注入 `drawPrompt.instruction()`，末尾 `settle()` 切出 `parsed.action` |
+| `app/services/llm.js` | 改 | `drawNote()` 把绘图消息变成「发送了一个图片：提示词, 文件地址是：/__haminn/files/<id>」且不给字节；`stream()` 的 `onDelta` 走 `actions.visible()`；`complete()` 在有可用绘图卡片时注入 `drawPrompt.instruction()`，末尾 `settle()` 切出 `parsed.action` |
 | `app/features/chat-session.js` | 改 | 新增 `runDraw()`（**分离的异步任务**，进度去重，失败落成可读错误）与 `retryDraw()`；空正文那轮 `removeMessage` + 新增 `"removed"` 相位；`stop()` 一并取消在跑的绘图；`recover()` 把 `drawing` 也归为可重试的 error |
 | `app/features/chat.js` | 改 | 绘图占位骨架；图片点击改走全屏看图；图片下方回显提示词（带「参考定妆照」徽章）；图片消息的重试按钮 = 重新绘制；处理 `"removed"` 相位 |
 | `app/components/image-viewer.js` | 新建 | 全屏看图：单指 pan / 双指 pinch（以中点为锚） / 双击切换 / Esc / 点背景关闭；`scale ∈ [1,8]`，平移有边界；打开锁 `body.overflow`、关闭**无条件还原** |
@@ -427,14 +427,14 @@ changed(id, "removed", { messageId: pending.id });
 - `node tests/i18n-ui.mjs` ✅；
 - `node tools/check-i18n.mjs --check` ✅ 退出码 0（字典 1039 键 / 82 条规则，"未覆盖界面文案"清零）。
 
-版本已同步四处：`hermit.json` `0.7.26` / code `105`、`app/core/namespace.js`、`README.md`、`~/hermit/happ-dev.json`。
+版本已同步四处：`haminn.json` `0.7.26` / code `105`、`app/core/namespace.js`、`README.md`、`~/haminn/happ-dev.json`。
 
 ### 12.5 设备部署（2026-09-27）
 
 - 设备：`http://192.168.124.30:8766`（服务端 1.11.0），实例 appId `6651080b-4d5f-42ec-b4d0-571dadbc25b3`，happId `life.airen.chataxi`，dev 通道；
 - `sync-dir` → `commitState: committed` / `refreshState: runtime-recreated` / **revision 33**；
-- `hermit_wait_dev_render` → `state: "rendered"`；
-- 设备树上出现四个新文件（`app/services/actions.js`、`draw.js`、`draw-prompt.js`、`app/components/image-viewer.js`）——顺带证明 `hermit-install.json` 指向旧 ZIP 并不会漏掉新文件（它的作用是裁掉 docs / tests / 历史包，不是精确文件清单）；
+- `haminn_wait_dev_render` → `state: "rendered"`；
+- 设备树上出现四个新文件（`app/services/actions.js`、`draw.js`、`draw-prompt.js`、`app/components/image-viewer.js`）——顺带证明 `haminn-install.json` 指向旧 ZIP 并不会漏掉新文件（它的作用是裁掉 docs / tests / 历史包，不是精确文件清单）；
 - 剩下的全是 §9.2 的真机人工项：CVP 卡片配置 + `/cvp/info` 目录、备份往返（M1–M7）、边流式边出图不打断 TTS、空正文只有图、跨角色引用提示词、全屏手势、定妆照参考效果与 `ref_strength` 定值、错误路径。
 
 ### 12.6 真机反馈后的六处修复（2026-09-27 第二批）
@@ -476,20 +476,20 @@ changed(id, "removed", { messageId: pending.id });
 
 **"约 1MP + 9:16"的唯一对应**：设备 `native` 档的 `[768, 1344]`。同一份能力表里 `fast` 档是 576×1024（0.59MP）,差一半,不取。
 
-配套改动（vibedraw 仓库,插件 2.3.0）：`capabilities.py` 用 `size` 域（对齐步长 / 最短边 / 最长边 / 像素预算 / 建议比例）**算出**推荐枚举并播报 `size_domain`,四个能力都不再锁死手写清单；`validate_values` 按域判而不是按清单判。**枚举语义保留** —— 老客户端只读 `values.size`,只取 `sizes[0]`,所以 `quick`/`inpaint` 首项仍是 512²,`upscale` 仍是 `[[1024,1024],[2048,2048]]`,`render` 首项仍是 1:1,历史纹理没有被破坏。
+配套改动（hamdraw 仓库,插件 2.3.0）：`capabilities.py` 用 `size` 域（对齐步长 / 最短边 / 最长边 / 像素预算 / 建议比例）**算出**推荐枚举并播报 `size_domain`,四个能力都不再锁死手写清单；`validate_values` 按域判而不是按清单判。**枚举语义保留** —— 老客户端只读 `values.size`,只取 `sizes[0]`,所以 `quick`/`inpaint` 首项仍是 512²,`upscale` 仍是 `[[1024,1024],[2048,2048]]`,`render` 首项仍是 1:1,历史纹理没有被破坏。
 
-**A1X 部署实测**（`/cvp/info` 抄回来的真实值）：`plugin.version 2.3.0` / `render.needs.image=false` / `render.values.size` 含 `[768,1344]` / 四个能力都有 `size_domain`。设备插件源码备份在 `custom_nodes/vibedraw_comfy/.bak-20260927/`。
+**A1X 部署实测**（`/cvp/info` 抄回来的真实值）：`plugin.version 2.3.0` / `render.needs.image=false` / `render.values.size` 含 `[768,1344]` / 四个能力都有 `size_domain`。设备插件源码备份在 `custom_nodes/hamdraw_comfy/.bak-20260927/`。
 
-**连带发现（未处置）**：vibedraw app 假定画幅是方的 —— `app/services/providers.js` 的 `value.width = value.height = sizes[0]`,`cvpSizes()` 只取 `pair[0]`,`app/components/settings.js` 把标签硬写成 `1:1`。非方形条目进来后它不会报错（768×768 仍落在 `render` 的域里）,但标签与实发画幅会对不上。**待业主裁决是否本轮一起收掉。**
+**连带发现（未处置）**：hamdraw app 假定画幅是方的 —— `app/services/providers.js` 的 `value.width = value.height = sizes[0]`,`cvpSizes()` 只取 `pair[0]`,`app/components/settings.js` 把标签硬写成 `1:1`。非方形条目进来后它不会报错（768×768 仍落在 `render` 的域里）,但标签与实发画幅会对不上。**待业主裁决是否本轮一起收掉。**
 
 ### 12.8 本地验证与设备部署（2026-09-27 第三批）
 
 - `node tools/verify.mjs` ✅ —— 114 项 runtime 断言（含新增的 `[768,1344]` 命中断言）+ 47 个 JS `--check` + 44 条运行时引用 + Python 打包测试,`fail 0`；
 - `node tests/ui-flow.mjs` ✅ —— 17 段全 passed（含"编辑绘图提示词 / 重新绘制 / 确认后删除"）；
 - `node tests/i18n-ui.mjs` ✅；`node tools/check-i18n.mjs --check` ✅ 退出码 0（字典 **1056** 键 / **83** 条规则）；
-- 版本同步四处：`hermit.json` `0.7.28` / code `107`,`app/core/namespace.js`,`README.md`,`~/hermit/happ-dev.json`；
-- 设备：`http://192.168.124.35:8766`,实例 appId `d8d07eda-c391-49db-81e7-fe8153634e96`,devRev **88 → 89**,`commitState: committed`；设备侧报的差异正好是三个运行期文件（`hermit.json` / `app/core/namespace.js` / `app/services/draw.js`）；
-- `hermit_read_dev_file` 回读 `app/services/draw.js`,确认 `var PREFERRED_SIZE = [768, 1344];` **已在设备开发树里**（不是"部署成功即算数"）。
+- 版本同步四处：`haminn.json` `0.7.28` / code `107`,`app/core/namespace.js`,`README.md`,`~/haminn/happ-dev.json`；
+- 设备：`http://192.168.124.35:8766`,实例 appId `d8d07eda-c391-49db-81e7-fe8153634e96`,devRev **88 → 89**,`commitState: committed`；设备侧报的差异正好是三个运行期文件（`haminn.json` / `app/core/namespace.js` / `app/services/draw.js`）；
+- `haminn_read_dev_file` 回读 `app/services/draw.js`,确认 `var PREFERRED_SIZE = [768, 1344];` **已在设备开发树里**（不是"部署成功即算数"）。
 
 **测试桩的一条经验**：`retryDraw` → `runDraw` 里 `existing.draw.profileId` 会走 `app.services.draw.resolveCard(...)`,而它内部的兜底 `available` 是模块内部引用,**桩打在 `available` 上打不到它** ⇒ 测试必须把 `resolveCard` 也一起接管,否则"重新绘制"会以为卡片没了,页面直接报"当前没有可用的绘图模型"。已写进 `tests/ui-flow.mjs` 第三段的注释里。
 
@@ -499,7 +499,7 @@ changed(id, "removed", { messageId: pending.id });
 
 | # | 根因 | 判据（实测） | 修法 |
 |---|---|---|---|
-| A | **参考图被压扁**：vibedraw 插件 2.3.0 新加的预缩节点用了 `ImageScale` + `crop:"disabled"` = **强制拉伸**,而 `reference_box()` 又拿**画幅的比例**算框 ⇒ 3:4 的定妆照被压进方框 | 读容器内源码:`TextEncodeQwenImage21.execute()` 自己用 `ratio = samples.shape[3]/samples.shape[2]`（参考图**自身**比例）+ `common_upscale(..., "disabled")`;2.2.0 的家族文件**没有参考图这条路径**（`git show 2705ef0:…/qwen_image.py` 156 行）⇒ 是 2.3.0 引入的 | 插件侧（vibedraw 仓）:新增 `graph.scale_to_pixels` = `ImageScaleToTotalPixels` + `resolution_steps:32`（按**面积**缩、保比例）,`reference_box` → `reference_megapixels(edge)`。见 `vibedraw/plans/cvp-plan.md` §5.7 |
+| A | **参考图被压扁**：hamdraw 插件 2.3.0 新加的预缩节点用了 `ImageScale` + `crop:"disabled"` = **强制拉伸**,而 `reference_box()` 又拿**画幅的比例**算框 ⇒ 3:4 的定妆照被压进方框 | 读容器内源码:`TextEncodeQwenImage21.execute()` 自己用 `ratio = samples.shape[3]/samples.shape[2]`（参考图**自身**比例）+ `common_upscale(..., "disabled")`;2.2.0 的家族文件**没有参考图这条路径**（`git show 2705ef0:…/qwen_image.py` 156 行）⇒ 是 2.3.0 引入的 | 插件侧（hamdraw 仓）:新增 `graph.scale_to_pixels` = `ImageScaleToTotalPixels` + `resolution_steps:32`（按**面积**缩、保比例）,`reference_box` → `reference_megapixels(edge)`。见 `hamdraw/plans/cvp-plan.md` §5.7 |
 | B | **还在请求方形画幅**：卡片上的能力目录是**发现当时**的快照,`discoverImage()` 只在测试连接时读 `/cvp/info` | A1X 出图记录 `render_00005..00013` **全部 1024×1024**,含插件升级**之后** 01:59 那张 | `app/services/draw.js` 新增 `refreshCatalogs()`:启动时静默重读一次 image 卡片目录（`persist:true`,插件没开/没网一律静默）;`app/app.js` 不 `await` 地调它 |
 
 **定妆照统一标准（`app/components/ui.js`）**：`cropPortrait` = `aspect: 9/16, outputWidth: 576, outputHeight: 1024`;`cropPicture` 新增 `outputHeight`（取景框是整数像素,由它反算会漂零点几像素,统一标准必须写死）。三个数各有来由:9:16 = 生图画幅比例;长边 1024 = `REFERENCE_MAX_EDGE`（不再被重编码一次）;0.59MP 比原来的 3:4@768（0.79MP）**更小**。取景框仍可拖动缩放 —— "强行"的是**比例**,不是构图。**存量 3:4 定妆照不自动重裁**（那会丢掉用户当时的取景）;插件修好后它们不再被拉变形,只是构图比例与画幅不同。
@@ -597,8 +597,8 @@ changed(id, "removed", { messageId: pending.id });
 
 - **换掉的悬空门禁**：`verify.mjs` §6b 原来 5 条断言守的是 `--viewer-halo-*` 与 `.image-viewer-close`；按钮被撤掉后它们仍然"存在且会红"，但语义已经作废 ⇒ 整段换成工具栏 / 缩略图 / 停止按钮门禁。**教训：删掉选择器时必须同时删掉守它的断言**，否则要么永远红（噪声），要么被顺手注释掉（等于没有）。
 - **新增运行时验证（`tests/ui-flow.mjs`）**：看图段改为断言工具栏三个 `data-viewer-action` 就是 `['download','background','close']`、`.image-viewer-caption` 与 `.image-viewer-close` 都不存在、没给回调时只剩 `close`；沉浸模式段从 `click` 改成**真实 pointer 手势**（`pointerdown` + 真等 580ms + `pointerup`），覆盖"轻点不藏 / 长按才藏 / 轻点恢复 / 挪动取消 / 长按消息不算"；新增一段"点生图消息上的停止 ⇒ 假插件真的收到 `task.cancelled`、消息落成 `cancelled`、按钮消失"+"正文那一条的停止**不许**掐掉同时在跑的绘图"。
-- **设备 `.26` 回读**（`hermit_read_dev_file`，revision **38**）：`chat.js` HIT `message-stop` / `session.cancelDraw` / `停止生成` / `dataset.stopGeneration`；`chat-session.js` HIT `function cancelDraw`；`app.css` HIT `message-stop` / `max-height: 213px`；`i18n-en.js` HIT `正在停止绘制` / `Stop generating`；`draw.js` HIT `/cancel` 通知；`hermit.json` / `namespace.js` HIT `0.7.31`；`image-viewer.js` HIT `image-viewer-toolbar` / `data-viewer-action`；`roles.js` HIT `stagePortrait`。
-- **版本四处同步**：`hermit.json` / `app/core/namespace.js` / `README.md` / `~/hermit/happ-dev.json` 一致 = **`0.7.31` / code `110`**。
+- **设备 `.26` 回读**（`haminn_read_dev_file`，revision **38**）：`chat.js` HIT `message-stop` / `session.cancelDraw` / `停止生成` / `dataset.stopGeneration`；`chat-session.js` HIT `function cancelDraw`；`app.css` HIT `message-stop` / `max-height: 213px`；`i18n-en.js` HIT `正在停止绘制` / `Stop generating`；`draw.js` HIT `/cancel` 通知；`haminn.json` / `namespace.js` HIT `0.7.31`；`image-viewer.js` HIT `image-viewer-toolbar` / `data-viewer-action`；`roles.js` HIT `stagePortrait`。
+- **版本四处同步**：`haminn.json` / `app/core/namespace.js` / `README.md` / `~/haminn/happ-dev.json` 一致 = **`0.7.31` / code `110`**。
 
 #### ⑧ 第三轮补丁：底部工具栏改成浮起的小工具箱（v0.7.32）
 
@@ -629,22 +629,22 @@ changed(id, "removed", { messageId: pending.id });
 - 视觉理由也记一笔：那一行里另外几个动作（编辑 / 重新生成 / 删除）都是无框的 `icon-button`，只有停止按钮一个带框，看着像另一个物种。
 - 工具箱底色 `#101210c4`（196/255 ≈ 77%）→ **`#10121099`（≈ 60%）**。再往下调就要动文字可读性了：标签是 `#f2f2ee` 的 11px，压在浅色照片上本来就靠这层深底撑着 —— 60% 是"看得见画面、又还能读字"的平衡点。代码里留了这句，继续降之前先在真机上对着亮图看一眼。
 - 门禁（`verify.mjs`）：`assert.match(chatSource, /className = 'button message-stop'/)`；`assert.match(styles, /\.button\.message-stop \{[^}]*border-color: transparent;/)` **必须用这个等权选择器**；透明度的判据是**读出来的 alpha 比原来小**（`parseInt(hex,16) < 0xc4`，取不到就是 `NaN` ⇒ 也失败），不是把新数值再抄一遍。
-- 验证（全绿）：`verify.mjs` **114 / fail 0**；`ui-flow.mjs` **18 段**；`i18n-ui.mjs`；`check-i18n --check` 退出码 0。设备 `.26` `sync-dir` ⇒ **revision 40** / `committed` / `runtime-recreated`，差异集 5 个文件（`app/core/namespace.js`、`app/data/i18n-en.js`、`app/features/chat.js`、`hermit.json`、`styles/app.css` —— 含上一批未推的 i18n 六键）；`hermit_read_dev_file` 回读 `hermit.json` HIT `0.7.33` / `112`，`app.css` HIT `#10121099` / `.button.message-stop` / `border-color: transparent`，`chat.js` HIT `button message-stop` / `设为对话背景？` / `if (!confirmed) return;`，`i18n-en.js` HIT `设为对话背景？`。版本 → **`0.7.33` / code `112`**，四处同步。
+- 验证（全绿）：`verify.mjs` **114 / fail 0**；`ui-flow.mjs` **18 段**；`i18n-ui.mjs`；`check-i18n --check` 退出码 0。设备 `.26` `sync-dir` ⇒ **revision 40** / `committed` / `runtime-recreated`，差异集 5 个文件（`app/core/namespace.js`、`app/data/i18n-en.js`、`app/features/chat.js`、`haminn.json`、`styles/app.css` —— 含上一批未推的 i18n 六键）；`haminn_read_dev_file` 回读 `haminn.json` HIT `0.7.33` / `112`，`app.css` HIT `#10121099` / `.button.message-stop` / `border-color: transparent`，`chat.js` HIT `button message-stop` / `设为对话背景？` / `if (!confirmed) return;`，`i18n-en.js` HIT `设为对话背景？`。版本 → **`0.7.33` / code `112`**，四处同步。
 
 #### ⑪ 生图提示词重写：堵死「用文字代替照片」（v0.7.34）
 
-业主原话：「还是要研究一下措辞，要让大模型知道用户向它要照片、想看它的样子、让它拍照、画它的样子……决不能用文字描述替代照片，如果要响应用户的要求，就应该调用生图工具来实现生图，撰写提示词。（你来规划如何引导她撰写简明扼要但又高效的提示词）」。现场症状：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……还带文件地址 /hermit/….」
+业主原话：「还是要研究一下措辞，要让大模型知道用户向它要照片、想看它的样子、让它拍照、画它的样子……决不能用文字描述替代照片，如果要响应用户的要求，就应该调用生图工具来实现生图，撰写提示词。（你来规划如何引导她撰写简明扼要但又高效的提示词）」。现场症状：「它仍然经常会用文字回复说 XXXX, 发送了一个图片：23岁……还带文件地址 /haminn/….」
 
 **根因不是提示词写得不够狠，是模型在自己的历史里看到了那句样板。** `llm.js` 的 `drawNote()` 把一条绘图消息写进 assistant 的历史：
 
 ```
-发送了一个图片：<prompt>, 文件地址是：/__hermit/files/<id>
+发送了一个图片：<prompt>, 文件地址是：/__haminn/files/<id>
 ```
 
 模型读到的是「我上一次发图时说的就是这句话」，于是下一轮要图时**照抄**它 —— 用户拿到一段文字加一个地址。所以修法必须是两处一起，只改提示词挡不住（提示词说「要画图」，历史里摆着一个现成的「发图句式」）。
 
-- **`llm.js` `drawNote()`：断掉样板。** 改成 `[系统附注] 你的上一条回复附了一张已生成的图片, 画面：<prompt>`。两件事：① 用方括号标明这是**系统附注而不是模型说的话**；② **不给地址** —— `/__hermit/files/<id>` 那个 URL 形态本身就是被抄走的那半截，而模型并没有任何事需要用它（它要知道的只是「上一轮有张图、画的是什么」，提示词已经说全）。**代价：模型不再知道那张图"存在哪"；这是有意的取舍，因为它从来也没法取用。**
-- **`draw-prompt.js` `instruction()`：把判定写成二值的，并点名禁掉伪交付。** 新增的核心是「**每一轮只有两个选项，没有第三个**」：A 不需要画面 ⇒ 正常回话；B 要给画面 ⇒ **必须写动作块**；**没有 C** —— 把画面用文字描写一遍、写「发送了一个图片：…」、附地址或编号来充当照片，全部算错。规则 5 逐条点名：「发送了一个图片：…」「图片地址是：…」、任何 `/hermit/…` 路径或附件编号、`(图片)`、`[图片]`、`见下图`、`图片已生成`、`我已经发给你了`；并明说 `[系统附注]` 那几行是**系统写的、不许照搬**。触发词表也补全了「拍张照」「你长什么样」。
+- **`llm.js` `drawNote()`：断掉样板。** 改成 `[系统附注] 你的上一条回复附了一张已生成的图片, 画面：<prompt>`。两件事：① 用方括号标明这是**系统附注而不是模型说的话**；② **不给地址** —— `/__haminn/files/<id>` 那个 URL 形态本身就是被抄走的那半截，而模型并没有任何事需要用它（它要知道的只是「上一轮有张图、画的是什么」，提示词已经说全）。**代价：模型不再知道那张图"存在哪"；这是有意的取舍，因为它从来也没法取用。**
+- **`draw-prompt.js` `instruction()`：把判定写成二值的，并点名禁掉伪交付。** 新增的核心是「**每一轮只有两个选项，没有第三个**」：A 不需要画面 ⇒ 正常回话；B 要给画面 ⇒ **必须写动作块**；**没有 C** —— 把画面用文字描写一遍、写「发送了一个图片：…」、附地址或编号来充当照片，全部算错。规则 5 逐条点名：「发送了一个图片：…」「图片地址是：…」、任何 `/haminn/…` 路径或附件编号、`(图片)`、`[图片]`、`见下图`、`图片已生成`、`我已经发给你了`；并明说 `[系统附注]` 那几行是**系统写的、不许照搬**。触发词表也补全了「拍张照」「你长什么样」。
 - **prompt 撰写法（业主点名要的那部分）：从"一个字数区间"升级成"一套写法"。** 四段骨架 —— **谁在做什么**（具体到容貌、发型、穿着、表情、动作）→ **在哪、周围有什么** → **光与色调** → **画风**（一个短语）；核心判据是「**信息密度比长度重要** —— 宁可 60 个字全是具体名词，也不要 120 个字都是漂亮的空话」；另外四条硬要求：具体名词压过抽象形容词（「白色吊带连衣裙」而不是「很好看的衣服」）、一个主体一个动作、**不写否定句**（要「短发」不要「不要长发」；绘图模型对否定项处理很差，经常照画）、同一角色的容貌与穿着始终用**同一套词**（否则每张图看起来像换了一个人）。
 - 标点按业主规范（2026-09-23）把整个文件统一成半角逗号。
 - 门禁（`verify.mjs`）：`drawNote` 的判定只切**函数体**（它的说明注释在函数之前，从 `function drawNote(message) {` 往后切就全是代码），断言里面既没有那句样板也没有地址形态，并带一条"切出来的范围越界"的自检；提示词侧 11 条 —— 二值判定、点名禁止、`[系统附注]` 不许照搬、四段骨架、密度判据、具体名词、不写否定句、同一套词。**换掉了两条旧门禁**（原来是 `/"发送了一个图片：" \+ prompt/` 与 drawNote→`objectAddress`），它们守的正是要删掉的那两样东西。
@@ -659,7 +659,7 @@ changed(id, "removed", { messageId: pending.id });
 - 「取不到地址」从"渲染时"挪到了"进视口时"（`unavailableThumb` 换成原来那行说明）—— 没看到的那几张，用户本来也不知道它们坏没坏。
 - 门禁（`verify.mjs`）：`loadThumb` 里必须有 `displayUrl`；必须有 `new IntersectionObserver` 与 `rootMargin`；必须有"没有观察器就立刻加载"的降级分支；渲染完必须有 `watchThumbs(inner)`；CSS 两条占位几何；外加**反向**断言 —— 消息媒体渲染循环里不许再出现 `displayUrl`（循环边界用注释锚点卡死、先滤掉行注释，因为循环内的说明正引用了这个名字）。
 - **运行时验证（`ui-flow.mjs` 新增第 5 段，两条静态门禁证明不了的）**：给沙箱补一个假的 `IntersectionObserver`，数 `displayUrl` 被调了几次 —— 渲染完 **0 次**、喂一次相交变 **1 次**、之后再滚动不会重复取。**写这段时踩到的坑**：① 沙箱里本来没有 IntersectionObserver，前面几轮渲染已经走降级路把这张缩略图加载过了（标记从 `1` 变 `2`），观察器不会再选它 ⇒ 必须先让记录真的变一次（改 `updatedAt`）逼出**新**节点；② `renderMessages` 按消息签名复用节点，签名不变就没有新缩略图可观察。
-- 验证（全绿）：`verify.mjs` **114 / fail 0**；`ui-flow.mjs` 全段；`i18n-ui.mjs`；`check-i18n --check` 退出码 0。设备 `.26` `sync-dir` ⇒ **revision 41** / `committed` / `runtime-recreated`，差异集 6 个文件（`namespace.js`、`chat.js`、`draw-prompt.js`、`llm.js`、`hermit.json`、`app.css`）；回读 `hermit.json` HIT `0.7.34` / `113`，`draw-prompt.js` HIT `没有 C。` / `正文里绝对不许出现这些写法` / `信息密度比长度重要` / `不是你自己说过的话`，`llm.js` HIT `[系统附注]`，`chat.js` HIT `IntersectionObserver` / `data-media-pending` / `rootMargin: LAZY_ROOT_MARGIN` / `watchThumbs(inner)`，`app.css` HIT `120px; height: 213px`。版本 → **`0.7.34` / code `113`**，四处同步。
+- 验证（全绿）：`verify.mjs` **114 / fail 0**；`ui-flow.mjs` 全段；`i18n-ui.mjs`；`check-i18n --check` 退出码 0。设备 `.26` `sync-dir` ⇒ **revision 41** / `committed` / `runtime-recreated`，差异集 6 个文件（`namespace.js`、`chat.js`、`draw-prompt.js`、`llm.js`、`haminn.json`、`app.css`）；回读 `haminn.json` HIT `0.7.34` / `113`，`draw-prompt.js` HIT `没有 C。` / `正文里绝对不许出现这些写法` / `信息密度比长度重要` / `不是你自己说过的话`，`llm.js` HIT `[系统附注]`，`chat.js` HIT `IntersectionObserver` / `data-media-pending` / `rootMargin: LAZY_ROOT_MARGIN` / `watchThumbs(inner)`，`app.css` HIT `120px; height: 213px`。版本 → **`0.7.34` / code `113`**，四处同步。
 
 #### ⑬ 画图中占位的扫光改成 45 度斜带、更淡更弱（v0.7.35）
 
@@ -672,7 +672,7 @@ changed(id, "removed", { messageId: pending.id });
 - **更淡更弱**：颜色仍取 `--surface`，强度改由伪元素自己的 **`opacity: .28`** 承担 —— 明暗两套「比底色亮一点 / 暗一点」的关系原样保留；换成写死的半透明色会让另一套主题变成另一个效果（这也是没新建 token 的理由）。
 - **位移量是算出来的，不是试出来的**：`translateX` 的百分比是**自身宽度**。带子厚 22% ≈ 47.5px，要整条扫出容器得沿斜向移 `(305 + 47.5) / 2 ≈ 176px`，取 ±380% 留一点余量（起点终点各完全在容器外）。
 - **门禁（`verify.mjs` §9，四条 + 一条反向）**：从 CSS 里**读出** `.message-draw::after` 的规则体再断言 —— ① 有 `transform: rotate(45deg)`；② 读出 `opacity` 并断言 `0 < v < 1`（不是把 `.28` 再抄一遍，抄一遍的断言下次改回 1 照样绿）；③ 关键帧的起点与终点各自都带 `rotate(45deg)`（少一个会被动画拉回竖直）；④ **反向**：关键帧里**不许再出现 `left:`** —— 「45 度」正向断言在"斜带变回竖带平移"的实现上照样绿，只有这条能拦住。**新断言跑过一次变异验证**：把 `rotate(45deg)` 改成 `rotate(0deg)` ⇒ 门禁报「画图中的扫光必须是 45 度的斜带」，改回即绿。
-- 验证（全绿）：`verify.mjs` **114 / fail 0**（新增断言挂在这一条 CSS 用例里，用例数不变）。设备 `.26` `sync-dir` ⇒ **revision 42** / `committed` / `runtime-recreated`，差异集 3 个文件（`app/core/namespace.js`、`hermit.json`、`styles/app.css`；`README.md` 与 `tools/verify.mjs` 被开发树的运行面过滤掉，是预期）；`hermit_read_dev_file` 回读 `hermit.json` HIT `0.7.35` / `114`，`app.css` HIT `rotate(45deg) translateX(-380%)` / `opacity: .28` / `top: -30%; left: 39%`，且旧的 `left: -60%` 已 MISS。版本 → **`0.7.35` / code `114`**，四处同步。
+- 验证（全绿）：`verify.mjs` **114 / fail 0**（新增断言挂在这一条 CSS 用例里，用例数不变）。设备 `.26` `sync-dir` ⇒ **revision 42** / `committed` / `runtime-recreated`，差异集 3 个文件（`app/core/namespace.js`、`haminn.json`、`styles/app.css`；`README.md` 与 `tools/verify.mjs` 被开发树的运行面过滤掉，是预期）；`haminn_read_dev_file` 回读 `haminn.json` HIT `0.7.35` / `114`，`app.css` HIT `rotate(45deg) translateX(-380%)` / `opacity: .28` / `top: -30%; left: 39%`，且旧的 `left: -60%` 已 MISS。版本 → **`0.7.35` / code `114`**，四处同步。
 - **没验到的**：这张占位只在"正在绘制"时出现，本机没有无头浏览器（`ms-playwright` 缓存为空、工作区也没装 playwright），所以"看起来够不够淡"只能由业主在真机上对着一次真实的绘制判断；要再收一档就调 `opacity` 一个数。
 
 #### ⑭ 「说到就要做到」：把动作块说明白成"调工具"，并堵住只承诺不画（v0.7.36）
@@ -695,7 +695,7 @@ changed(id, "removed", { messageId: pending.id });
 - **假绿是怎么来的**：原来这批断言全部打在**整文件**（`drawPromptSource`）上，而我在这一轮往**文件头注释**里写了「说到就要做到」「再来一张 / 再画一张 / 换一张 / 换个姿势」「调用绘图工具」这些同一个词 ⇒ 断言会从**注释**里直接命中：把返回文本里的要求删掉、注释留着，门禁照样全绿，等于没写。修法是先按 `function instruction(hasPortrait) {` **切出函数体**（`slice(at).split("\n  }\n")[0]`），断言一律打在 `instructionBody` 上，并给切片本身一条自检（长度落在 1200~7000、且不含函数外的 `REFERENCE_PREFIX`，切不出来就报"这段门禁本身失效了"）。该文件原有 16 条断言一并从整文件改成函数体；**只有 `REFERENCE_PREFIX` 那条留在整文件上**（它在函数之外）。
 - **变异验证**：只把返回文本里的「说到就要做到」改成别的词、注释原样保留 ⇒ 门禁报「必须写明「说到就要做到」：承诺了就必须画」，改回即绿。这就同时证明了"切片生效"和"注释不再假绿"。
 
-验证：`node --check app/services/draw-prompt.js` 通过；`verify.mjs` **114 / fail 0**。设备 `.26` `sync-dir` ⇒ **revision 43** / `committed` / `runtime-recreated`，差异集 3 个文件（`app/core/namespace.js`、`app/services/draw-prompt.js`、`hermit.json`；`tools/verify.mjs` 与 `README.md` 被开发树的运行面过滤，是预期）。`hermit_read_dev_file` 回读 `draw-prompt.js`（10845 字节）12 个特征串**全部 HIT**（含新加的 10 个与原有的 `没有 C。` / `正文里绝对不许出现这些写法`），`hermit.json` HIT `0.7.36` / `115`。版本 → **`0.7.36` / code `115`**，四处同步。
+验证：`node --check app/services/draw-prompt.js` 通过；`verify.mjs` **114 / fail 0**。设备 `.26` `sync-dir` ⇒ **revision 43** / `committed` / `runtime-recreated`，差异集 3 个文件（`app/core/namespace.js`、`app/services/draw-prompt.js`、`haminn.json`；`tools/verify.mjs` 与 `README.md` 被开发树的运行面过滤，是预期）。`haminn_read_dev_file` 回读 `draw-prompt.js`（10845 字节）12 个特征串**全部 HIT**（含新加的 10 个与原有的 `没有 C。` / `正文里绝对不许出现这些写法`），`haminn.json` HIT `0.7.36` / `115`。版本 → **`0.7.36` / code `115`**，四处同步。
 
 **没验到的 / 仍然开着的**：提示词是概率性的 —— 门禁只能证明"话确实说了、说清了"，证明不了模型下次一定照做；真要机械兜底还有一条路（`llm.js` 的 `actionBroken` 至今**没有消费者**，畸形块被静默丢弃；也可以在"说了要画却没有动作块"时给用户一个可见提示），**都没做**，等业主发话。
 
@@ -839,7 +839,7 @@ changed(id, "removed", { messageId: pending.id });
 
 ### ⑱ 实测：提示词已全部到位，最近三轮仍然一条动作块都没写（只读，无改动）
 
-用 `postReloadScript` + `hermit_get_page_state` 把设备上的对话历史读了出来（这是可行通道，配方见技能 `chataxi-happ-verify`）。
+用 `postReloadScript` + `haminn_get_page_state` 把设备上的对话历史读了出来（这是可行通道，配方见技能 `chataxi-happ-verify`）。
 
 **设备上有 3 个会话**，最新的是 `conversation_1jbxan1egiz7qp1nwyu`（与刘婷婷，04:23:52 更新，55 条消息）。它的最后三条回合：
 
@@ -918,7 +918,7 @@ changed(id, "removed", { messageId: pending.id });
 | `app/services/llm.js` | ① `settle()` 增加 `value.rawText = String(value.text == null ? "" : value.text)` —— **在切动作块之前**先留一份原文；② `drawNote()` 整体换成 `drawReceipt(message)`（见下）；③ `hydrateMessages()` 的 assistant 分支改读 `message.rawText \|\| message.text`，并在每条 assistant 之后追加一条 user 身份回执 |
 | `app/features/chat-session.js` | `runDraw(..., rawText)` 增加第 6 参数；新建的绘图消息带 `rawText`；正文为空的那一轮先把原文 `carryRaw` 接住**再**删掉空文本消息（`chat-session.js:351` 的删除逻辑） |
 | `app/services/draw-prompt.js` | `instruction()` 增两段：① 历史里的动作块是**当时**画的、别重发、也别抄旧 prompt；② 带方括号的「[本机系统消息]」是本机程序给的**回执**，**只有写了动作块的回合才会有**；规则 6 的 `[系统附注]` 字样改为 `[本机系统消息]` |
-| 四处版本号 | `hermit.json`(118 / 0.7.39) / `app/core/namespace.js` / `README.md` / `~/hermit/happ-dev.json` |
+| 四处版本号 | `haminn.json`(118 / 0.7.39) / `app/core/namespace.js` / `README.md` / `~/haminn/happ-dev.json` |
 
 **二、回执的形态（业主三条要求逐条落地）**
 
@@ -929,7 +929,7 @@ changed(id, "removed", { messageId: pending.id });
 ```
 
 1. **身份 = user，不是 system。** 业主说"user身份可能更合理, 可以避免 Assistant 再犯傻重复自己的话"，代码层面这个选择是**唯一正确**的：`providers.js:46 mapSystemMessages()` 把所有 `role === "system"` 的消息**抽出来集中拼到请求最前面**（49 行），位置信息全丢 ⇒ system 身份的回执会跟它要说明的那条动作块脱开。user 身份位置准确。
-2. **地址给不给 —— 不给。** 业主要求里提到"生成图像地址 xxxx"，但实测反例就在眼前：`/__hermit/files/<id>` 这种可复制的 URL 形态，正是模型抄进正文当图片的那半截（现场「发送了一个图片：23岁……还带文件地址 /hermit/…」）。模型不需要用地址做任何事，只需要知道"图已经出来了"。**这是我对业主原话唯一的偏离，明确记录在此。**
+2. **地址给不给 —— 不给。** 业主要求里提到"生成图像地址 xxxx"，但实测反例就在眼前：`/__haminn/files/<id>` 这种可复制的 URL 形态，正是模型抄进正文当图片的那半截（现场「发送了一个图片：23岁……还带文件地址 /haminn/…」）。模型不需要用地址做任何事，只需要知道"图已经出来了"。**这是我对业主原话唯一的偏离，明确记录在此。**
 3. **三态都要回执。** 只留成功的话，"写了块但失败"和"根本没写块"在历史里长得一样 —— 而那正是模型最需要区分的差别。「正在绘制」是瞬时态，不发（页面一刷新它就变成三态之一）
 
 **二·补｜守卫：旧记录一律不发回执**（实现中发现并立即修掉的真实风险）
@@ -942,7 +942,7 @@ changed(id, "removed", { messageId: pending.id });
 
 - **门禁**：`tools/verify.mjs` **117/117**；`tests/runtime.test.mjs` **79/79**（新增 2 条：真 `complete()` 断 `rawText`、真 `hydrateMessages()` 断三态回执）；`tests/ui-flow.mjs` 全绿；`tests/i18n-ui.mjs` 全绿；`tools/check-i18n.mjs --check` 退出码 0。
 - **变异验证 7 条，一条一条做，全部被抓**：① 出错那条回执去掉来源标记 → **第一次没抓住**（断言只查了成功那一条）⇒ 断言改成计数（三条都得带标记）后抓住；② 回执改回 assistant 身份；③ `hydrateMessages` 改读切过的 `text`；④ 去掉取消态；⑤ `carryRaw` 置空；⑥ 绘图消息不记 `rawText`；⑦ 去掉"旧记录不发回执"守卫（静态断言 + 运行时测试同时红）。
-- **设备端回读**：`sync-dir` ⇒ **revision 47**（先 46 后被守卫那次改动推到 47）；`hermit_read_dev_file` 逐文件核对 **14 项特征串全 HIT**（`function drawReceipt(message) {` / `hasOwnProperty.call(message, "rawText")` / `[本机系统消息]` / `speakerKind: "draw-receipt"` / `settle` 的 `rawText` 行 / hydrate 的 `rawText || message.text` 行 / `rawText: String(rawText || "")` / `carryRaw` 行 / `runDraw(..., null, carryRaw)` / 提示词四处 / `hermit.json` 的 `118` + `0.7.39`）；页面状态一次：`readyState: complete`、路由 `#/conversations`、`appStateError: null`（应用没被改坏）。
+- **设备端回读**：`sync-dir` ⇒ **revision 47**（先 46 后被守卫那次改动推到 47）；`haminn_read_dev_file` 逐文件核对 **14 项特征串全 HIT**（`function drawReceipt(message) {` / `hasOwnProperty.call(message, "rawText")` / `[本机系统消息]` / `speakerKind: "draw-receipt"` / `settle` 的 `rawText` 行 / hydrate 的 `rawText || message.text` 行 / `rawText: String(rawText || "")` / `carryRaw` 行 / `runDraw(..., null, carryRaw)` / 提示词四处 / `haminn.json` 的 `118` + `0.7.39`）；页面状态一次：`readyState: complete`、路由 `#/conversations`、`appStateError: null`（应用没被改坏）。
 - **回执路径走查**：`providers.transcriptText()` 只在 `roleName` 非空时加 `[角色名]` 前缀 —— 回执 `roleName: ""` ⇒ 不加前缀、不被套系统标签、不被当 scene/summary。
 
 **四、已知遗留（不做，业主明令）**
@@ -1030,9 +1030,9 @@ hydrateMessages() → message.rawText || message.text  ← 读不到，只能退
 
 - **门禁**：`tools/verify.mjs` **119/119**；`tests/runtime.test.mjs` **81/81**；`tests/ui-flow.mjs` 全绿（新增一段走真实 pointer 事件的用例：点缩略图换图 + 换完按下载取到的是当前那张 / 点画面只切控件不关掉 / 上下滑动翻页 / 不到门槛回位）；`tests/i18n-ui.mjs` 全绿；`tools/check-i18n.mjs --check` 退出码 0（新文案「画廊 / 本对话的图片 / 查看这张图片」已进 `app/data/i18n-en.js`）。
 - **变异 5 条，一条一条做**：① 撤掉换图后的下标推进（`at = index`）⇒ 运行时红；② 把 tap 改回 `close()` ⇒ 红；③ `SWIPE_MIN` 56→20 ⇒ **第一遍没抓住**（见教训 1），改对方向后红；④ 侧栏高亮恒指第一格 ⇒ 红；⑤ 撤掉侧栏的 `pointer-events: none` ⇒ **第一遍没抓住**（见教训 2），断言改成锚定捕获后红。
-- **设备端**：`prepare-dir --app-id <实例 UUID> --sync-policy client` ⇒ **revision 53 / `render.state: "rendered"`**（`changedPaths` 6 个）；`hermit_read_dev_file` 逐文件回读 **14 项特征串全 HIT**（`data-viewer-action="gallery"` / `image-viewer-gallery` / `slideReady` / `is-ui-hidden` / `SWIPE_MIN = 56` / `toggleUi` / `function galleryEntries(target)` / `loadedSources` / `gallery: gallery, index: index` / `.image-viewer-gallery {` / `border-radius: 0 20px 20px 0` / `image-viewer-thumb.is-current` / `is-ui-hidden` / `0.7.44`），三份文件都报 `rev 53`。
+- **设备端**：`prepare-dir --app-id <实例 UUID> --sync-policy client` ⇒ **revision 53 / `render.state: "rendered"`**（`changedPaths` 6 个）；`haminn_read_dev_file` 逐文件回读 **14 项特征串全 HIT**（`data-viewer-action="gallery"` / `image-viewer-gallery` / `slideReady` / `is-ui-hidden` / `SWIPE_MIN = 56` / `toggleUi` / `function galleryEntries(target)` / `loadedSources` / `gallery: gallery, index: index` / `.image-viewer-gallery {` / `border-radius: 0 20px 20px 0` / `image-viewer-thumb.is-current` / `is-ui-hidden` / `0.7.44`），三份文件都报 `rev 53`。
 - **真机手感（人工，还没做）**：抽屉推出的观感、点画面切控件的时机（320ms 延迟能不能感觉出来）、上下滑动翻页与横构图平移的分界 —— 这三件只能在手机上点一遍，本地测试证不了。
 
 **六、一个实施细节（值得单独记）**
 
-`prepare-dir` 的 `--app-id` 要的是**实例 UUID**（`6651080b-…`），不是 `happId`。传 happId 的报错是 `No installed happ matches local happId life.airen.chataxi` —— **报错文案会把人往"该传 happId"上带**，而设备上明明装着这个 happ。同一类参数在 `hermit_read_dev_file` 上也是实例 UUID。
+`prepare-dir` 的 `--app-id` 要的是**实例 UUID**（`6651080b-…`），不是 `happId`。传 happId 的报错是 `No installed happ matches local happId life.airen.chataxi` —— **报错文案会把人往"该传 happId"上带**，而设备上明明装着这个 happ。同一类参数在 `haminn_read_dev_file` 上也是实例 UUID。

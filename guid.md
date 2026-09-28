@@ -4,7 +4,7 @@
 
 ## 技术思路
 
-- 定位：HermitApp 里的个人 AI 对话 happ。重心是真人感的流式语音和真正的多角色群聊 —— 比 chatbox 更强大，比 chatterUI 更好用。
+- 定位：HaminnApp 里的个人 AI 对话 happ。重心是真人感的流式语音和真正的多角色群聊 —— 比 chatbox 更强大，比 chatterUI 更好用。
 - 形态：纯原生 HTML / CSS / JavaScript，无框架、无 npm 运行依赖、无编译步骤，源文件直接运行。
 - 配置极简：粘贴 API Key 就能接通模型。地址、模型名始终可编辑；数据、密钥、录音都留在本机 happ 隔离区。
 - 一张模型卡只代表一个具体模型：`API Key → 获取目录 → 选模型 → 连接测试 → 保存`。旧版"一个服务含多个模型"的数据会幂等拆成多张单模型卡。
@@ -16,14 +16,14 @@
 
 ```
 index.html            入口
-hermit.json           包清单（schema 2，happId life.airen.chataxi）
+haminn.json           包清单（schema 2，happId life.airen.chataxi）
 guid.md               本文件
 app/app.js            启动与装配
 app/core/             namespace / events / i18n / utils，纯逻辑不碰 DOM 与宿主
 app/data/             store / i18n-en / role-templates（生成物）/ media
 app/features/         chat / chat-session / conversations / roles / models /
                       model-single-editor / me / settings，按用例编排
-app/platform/         hermit.js（Bridge 唯一出口）/ network.js
+app/platform/         haminn.js（Bridge 唯一出口）/ network.js
 app/services/         llm / tts / asr / context（压缩）/ providers / model-registry /
                       model-services / middleware / catalog / profiles / images /
                       media-prep / aws-sigv4
@@ -32,7 +32,7 @@ styles/               tokens / base / components / app
 ```
 
 不进运行包：`templates/`（角色模板源 JSON 与拼图）、`tools/`、`tests/`、`docs/`、`plans/`、`release/`。
-运行包只有 `index.html`、`hermit.json`、`guid.md`、`app/`、`styles/` —— 清单在 `tools/package.py` 的 `RUNTIME_ROOTS`。
+运行包只有 `index.html`、`haminn.json`、`guid.md`、`app/`、`styles/` —— 清单在 `tools/package.py` 的 `RUNTIME_ROOTS`。
 
 ## 开发注意
 
@@ -49,5 +49,5 @@ styles/               tokens / base / components / app
 ## 自检
 
 - 改完先跑 `node tools/verify.mjs`；只改文案时跑 `node tools/check-i18n.mjs`；提交前跑 `python3 tools/check-secrets.py` 确认没有凭据泄漏。
-- 发布：`python3 tools/package.py` 生成 `release/chataxi-v<版本>.zip` 并同步 `hermit-install.json` 的路径与 sha256；版本号要同步 `hermit.json`、`app/core/namespace.js` 与 `README.md`。
-- 真机：`python3 hermit-agent.py --address <设备地址> develop-dir <目录> --quiet` 同步，`update-dir ... --bump patch` 装稳定包。本仓 `AGENTS.md` 有完整验收口径。
+- 发布：`python3 tools/package.py` 生成 `release/chataxi-v<版本>.zip` 并同步 `haminn-install.json` 的路径与 sha256；版本号要同步 `haminn.json`、`app/core/namespace.js` 与 `README.md`。
+- 真机：`python3 haminn-agent.py --address <设备地址> develop-dir <目录> --quiet` 同步，`update-dir ... --bump patch` 装稳定包。本仓 `AGENTS.md` 有完整验收口径。

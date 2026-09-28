@@ -21,7 +21,7 @@ function runtime(files = []) {
   const load = (file) => vm.runInContext(fs.readFileSync(root + file, 'utf8'), context, { filename: file });
   ['app/core/namespace.js', 'app/core/utils.js', 'app/core/events.js', 'app/core/i18n.js', 'app/data/i18n-en.js'].forEach(load);
   const app = window.chataxi;
-  app.platform = { hermit: { awaitReady: async () => false, available: () => false, api: () => null } };
+  app.platform = { haminn: { awaitReady: async () => false, available: () => false, api: () => null } };
   ['app/data/store.js', 'app/services/catalog.js', 'app/services/model-registry.js', 'app/services/model-services.js', 'app/services/providers.js', 'app/services/middleware.js', 'app/services/context.js', 'app/services/actions.js', 'app/services/llm.js', 'app/services/profiles.js', 'app/features/chat-session.js'].forEach(load);
   app.data.media = { remove: async (id) => removedMedia.push(id), put: async () => { throw Error('no images expected'); } };
   // tts.js 会在合成前后访问朗读缓存（app/services/tts-cache.js）。它是 tts 的服务级依赖, 所以和
@@ -392,7 +392,7 @@ test('a drawing turn reaches the model as its own words plus a machine receipt i
   assert.equal(receipts.length, 3, '成功 / 出错 / 取消三态各一条；正在绘制与「根本没写块」都不发');
   assert.equal(receipts.every(entry => entry.role === 'user'), true, '回执一律 user 身份（system 会被抽到请求最前面，位置就丢了）');
   assert.equal(receipts.every(entry => /^\[本机系统消息\]/.test(entry.text)), true, '三条回执都要自报来源：只给成功那条标，失败与取消两条就会被读成用户说的话');
-  assert.equal(receipts.every(entry => !/__hermit\/files|https?:\/\//.test(entry.text)), true, '回执里不许出现任何地址');
+  assert.equal(receipts.every(entry => !/__haminn\/files|https?:\/\//.test(entry.text)), true, '回执里不许出现任何地址');
   // 差态的两种写法必须能被区分：只留成功的话, "写了块但失败"和"根本没写块"在历史里长得一样。
   assert.match(receipts[1].text, /出错[\s\S]*图片没有生成/);
   assert.match(receipts[2].text, /已被取消[\s\S]*没有生成图片/);
@@ -948,7 +948,7 @@ test('disabled model is rejected before consuming or clearing the draft', async 
   assert.equal((await s.messages('c')).length, 0);
 });
 
-test('long CJK and emoji replies round-trip under the Hermit record limit and clean old chunks', async () => {
+test('long CJK and emoji replies round-trip under the Haminn record limit and clean old chunks', async () => {
   const env = runtime(), { app } = env, s = app.data.store; await s.init();
   const text = '中文🙂'.repeat(16000), message = { id: 'long', conversationId: 'c', createdAt: 1, kind: 'assistant', status: 'done', text };
   await s.putMessage(message);
@@ -994,7 +994,7 @@ test('native JSON requests decode streamed bytes regardless of a provider MIME o
   const env = runtime(['app/platform/network.js']), { app } = env;
   const encoded = new TextEncoder().encode('{"data":[{"id":"glm-4-flash"}]}');
   let opened = 0, closed = 0, offset = 0;
-  app.platform.hermit = {
+  app.platform.haminn = {
     available: () => true,
     awaitReady: async () => true,
     api: () => ({ network: {
@@ -1123,9 +1123,9 @@ test('backgrounding pauses active Web Audio immediately and foregrounding resume
 test('backgrounding stops Android system TTS and foregrounding restarts it automatically', async () => {
   const env = runtime(['app/services/tts.js']), { app } = env; await app.data.store.init();
   const listeners = new Map(); let speaks = 0, stops = 0;
-  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
-  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
-  app.platform.hermit.api = () => ({ tts: {
+  app.platform.haminn.awaitReady = async () => true; app.platform.haminn.available = () => true;
+  app.platform.haminn.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.haminn.api = () => ({ tts: {
     voices: async () => ({ languages: ['zh-CN'], voices: [] }),
     speak: async () => ({ utteranceId: 'utterance-' + (++speaks) }),
     stop: async () => { stops++; }
@@ -1143,9 +1143,9 @@ test('backgrounding preserves prepared native audio and replays it on foreground
   await app.data.store.put('tts-profiles', 'external', { id: 'external', family: 'openai-tts', type: 'openai', endpoint: 'https://example.com/tts', model: 'fixture', enabled: true });
   const listeners = new Map(); let requests = 0, plays = 0, stops = 0, deletes = 0;
   app.platform.network = { request: async () => { requests++; return { status: 200, file: { logicalFileId: 'prepared-audio' }, headers: {} }; } };
-  app.platform.hermit.available = () => true;
-  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
-  app.platform.hermit.api = () => ({
+  app.platform.haminn.available = () => true;
+  app.platform.haminn.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.haminn.api = () => ({
     audio: { play: async () => ({ playbackId: 'playback-' + (++plays) }), stopPlayback: async () => { stops++; } },
     files: { delete: async () => { deletes++; } }
   });
@@ -1289,9 +1289,9 @@ test('Qwen realtime TTS commits each completed paragraph and closes only after s
 test('ASR cancel removes event listeners and ignores events from a cancelled session', async () => {
   const env = runtime(['app/services/asr.js']), { app } = env;
   const listeners = new Map(); let transcripts = 0;
-  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
-  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
-  app.platform.hermit.api = () => ({ speech: { availability: async () => ({ available: true }), start: async () => ({ subscriptionId: 'speech-1' }), cancel: async () => {}, stop: async () => {} } });
+  app.platform.haminn.awaitReady = async () => true; app.platform.haminn.available = () => true;
+  app.platform.haminn.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.haminn.api = () => ({ speech: { availability: async () => ({ available: true }), start: async () => ({ subscriptionId: 'speech-1' }), cancel: async () => {}, stop: async () => {} } });
   await app.services.asr.startSystem({}, { final() { transcripts++; } });
   const lateFinal = listeners.get('speech.final');
   await app.services.asr.cancelSystem(); lateFinal({ alternatives: [{ text: 'late' }] });
@@ -1300,9 +1300,9 @@ test('ASR cancel removes event listeners and ignores events from a cancelled ses
 
 test('system ASR requests RMS events and forwards real microphone levels to the test UI', async () => {
   const env = runtime(['app/services/asr.js']), { app } = env; const listeners = new Map(); let startParams, level;
-  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
-  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
-  app.platform.hermit.api = () => ({ speech: {
+  app.platform.haminn.awaitReady = async () => true; app.platform.haminn.available = () => true;
+  app.platform.haminn.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.haminn.api = () => ({ speech: {
     availability: async () => ({ available: true, rmsEventsSupported: true }),
     start: async params => { startParams = params; return { subscriptionId: 'speech-rms' }; }, cancel: async () => {}, stop: async () => {}
   } });
@@ -1314,9 +1314,9 @@ test('system ASR requests RMS events and forwards real microphone levels to the 
 
 test('system ASR only sends a language returned by the current recognition provider', async () => {
   const env = runtime(['app/services/asr.js']), { app } = env; const listeners = new Map(), starts = [];
-  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
-  app.platform.hermit.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
-  app.platform.hermit.api = () => ({ speech: {
+  app.platform.haminn.awaitReady = async () => true; app.platform.haminn.available = () => true;
+  app.platform.haminn.on = (name, fn) => { listeners.set(name, fn); return () => listeners.delete(name); };
+  app.platform.haminn.api = () => ({ speech: {
     availability: async () => ({ available: true, streamingAvailable: true }),
     languages: async () => ({ languageSelectionSupported: true, languages: ['en-US'], preferredLanguage: 'en-US' }),
     start: async params => { starts.push(params); return { subscriptionId: 'speech-language-' + starts.length }; }, cancel: async () => {}, stop: async () => {}
@@ -1328,8 +1328,8 @@ test('system ASR only sends a language returned by the current recognition provi
 
 test('ASR cancellation during capability lookup prevents a later microphone start', async () => {
   const env = runtime(['app/services/asr.js']), { app } = env, availability = deferred(), reached = deferred(); let starts = 0;
-  app.platform.hermit.awaitReady = async () => true; app.platform.hermit.available = () => true;
-  app.platform.hermit.api = () => ({ speech: { availability: async () => { reached.resolve(); return availability.promise; }, start: async () => { starts++; return { subscriptionId: 'late' }; }, cancel: async () => {} } });
+  app.platform.haminn.awaitReady = async () => true; app.platform.haminn.available = () => true;
+  app.platform.haminn.api = () => ({ speech: { availability: async () => { reached.resolve(); return availability.promise; }, start: async () => { starts++; return { subscriptionId: 'late' }; }, cancel: async () => {} } });
   const starting = app.services.asr.startSystem({}, {});
   await reached.promise; await app.services.asr.cancelSystem(); availability.resolve({ available: true });
   await assert.rejects(starting, /已取消/); assert.equal(starts, 0);
@@ -1388,10 +1388,10 @@ test('a non-SSE speech response is streamed back as bytes so it plays through th
   const settings = await app.data.store.get('meta', 'settings'); settings.ttsAmbienceMix = 0; await app.data.store.put('meta', 'settings', settings);
   let completes = 0, streamed = 0;
   app.platform.network = {
-    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', url: '/__hermit/files/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', mime: 'audio/mpeg' } }; },
+    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', url: '/__haminn/files/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', mime: 'audio/mpeg' } }; },
     requestByteStream: async options => { streamed++; await options.onChunk(new Uint8Array([73, 68, 51, 4, 0, 0])); await options.onChunk(new Uint8Array(42)); return { status: 200, headers: { 'content-type': 'audio/mpeg' }, contentType: 'audio/mpeg', url: options.url }; }
   };
-  app.platform.hermit.available = () => true;
+  app.platform.haminn.available = () => true;
   const nodes = [], contexts = [];
   function makeNode(kind) { const node = { kind, targets: [], connect(target) { this.targets.push(target); } }; nodes.push(node); return node; }
   class FakeAudioContext {
@@ -1431,11 +1431,11 @@ test('a host without the byte stream still speaks through the old request path, 
   const settings = await app.data.store.get('meta', 'settings'); settings.ttsAmbienceMix = 0; await app.data.store.put('meta', 'settings', settings);
   let completes = 0, nativePlays = 0, deleted = 0;
   app.platform.network = {
-    requestByteStream: async () => { const error = Error('当前 HermitApp 尚未提供流式网络能力，请更新宿主'); error.streamUnavailable = true; throw error; },
-    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: fileId, url: '/__hermit/files/' + fileId, mime: 'audio/mpeg' } }; }
+    requestByteStream: async () => { const error = Error('当前 HaminnApp 尚未提供流式网络能力，请更新宿主'); error.streamUnavailable = true; throw error; },
+    request: async () => { completes++; return { status: 200, headers: {}, file: { logicalFileId: fileId, url: '/__haminn/files/' + fileId, mime: 'audio/mpeg' } }; }
   };
   const listeners = {};
-  app.platform.hermit = {
+  app.platform.haminn = {
     awaitReady: async () => true, available: () => true,
     on: (event, handler) => { listeners[event] = handler; return () => { delete listeners[event]; }; },
     api: () => ({
@@ -1533,7 +1533,7 @@ test('the drawing client asks for the closest 9:16 canvas the capability actuall
 });
 
 // 定妆照必须真的作为参考图发到 CVP（业主 2026-09-27：「请仔细确认能够正确调用定妆照图片作为
-// 参考图一起发给 cvp」）。字段名 `image_base64` 与 data URL 形态都来自插件规范（vibedraw 的
+// 参考图一起发给 cvp」）。字段名 `image_base64` 与 data URL 形态都来自插件规范（hamdraw 的
 // cvp-spec.md / capabilities.py），不是自拟的。这里跑的是真实的 generate()，断的是它真正提交的
 // 请求体 —— 只看源码里有这一行不算数。
 test('a self-portrait reference really reaches the CVP request body as image_base64', async () => {

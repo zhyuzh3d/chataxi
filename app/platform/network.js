@@ -42,12 +42,12 @@
     assertOptions(options);
     var method = String(options.method || "GET").toUpperCase();
     var headers = buildHeaders(options);
-    if (app.platform.hermit.available() || await app.platform.hermit.awaitReady(800)) {
+    if (app.platform.haminn.available() || await app.platform.haminn.awaitReady(800)) {
       if (options.task && options.task.cancelled) throw stopped();
-      return app.platform.hermit.api().network.request(nativeParams(options, headers));
+      return app.platform.haminn.api().network.request(nativeParams(options, headers));
     }
 
-    if (options.bodyLogicalFileId || options.multipart) throw new Error("大文件上传需要在支持 Hermit API 1.7 的 HermitApp 中使用");
+    if (options.bodyLogicalFileId || options.multipart) throw new Error("大文件上传需要在支持 Haminn API 1.7 的 HaminnApp 中使用");
     var controller = typeof AbortController === "function" ? new AbortController() : null;
     if (options.task) options.task.controller = controller;
     if (options.bodyBytes && options.contentType) headers["Content-Type"] = options.contentType;
@@ -73,7 +73,7 @@
   }
 
   async function requestJson(options) {
-    if (typeof TextDecoder === "function" && (app.platform.hermit.available() || await app.platform.hermit.awaitReady(800))) {
+    if (typeof TextDecoder === "function" && (app.platform.haminn.available() || await app.platform.haminn.awaitReady(800))) {
       var decoder = new TextDecoder("utf-8"), bodyText = "", receivedBytes = 0;
       var streamed = await requestByteStream(Object.assign({}, options, {
         onChunk: async function (bytes) {
@@ -125,7 +125,7 @@
   }
 
   async function nativeByteStream(options, headers) {
-    var api = app.platform.hermit.api(), streamId = "", done = false, cancelled = false;
+    var api = app.platform.haminn.api(), streamId = "", done = false, cancelled = false;
     var controller = {
       abort: function () {
         cancelled = true;
@@ -161,7 +161,7 @@
     } catch (error) {
       if (cancelled || options.task && options.task.cancelled) { error.cancelled = true; throw error; }
       if (error && error.code === "E_UNSUPPORTED" && !opened) {
-        throw streamUnavailable("当前 HermitApp 尚未提供流式网络能力，请更新宿主", error);
+        throw streamUnavailable("当前 HaminnApp 尚未提供流式网络能力，请更新宿主", error);
       }
       throw error;
     } finally {
@@ -201,7 +201,7 @@
   async function requestByteStream(options) {
     assertOptions(options);
     var headers = buildHeaders(options);
-    if (app.platform.hermit.available() || await app.platform.hermit.awaitReady(800)) return nativeByteStream(options, headers);
+    if (app.platform.haminn.available() || await app.platform.haminn.awaitReady(800)) return nativeByteStream(options, headers);
     return browserByteStream(options, headers);
   }
 
@@ -213,7 +213,7 @@
   }
 
   async function nativeSocket(options, headers) {
-    var api = app.platform.hermit.api(), opened = await api.network.openSocket({ url: socketUrl(options.url), headers: headers, timeoutMs: options.timeoutMs || 60000 });
+    var api = app.platform.haminn.api(), opened = await api.network.openSocket({ url: socketUrl(options.url), headers: headers, timeoutMs: options.timeoutMs || 60000 });
     var closed = false;
     var session = {
       native: true,
@@ -235,7 +235,7 @@
 
   function browserSocket(options, headers) {
     if (typeof WebSocket !== "function") throw streamUnavailable("当前 WebView 不支持 WebSocket");
-    if (Object.keys(headers).length) throw streamUnavailable("当前 WebView WebSocket 不能携带自定义鉴权 Header，请更新 HermitApp");
+    if (Object.keys(headers).length) throw streamUnavailable("当前 WebView WebSocket 不能携带自定义鉴权 Header，请更新 HaminnApp");
     return new Promise(function (resolve, reject) {
       var socket = new WebSocket(socketUrl(options.url)), queue = [], waiter = null, opened = false, closed = false;
       function deliver(event) { if (waiter) { var current = waiter; waiter = null; clearTimeout(current.timer); current.resolve(event); } else queue.push(event); }
@@ -271,7 +271,7 @@
 
   async function openWebSocket(options) {
     options = options || {}; var headers = buildHeaders(options);
-    if (app.platform.hermit.available() || await app.platform.hermit.awaitReady(800)) {
+    if (app.platform.haminn.available() || await app.platform.haminn.awaitReady(800)) {
       try { return await nativeSocket(options, headers); }
       catch (error) { if (!error || error.code !== "E_UNSUPPORTED") throw error; }
     }
@@ -334,12 +334,12 @@
   async function readText(result) {
     var bodyText = result && result.bodyText || "";
     var logicalFileId = result && result.file && result.file.logicalFileId;
-    if (!bodyText && logicalFileId && app.platform.hermit.available()) {
+    if (!bodyText && logicalFileId && app.platform.haminn.available()) {
       try {
-        var stored = await app.platform.hermit.api().files.readText({ logicalFileId: logicalFileId, maxBytes: 8 * 1024 * 1024 });
+        var stored = await app.platform.haminn.api().files.readText({ logicalFileId: logicalFileId, maxBytes: 8 * 1024 * 1024 });
         bodyText = stored.text || "";
       } finally {
-        try { await app.platform.hermit.api().files.delete({ logicalFileId: logicalFileId }); } catch (_) {}
+        try { await app.platform.haminn.api().files.delete({ logicalFileId: logicalFileId }); } catch (_) {}
       }
     }
     return bodyText;

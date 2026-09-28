@@ -18,7 +18,7 @@
   // 2026-09-27 第六轮明确要的是切控件。关闭仍有三个入口 —— 工具栏的关闭按钮 / Esc / 系统返回。
   //
   // 第 6 条里的系统返回靠历史栈实现：宿主对 happ 的返回处理是 `if (canGoBack()) goBack()`
-  //（hermitapp 的 MainActivity.kt:373），也就是把返回交给 WebView 的历史。所以打开时压一条
+  //（haminnapp 的 MainActivity.kt:373），也就是把返回交给 WebView 的历史。所以打开时压一条
   // **同 hash** 的记录 —— 同 hash 不触发 hashchange（路由不动），只会在返回时来一次 popstate，
   // 那就是"关闭看图"这一格。自己关掉时要把它收回，否则下一次返回会被它吃掉。
   //

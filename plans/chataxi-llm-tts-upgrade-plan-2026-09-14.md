@@ -1,8 +1,8 @@
 # chataxi 模型服务配置与运行机制升级方案
 
-本方案面向 chataxi 0.5.0，核对基线为 2026-09-14 的现有源码、Hermit 公共合同与供应商官方资料。状态是**代码实现、自动合同与协议夹具、发布构建和指定实体设备部署均已完成**；它不等于所有供应商均已经用真实付费账号逐项验收。配套的[接口与适配资料](chataxi-provider-api-reference-2026-09-14.md)记录端点、字段、来源及待验证事项。范围包括 LLM、TTS、图片和视频输入，不包含 ASR、模型训练、云端账号系统或任意工具执行。
+本方案面向 chataxi 0.5.0，核对基线为 2026-09-14 的现有源码、Haminn 公共合同与供应商官方资料。状态是**代码实现、自动合同与协议夹具、发布构建和指定实体设备部署均已完成**；它不等于所有供应商均已经用真实付费账号逐项验收。配套的[接口与适配资料](chataxi-provider-api-reference-2026-09-14.md)记录端点、字段、来源及待验证事项。范围包括 LLM、TTS、图片和视频输入，不包含 ASR、模型训练、云端账号系统或任意工具执行。
 
-实施记录：chataxi 为 0.5.0/versionCode 35，配套 HermitApp 为 1.9.0/versionCode 31、Bridge API 1.8。chataxi 的 67 项自动检查、Hermit 的 16 项公共合同检查、Debug Kotlin 编译、签名 Release 构建和 APK 校验均通过；Honor CMA-AN00 已覆盖安装新版宿主，并从局域网实时地址重新读取 0.5.0 的入口、样式和全部 33 个 JavaScript 模块。未使用用户密钥执行付费服务调用，真实账号的模型权限、地域、额度及音色授权仍应按第 11 节逐服务验收。
+实施记录：chataxi 为 0.5.0/versionCode 35，配套 HaminnApp 为 1.9.0/versionCode 31、Bridge API 1.8。chataxi 的 67 项自动检查、Haminn 的 16 项公共合同检查、Debug Kotlin 编译、签名 Release 构建和 APK 校验均通过；Honor CMA-AN00 已覆盖安装新版宿主，并从局域网实时地址重新读取 0.5.0 的入口、样式和全部 33 个 JavaScript 模块。未使用用户密钥执行付费服务调用，真实账号的模型权限、地域、额度及音色授权仍应按第 11 节逐服务验收。
 
 ## 1. 结论与产品边界
 
@@ -33,7 +33,7 @@ OpenAI Responses 继续作为优先支持的协议，但“优先”不等于把
 | `llm.js` / `chat.js` | 请求上限 900 KiB、每条最多四张图片，没有视频入口或上传流程 | 小图沿用内联；视频与较大媒体通过有界文件上传，不把视频整体塞进 Bridge JSON |
 | `app/services/tts.js` | 协议、分段、网络、PCM 解码、WebSocket、播放和缓存高度集中；部分音色和资源共用列表 | 拆开供应商协议与音频播放；按模型、音色、资源和输出编码共同决定可用路径 |
 | ElevenLabs 兼容性 | 已将质量元数据与白名单分离，也已有 v3 专用 Dialogue WebSocket | 保留正确修复，用官方合同和回归夹具保护；不再回退到按声音名称或质量列表猜兼容 |
-| Hermit `NativeHttpClient.kt` / `sdk/hermit-api.d.ts` | `network.request` 完整响应后返回，请求体最多 1 MiB；没有公开流式、带 Header 的 WebSocket、逻辑文件上传合同 | 把通用传输补齐列为前置工程；不能只靠新增服务商菜单声称支持跨域流式和视频 |
+| Haminn `NativeHttpClient.kt` / `sdk/haminn-api.d.ts` | `network.request` 完整响应后返回，请求体最多 1 MiB；没有公开流式、带 Header 的 WebSocket、逻辑文件上传合同 | 把通用传输补齐列为前置工程；不能只靠新增服务商菜单声称支持跨域流式和视频 |
 
 这些问题优先级高于增加一长串服务商名称。当前正确的头像、全宽 Sheet、统一开关、个人设定覆盖、唯一角色发言和增量摘要边界均保留。
 
@@ -133,7 +133,7 @@ provider adapters + protocol codecs + media preparation
                     ↓
 platform/network + platform/files + audio player
                     ↓
-Hermit public Bridge / browser capability fallback
+Haminn public Bridge / browser capability fallback
 ```
 
 适配器统一提供 `discoverModels`、必要时 `discoverVoices`、`resolveCapabilities`、`validateOptions`、`buildRequest`、`parseEvent`、`normalizeError` 和可选 `prepareMedia`。它们不读取 DOM、不直接写持久化、不自行切换角色或其他供应商。
@@ -148,9 +148,9 @@ Gemini 当前推荐的 Interactions 应新增为独立 `gemini-interactions` 适
 
 统一输出事件包含 `text.delta`、`reasoning.delta`、`media`、`usage`、`finish`、`error`。协议层先区分增量和累计快照，累计文本不能被重复追加。思考内容与面向用户的最终文字分离，默认不送入 TTS；终止原因保留截断/拒答/失败等状态。显式成功事件或协议合法终止才完成消息，EOF 不一概等于成功。已经显示或播放部分内容后，不自动重发整条请求，也不跨模型补答。
 
-## 7. 稳定流式与 Hermit 公共能力
+## 7. 稳定流式与 Haminn 公共能力
 
-当前 Fetch/SSE/WebSocket 路径受 WebView、CORS、混合内容和握手鉴权限制；仅在 JavaScript 里继续加供应商特例，无法保证国内普通手机全部稳定流式。应先在 HermitApp 增加**通用、按 happ 隔离的前台流式网络与文件上传能力**，供应商业务代码仍在 chataxi。
+当前 Fetch/SSE/WebSocket 路径受 WebView、CORS、混合内容和握手鉴权限制；仅在 JavaScript 里继续加供应商特例，无法保证国内普通手机全部稳定流式。应先在 HaminnApp 增加**通用、按 happ 隔离的前台流式网络与文件上传能力**，供应商业务代码仍在 chataxi。
 
 拟议 Native 合同采用可背压读取：`network.openStream` 返回状态、Header 与流 ID，`network.readStream` 读取有界字节块，`network.closeStream` 取消并关闭。名字和结构需要在正式开发时写入 `api/`、SDK 和宿主合同测试；这些 API 当前不存在。以 32–64 KiB 的读取块为初始设计，按传输类型设定总量、空闲超时和前台生命周期，而不是把整条无限响应塞进一个 Bridge 消息。
 
@@ -160,7 +160,7 @@ Gemini 当前推荐的 Interactions 应新增为独立 `gemini-interactions` 适
 
 所有通道沿用 Origin 和私网授权、DNS 校验、HTTPS 要求、重定向约束及实例隔离。跨 Origin 时不得沿用 Authorization、API key、自定义敏感 Header 或上传凭据；新地址重新授权。现有 Native 客户端对跨域重定向只显式剥离部分标准鉴权 Header，新合同应覆盖实际供应商鉴权字段。
 
-传输选择为：支持对应新合同的 Hermit Native → 确认有可读流且服务允许的浏览器通道 → 明示的完整响应降级。流式首片前失败也不天然允许自动重发：若请求可能已经被服务接收，应提示重试或使用供应商可验证的幂等能力，避免重复计费；一旦有内容或音频，绝不自动整段重放。
+传输选择为：支持对应新合同的 Haminn Native → 确认有可读流且服务允许的浏览器通道 → 明示的完整响应降级。流式首片前失败也不天然允许自动重发：若请求可能已经被服务接收，应提示重试或使用供应商可验证的幂等能力，避免重复计费；一旦有内容或音频，绝不自动整段重放。
 
 ## 8. TTS：统一播放，区分文字流与音频流
 
@@ -205,13 +205,13 @@ ElevenLabs 必须以 voice_id 识别声音；`high_quality_base_model_ids` 不�
 | 阶段 | 主要改动 | 可交付检查 |
 | --- | --- | --- |
 | A：合同与数据 | 拆 provider/protocol/model/voice/validation；整理错误和连接事务；现有数据迁移 | 旧配置保留、未知能力不发送、重新连接不改选择、保存无签名误判 |
-| B：传输基础 | Hermit 通用流式 HTTP、取消和逻辑文件上传；必要的 WS 合同 | 跨域真实增量、断流识别、取消无迟到写入、媒体不经过大 JSON；宿主独立发布验收 |
+| B：传输基础 | Haminn 通用流式 HTTP、取消和逻辑文件上传；必要的 WS 合同 | 跨域真实增量、断流识别、取消无迟到写入、媒体不经过大 JSON；宿主独立发布验收 |
 | C：已用服务闭环 | OpenAI、ElevenLabs、豆包语音、现有 LLM 修正；统一试听/对话路径 | 精确模型/音色组合、首音频早于响应结束、重播无重复合成、旧角色可继续用 |
 | D：首批目录扩充 | Qwen/Kimi/GLM/TokenHub/Ark/OpenRouter/Ollama 及国际 LLM 原生差异 | 逐家完整连接与多轮对话，参数依赖由 UI 到请求一致 |
 | E：多模态 | 所有已支持模型图片链路；具备视频能力的型号逐项实现，首验 Gemini/Ark，随后百炼 Qwen/Kimi，GLM/TokenHub/MiniMax/本地运行时按各自型号合同纳入；OpenAI按实际合同处理 | 真实附件上传和跨轮追问、错误提示、过期重传及内存限制；不能只验两家就宣称所有多模态服务完成 |
 | F：扩展 | 其余 TTS、聚合、本地推理运行时、预览/签名服务 | 每个新增入口达到相同门槛才标为正式支持 |
 
-拟改动的 chataxi 范围包括 `services/catalog.js`、`model-services.js`、`providers.js`、`llm.js`、`tts.js`、`images.js`，以及 `platform/network.js`、`features/models.js`、`roles.js`、`chat-session.js`、媒体存储与对应合同测试。Hermit 的 Native 传输在独立仓库实施并更新公开 API；不把供应商业务逻辑搬进宿主，也不修改 HermitUI 来绕过权限。
+拟改动的 chataxi 范围包括 `services/catalog.js`、`model-services.js`、`providers.js`、`llm.js`、`tts.js`、`images.js`，以及 `platform/network.js`、`features/models.js`、`roles.js`、`chat-session.js`、媒体存储与对应合同测试。Haminn 的 Native 传输在独立仓库实施并更新公开 API；不把供应商业务逻辑搬进宿主，也不修改 HaminnUI 来绕过权限。
 
 ## 11. 验收标准与尚待确认事项
 
@@ -223,7 +223,7 @@ ElevenLabs 必须以 voice_id 识别声音；`high_quality_base_model_ids` 不�
 
 尚需在开发时获取当前官方完整合同并实测的项目包括：账号与区域限定的模型目录；火山语音各资源的 speaker 对应和 V3 双向帧细节；MAI-Voice 预览资源资格；AWS 新流式签名/编码路径；本地 TTS 服务所选实现的真实 HTTP/WS 接口。不能把这些待确认项编造成通用默认值。配套资料的来源和证据等级是实现入口，开发前仍需针对所选具体版本做一次定点复核。
 
-0.5.0 已完成供应商注册表、目录与参数归一化、原生/兼容协议编译、流式状态机、第三方 TTS、媒体准备和大目录外置存储；HermitApp 同步增加通用流式 HTTP、逻辑文件上传与带 Header 的 WebSocket 合同。自动测试使用脱敏夹具，不使用配置文件中的密钥，也不能替代账号权限、区域、余额和真实网络条件下的逐供应商验收。
+0.5.0 已完成供应商注册表、目录与参数归一化、原生/兼容协议编译、流式状态机、第三方 TTS、媒体准备和大目录外置存储；HaminnApp 同步增加通用流式 HTTP、逻辑文件上传与带 Header 的 WebSocket 合同。自动测试使用脱敏夹具，不使用配置文件中的密钥，也不能替代账号权限、区域、余额和真实网络条件下的逐供应商验收。
 
 ## 12. 关键决策的官方依据
 

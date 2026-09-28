@@ -29,7 +29,7 @@ class chataxiHandler(http.server.SimpleHTTPRequestHandler):
     def send_head(self):
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         parts = tuple(part for part in pathlib.PurePosixPath(request_path).parts if part != "/")
-        allowed_file = request_path in {"/", "/index.html", "/hermit.json", "/hermit-install.json"}
+        allowed_file = request_path in {"/", "/index.html", "/haminn.json", "/haminn-install.json"}
         allowed_tree = bool(parts) and parts[0] in {"app", "styles", "release"}
         hidden_or_parent = any(part.startswith(".") or part == ".." for part in parts)
         if hidden_or_parent or not (allowed_file or allowed_tree):

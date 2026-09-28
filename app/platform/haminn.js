@@ -4,7 +4,7 @@
   var waiters = [];
 
   function current() {
-    return window.hermit && window.hermit.isReady ? window.hermit : null;
+    return window.haminn && window.haminn.isReady ? window.haminn : null;
   }
 
   function markReady() {
@@ -14,7 +14,7 @@
     app.events.emit("platform:ready", true);
   }
 
-  window.addEventListener("hermitready", markReady);
+  window.addEventListener("haminnready", markReady);
   if (current()) markReady();
 
   function awaitReady(timeoutMs) {
@@ -36,11 +36,11 @@
 
   async function call(path, params) {
     var available = await awaitReady(3500);
-    if (!available) throw new Error("当前不在 HermitApp 中，无法使用系统能力");
+    if (!available) throw new Error("当前不在 HaminnApp 中，无法使用系统能力");
     var parts = path.split(".");
     var target = current();
     for (var index = 0; index < parts.length; index += 1) target = target[parts[index]];
-    if (typeof target !== "function") throw new Error("HermitApp 不支持此能力：" + path);
+    if (typeof target !== "function") throw new Error("HaminnApp 不支持此能力：" + path);
     var owner = parts.length > 1 ? current()[parts[0]] : current();
     return target.call(owner, params || {});
   }
@@ -90,7 +90,7 @@
     throw new Error("当前环境无法读取剪贴板，请直接粘贴到输入框");
   }
   app.platform = app.platform || {};
-  app.platform.hermit = {
+  app.platform.haminn = {
     copyText: copyText,
     readClipboardText: readClipboardText,
     awaitReady: awaitReady,

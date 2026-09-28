@@ -31,8 +31,8 @@ const context = vm.createContext({
 const scripts = [...fs.readFileSync(root + 'index.html', 'utf8').matchAll(/<script src="\.\/([^"]+)"/g)].map(match => match[1]);
 for (const script of scripts) vm.runInContext(fs.readFileSync(root + script, 'utf8'), context, { filename: script });
 const app = window.chataxi;
-app.platform.hermit.awaitReady = async () => false;
-app.platform.hermit.info = async () => ({ runtimeMode: 'browser', bridgeMode: 'none' });
+app.platform.haminn.awaitReady = async () => false;
+app.platform.haminn.info = async () => ({ runtimeMode: 'browser', bridgeMode: 'none' });
 app.services.tts.stop = async () => {};
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(fn, description) { for (let i = 0; i < 250; i++) { if (fn()) return; await tick(); } throw Error(description + '\n' + document.body.textContent.slice(-1200)); }
@@ -209,7 +209,7 @@ click('.settings-tabs [data-settings-tab="system"]');
 assert.match(label('.system-panel'), /Back up app and data[\s\S]*Author[\s\S]*zhyuzh3d/);
 assert.deepEqual(cjk('.system-panel'), []);
 // 备份回执是拼装句：整句没有字典键，必须由 i18nEnPatterns 的规则译出来。
-assert.equal(app.i18n.t('备份完成 · chataxi-20260922-120000.hermit-backup.zip · 2 KB'), 'Backup saved · chataxi-20260922-120000.hermit-backup.zip · 2 KB');
+assert.equal(app.i18n.t('备份完成 · chataxi-20260922-120000.haminn-backup.zip · 2 KB'), 'Backup saved · chataxi-20260922-120000.haminn-backup.zip · 2 KB');
 // 界面语言选中即生效，并且要切回来仍然正确。
 click('[data-picker="uiLanguage"]');
 await until(() => document.querySelector('.subsheet [data-choice="zh-CN"]'), 'language picker');
