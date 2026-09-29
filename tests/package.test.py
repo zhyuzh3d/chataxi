@@ -18,7 +18,7 @@ class PackageTests(unittest.TestCase):
         for folder in ("app", "styles", "docs"):
             (PACKAGE.ROOT / folder).mkdir()
         (PACKAGE.ROOT / "index.html").write_text("<!doctype html><title>fixture</title>")
-        (PACKAGE.ROOT / "haminn.json").write_text(json.dumps({"version": {"name": "test"}}))
+        (PACKAGE.ROOT / "haminn.json").write_text(json.dumps({"name": "Fixture", "version": {"name": "test"}}))
         (PACKAGE.ROOT / "guid.md").write_text("# guid fixture\n")
         (PACKAGE.ROOT / "app/app.js").write_text("'use strict';")
         (PACKAGE.ROOT / "app/assets").mkdir()
@@ -51,6 +51,11 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "bump the version"):
             PACKAGE.build(self.output)
         self.assertEqual(PACKAGE.sha256(self.output), digest)
+
+    def test_release_name_is_derived_from_the_manifest_name(self):
+        # The fixture deliberately does not use the real brand, so a hardcoded
+        # product name in release_info() would show up here.
+        self.assertEqual(self.relative, "release/Fixture-vtest.zip")
 
 
 if __name__ == "__main__":

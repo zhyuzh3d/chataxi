@@ -1,13 +1,13 @@
-# chataxi
+# Chataxi
 
-chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 对话 happ。它用纯原生 HTML,CSS,JavaScript 写成,不依赖任何运行时框架,npm 或编译步骤,源文件就是可直接运行的页面。
+Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 对话 happ。它用纯原生 HTML,CSS,JavaScript 写成,不依赖任何运行时框架,npm 或编译步骤,源文件就是可直接运行的页面。
 
 产品定位是「比 chatbox 更强大,比 chatterUI 更好用」：重心是真实的流式真人感语音和真正的多角色群聊,配置上只要粘贴 API Key 就能接通模型,模型和数据放在哪里由你自己决定。
 
 > 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://haminn.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.49`(versionCode `128`,见 `haminn.json`)
+- 当前源码版本：`0.7.50`(versionCode `129`,见 `haminn.json`)
 - 形态：HaminnApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点
@@ -33,14 +33,14 @@ chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 
 ## 安装使用
 
-chataxi 是 HaminnApp 的 happ,**不能脱离宿主单独安装**。
+Chataxi 是 HaminnApp 的 happ,**不能脱离宿主单独安装**。
 
 1. 先安装 Haminn：[下载页](https://haminn.airen.life/pages/download.html)(Android 10 及以上),或到 [Releases](https://github.com/zhyuzh3d/haminnapp/releases) 取 APK。
-2. 再添加 chataxi：打开 [应用广场](https://haminn.airen.life/pages/happs.html) 找到 chataxi,扫描二维码,或复制它的官方安装清单地址(形如 `https://haminn.airen.life/downloads/happs/<happId>/haminn-install.json`,`<happId>` 以应用广场页面显示的为准),回到 Haminn 点「从网址」粘贴。产品网站 <https://chataxi.airen.life/> 也提供同一套二维码与安装地址。
+2. 再添加 Chataxi：打开 [应用广场](https://haminn.airen.life/pages/happs.html) 找到 Chataxi,扫描二维码,或复制它的官方安装清单地址(形如 `https://haminn.airen.life/downloads/happs/<happId>/haminn-install.json`,`<happId>` 以应用广场页面显示的为准),回到 Haminn 点「从网址」粘贴。产品网站 <https://chataxi.airen.life/> 也提供同一套二维码与安装地址。
 
 ## 快速上手
 
-1. 打开 chataxi,进入「模型」页新建一张模型卡。
+1. 打开 Chataxi,进入「模型」页新建一张模型卡。
 2. 选择供应商并粘贴 API Key,点「重新连接并更新目录」获取模型目录。
 3. 挑选一个具体模型,做一次连接测试,保存。
 4. 到「角色」页创建角色：可套用角色模板(只填入头像,名称和角色提示词,不覆盖模型与声音),或手写「身份性格」与「行为指导」。
@@ -79,7 +79,7 @@ python3 tools/check-secrets.py     # 提交前:确认没有凭据泄漏
 
 ```sh
 python3 tools/serve.py --port 4180   # 局域网预览(在 Haminn 里用「从网址」加 http://<开发机IP>:4180/)
-python3 tools/package.py             # 生成 release/chataxi-v<版本>.zip 并同步 haminn-install.json 的路径与 sha256
+python3 tools/package.py             # 生成 release/Chataxi-v<版本>.zip 并同步 haminn-install.json 的路径与 sha256
 python3 tools/package.py --check     # 只校验不写入
 ```
 
@@ -101,11 +101,11 @@ python3 ~/.workbuddy/skills/haminn-dev-plugin/haminn-agent.py update-dir  <目�
 **Haminn 家族 —— 一个安卓宿主 + 若干可自由改造的应用**
 
 - **Haminn**(宿主,先装这个)：<https://haminn.airen.life/> · <https://github.com/zhyuzh3d/haminnapp>
-- **chataxi**(多角色 AI 群聊)：<https://chataxi.airen.life/> · <https://github.com/zhyuzh3d/chataxi> —— **本仓库**
+- **Chataxi**(多角色 AI 群聊)：<https://chataxi.airen.life/> · <https://github.com/zhyuzh3d/chataxi> —— **本仓库**
 - **HamDraw**(实时 AI 绘图)：<https://hamdraw.airen.life/> · <https://github.com/zhyuzh3d/hamdraw>
 - **PoseGi**(3D 摆姿生图)：<https://posegi.airen.life/> · <https://github.com/zhyuzh3d/PoseGi>
 
-三个 happ 都必须先装 Haminn 宿主,再在[应用广场](https://haminn.airen.life/pages/happs.html)添加。chataxi 与 HamDraw,PoseGi 互不依赖,只做相互推荐——你可以只装 chataxi,也可以用 HamDraw 画图,用 PoseGi 摆姿后再对话。
+三个 happ 都必须先装 Haminn 宿主,再在[应用广场](https://haminn.airen.life/pages/happs.html)添加。Chataxi 与 HamDraw,PoseGi 互不依赖,只做相互推荐——你可以只装 Chataxi,也可以用 HamDraw 画图,用 PoseGi 摆姿后再对话。
 
 ## 贡献
 
@@ -117,6 +117,6 @@ python3 ~/.workbuddy/skills/haminn-dev-plugin/haminn-agent.py update-dir  <目�
 
 ## 免责与支持
 
-- chataxi 对自己的代码,服务器,账号,令牌和业务内容负责,模型费用由你使用的供应商按量计费,请自行留意。
+- Chataxi 对自己的代码,服务器,账号,令牌和业务内容负责,模型费用由你使用的供应商按量计费,请自行留意。
 - 线上实时运行只允许加载你信任的代码来源——页面代码在调用时可以读取已保存的密钥。
 - 遇到问题请到 <https://github.com/zhyuzh3d/chataxi/issues> 反馈。

@@ -47,7 +47,8 @@ def runtime_files() -> list[pathlib.Path]:
 def release_info() -> tuple[str, pathlib.Path]:
     manifest = json.loads((ROOT / "haminn.json").read_text(encoding="utf-8"))
     version = manifest["version"]["name"]
-    relative = f"release/chataxi-v{version}.zip"
+    name = manifest["name"]
+    relative = f"release/{name}-v{version}.zip"
     return relative, ROOT / relative
 
 

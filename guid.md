@@ -1,4 +1,4 @@
-# guid.md — chataxi（写给插件的短说明）
+# guid.md — Chataxi（写给插件的短说明）
 
 开发这个 happ 之前读一遍就够了。这里只讲这个项目本身：技术思路、目录、注意事项、怎么自检。
 
@@ -49,5 +49,5 @@ styles/               tokens / base / components / app
 ## 自检
 
 - 改完先跑 `node tools/verify.mjs`；只改文案时跑 `node tools/check-i18n.mjs`；提交前跑 `python3 tools/check-secrets.py` 确认没有凭据泄漏。
-- 发布：`python3 tools/package.py` 生成 `release/chataxi-v<版本>.zip` 并同步 `haminn-install.json` 的路径与 sha256；版本号要同步 `haminn.json`、`app/core/namespace.js` 与 `README.md`。
+- 发布：`python3 tools/package.py` 生成 `release/Chataxi-v<版本>.zip` 并同步 `haminn-install.json` 的路径与 sha256；版本号要同步 `haminn.json`、`app/core/namespace.js` 与 `README.md`。
 - 真机：`python3 haminn-agent.py --address <设备地址> develop-dir <目录> --quiet` 同步，`update-dir ... --bump patch` 装稳定包。本仓 `AGENTS.md` 有完整验收口径。
