@@ -199,6 +199,19 @@
         if (profileChanged) await put(profileKind + "-profiles", profile.id, profile);
       }
     }
+    // 绘图卡片（image-profiles）不在上面那一圈里：那一圈要读模型的目录，而绘图卡片
+    // 有没有模型是插件自报的，走的是另一条路。这里只改写家族标识 —— 绘图格式随插件
+    // 由 CVP 更名为 CHP（`chp/1`，根 `/chp`），卡片上存的老 id 一改名就与目录里唯一
+    // 那个家族对不上：`sourceMode()` 会从 local 掉成 official，`providerId()` 也会
+    // 退回 "custom"。除标识外一切都不动 —— 地址、密码、画幅、能力名照旧。
+    var imageProfiles = await list("image-profiles");
+    for (var imageIndex = 0; imageIndex < imageProfiles.length; imageIndex += 1) {
+      var imageProfile = imageProfiles[imageIndex], imageRenamed = false;
+      ["family", "type", "protocol", "providerPresetId", "discovery"].forEach(function (field) {
+        if (imageProfile[field] === "cvp") { imageProfile[field] = "chp"; imageRenamed = true; }
+      });
+      if (imageRenamed) await put("image-profiles", imageProfile.id, imageProfile);
+    }
     var singleProfileMaps = await migrateSingleModelProfiles();
     var roles = await list("roles");
     for (var roleIndex = 0; roleIndex < roles.length; roleIndex += 1) {
@@ -241,7 +254,8 @@
       if (conversationChanged) await put("conversations", conversations[conversationIndex].id, conversations[conversationIndex]);
     }
     // 14：压缩设置由「触发字数 + 目标字数」扩为「触发 / 保留 / 目标」三项，并删除对话上的 recentFullMessages。
-    await put("meta", "schema", { version: 14, modelProfileMigrationVersion: 1, updatedAt: Date.now() });
+    // 15：绘图卡片家族标识随插件由 CVP 更名为 CHP（image-profiles 的 family / type / protocol / providerPresetId / discovery）。
+    await put("meta", "schema", { version: 15, modelProfileMigrationVersion: 1, updatedAt: Date.now() });
   }
 
   function profileCollection(collection) { return collection === "llm-profiles" || collection === "tts-profiles" || collection === "asr-profiles" || collection === "image-profiles"; }

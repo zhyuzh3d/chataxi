@@ -663,6 +663,13 @@ test('schema migration initializes the moderator and auto-selection state, infer
   const role = await s.get('roles', 'a'); role.avatarIcon = 'robot'; role.avatarColor = '#123456'; await s.put('roles', 'a', role);
   // 旧版把设置存成滑竿范围外的值，seed() 必须就地收进新界限。
   const before = await s.get('meta', 'settings'); before.compressionThresholdChars = 99999; before.compressionRetainChars = 99999; await s.put('meta', 'settings', before);
+  // 绘图卡片的家族标识随插件由 CVP 更名为 CHP。老卡片上存的还是 cvp，必须一起搬过来：
+  // 绘图家族只有一项，靠 family() 的第三层兜底看着还能用，但 providerId() 会退回
+  // "custom"、sourceMode() 会从 local 掉成 official —— 表现是"卡片突然不算本地服务了"。
+  await s.put('image-profiles', 'draw', {
+    id: 'draw', name: '绘图', family: 'cvp', type: 'cvp', protocol: 'cvp', providerPresetId: 'cvp', discovery: 'cvp',
+    endpoint: 'http://192.168.124.31:8189', model: 'render', enabled: true
+  });
   await s.init();
   const migratedConversation = await s.get('conversations', 'c'), migratedRole = await s.get('roles', 'a');
   assert.equal(migratedConversation.kind, 'single');
@@ -675,6 +682,12 @@ test('schema migration initializes the moderator and auto-selection state, infer
   assert.equal(Object.hasOwn(migratedSettings, 'recentFullMessages'), false);
   assert.equal(migratedSettings.compressionThresholdChars, 32000);
   assert.equal(migratedSettings.compressionRetainChars, 10000);
+  const renamedImage = await s.get('image-profiles', 'draw');
+  for (const field of ['family', 'type', 'protocol', 'providerPresetId', 'discovery']) {
+    assert.equal(renamedImage[field], 'chp', '绘图卡片的 ' + field + ' 要随插件一起搬到 CHP');
+  }
+  assert.equal(renamedImage.endpoint, 'http://192.168.124.31:8189', '改名不许动插件地址');
+  assert.equal(renamedImage.model, 'render', '改名不许动已经选好的能力');
 });
 
 // 环境声滑竿的量程从 0~50 改回 0~100（用户 2026-09-26 收尾: "把当前的两个实际范围值都映射成为
@@ -1508,69 +1521,159 @@ test('the speech cache keeps the 100 most recent clips and releases both halves 
   assert.equal(kept.some(item => item.hash === 'k104'), true);
 });
 
-// 画幅偏好（业主 2026-09-27）：9:16 竖幅、约 1MP。规范的 size 仍是**枚举**语义 —— 插件按能力的
-// size_domain（对齐步长 + 像素预算）判，不落在它公布的 values.size 里就是 unsupported_size，
-// 所以只能在它公布的尺寸里挑最接近的一张，不能硬发 [768, 1344]。
-test('the drawing client asks for the closest 9:16 canvas the capability actually publishes', async () => {
+// 画幅（业主 2026-09-27）：9:16 竖幅、约 1MP。chp/2 把画幅变成插件**手写的帧表**，
+// `ratio` 是作者定的**标签、不由数字反推**，校验是成员检查 —— 客户端只选不算，
+// 所以这里按标签取那一档，返回的就是表里的字面量（请求体要原样发回去）。
+test('the drawing client takes the canvas the frame table labels 9:16 instead of computing one', () => {
   const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
-  const pick = app.services.draw.pickSize, canvas = (value) => Array.from(value || []);
-  // 插件 2.3.0 的 render 在 A1X 上真实公布的枚举（照抄 /cvp/info）：原生档 768×1344 就在里面，
-  // 形状差 0、长边差 0 ⇒ 直接命中，不是"挑一张最接近的凑合"。
-  const render = [[1024,1024],[768,1344],[1344,768],[832,1152],[1152,832],[832,1216],[1216,832],[1536,640]];
-  assert.deepEqual(canvas(pick({ sizes: render })), [768,1344]);
-  const square = [[512,512],[576,576],[640,640],[704,704],[768,768],[832,832],[896,896],[960,960],[1024,1024]];
-  // 老插件只公布方形 ⇒ 形状一样远，于是按长边落到最大的一张（不会发一个插件不认的画幅）。
-  assert.deepEqual(canvas(pick({ sizes: square, defaults: { size: [512,512] } })), [1024,1024]);
-  // 只公布到 576×1024 的那一版也照样优先形状 ⇒ 自动换过去，chataxi 不改代码。
-  assert.deepEqual(canvas(pick({ sizes: square.concat([[576,1024]]) })), [576,1024]);
-  // 只有 3:4 与方形时，挑更接近 9:16 的那张竖幅。
-  assert.deepEqual(canvas(pick({ sizes: [[768,1024],[1024,1024]] }, [1024,1024])), [768,1024]);
-  // 能力没公布 sizes 时退到它自己的 defaults.size；两者都没有才是"读不到"。
-  assert.deepEqual(canvas(pick({ defaults: { size: [512,512] } }, [512,512])), [512,512]);
-  assert.equal(pick({}, null), null);
+  const pick = app.services.draw.pickSize;
+  // 插件 3.0.0 的 render 帧表（照抄 /chp/info）：1:1 在前面，9:16 是第二档。
+  const render = [
+    { ratio: '1:1', resolution: ['1024x1024'] },
+    { ratio: '9:16', resolution: ['768x1344'] },
+    { ratio: '16:9', resolution: ['1344x768'] },
+    { ratio: '3:4', resolution: ['832x1152'] }
+  ];
+  assert.equal(pick({ frames: render }), '768x1344', '取的就是标着 9:16 的那一档，而且原样发回去');
+  // 表里没有 9:16 就是"读不到"：客户端只选不算，不许自己算一张最接近的出来。
+  assert.equal(pick({ frames: [{ ratio: '1:1', resolution: ['512x512', '1024x1024'] }] }), null, '表里没有 9:16 就不许自己挑一张凑合');
+  // 表里的顺序就是规范的一部分：同一个标签有多档时取第一档。
+  assert.equal(pick({ frames: [{ ratio: '9:16', resolution: ['576x1024'] }, { ratio: '9:16', resolution: ['768x1344'] }] }), '576x1024', '9:16 有多档时取第一档');
+  // 一档里能挂多条分辨率，取的是**第一条**（规范 §4.3 第 1 条：该场景的默认画幅就是它的第一项）。
+  assert.equal(pick({ frames: [{ ratio: '9:16', resolution: ['576x1024', '1152x2048'] }] }), '576x1024', '同一个 9:16 档里有多条分辨率时取第一条');
+  assert.equal(pick({}), null, '没有帧表就报读不到');
+  assert.equal(pick({ sizes: [[768, 1344]] }), null, 'chp/1 的 sizes 不再认：旧快照必须先重新获取一次目录');
   // 有参考图时钉在图像提示词开头的那句约束（业主指定原文，只加在发给插件的那一份上）。
   assert.match(app.services.drawPrompt.referencePrefix, /^参考图1仅仅作为角色身份/);
 });
 
-// 定妆照必须真的作为参考图发到 CVP（业主 2026-09-27：「请仔细确认能够正确调用定妆照图片作为
-// 参考图一起发给 cvp」）。字段名 `image_base64` 与 data URL 形态都来自插件规范（hamdraw 的
-// cvp-spec.md / capabilities.py），不是自拟的。这里跑的是真实的 generate()，断的是它真正提交的
-// 请求体 —— 只看源码里有这一行不算数。
-test('a self-portrait reference really reaches the CVP request body as image_base64', async () => {
-  const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
-  const submitted = [];
-  const model = { id: 'render', sizes: [[512, 512], [1024, 1024]], defaults: { size: [1024, 1024], steps: 20, ref_strength: 0.95 }, ignores: ['negative_prompt'] };
-  app.services.modelServices = {
-    modelDefinition: () => model,
-    cvpBase: () => 'http://192.168.124.31:8189',
-    computedEndpoint: () => 'http://192.168.124.31:8189',
-    authHeaders: () => ({ Authorization: 'Bearer fixture' })
+// 发现路径：chp/2 的文档是**两张表**（rules 说客户端要什么，abilities 说什么能回答）。
+// 卡片 = render 这一个场景；画幅按 abilities 的顺序取该场景的帧；模型挂载点与就绪状态来自
+// 回答它的那条能力。地址的解析按规范 §1.3：先原样试用户填的那个，再试推荐的 /chp/info。
+test('image discovery reads the two-table chp/2 document and keeps the addresses it publishes', async () => {
+  const { app } = runtime(['app/services/draw.js']);
+  const document = {
+    spec: 'chp/2',
+    plugin: { id: 'hamdraw_chp', version: '3.0.0' },
+    auth: { required: true, authorized: true },
+    endpoints: { info: '/chp/info', jobs: '/chp/api/jobs' },
+    rules: [
+      { category: 'fast', rule: 'txt-ref-2-img', needs: { prompt: true, image: true }, prompt: { language: 'en' }, defaults: { ref_strength: 0.55 }, typical_seconds: 1.2 },
+      { category: 'render', rule: 'txt-ref-2-img', needs: { prompt: true, image: false }, prompt: { language: 'any' }, defaults: { ref_strength: 0.95 }, typical_seconds: 45 }
+    ],
+    abilities: [
+      { name: 'DreamShaper8_LCM.safetensors', files: { checkpoint: 'DreamShaper8_LCM.safetensors' }, ready: true, missing: [], frames: [{ ratio: '1:1', category: 'fast', resolution: ['512x512'] }] },
+      {
+        name: 'qwen2.1', ready: false, missing: ['vae'],
+        files: { unet: 'qwen.safetensors', clip: 'qwen_clip.safetensors', vae: 'qwen_vae.safetensors' },
+        frames: [{ ratio: '1:1', category: 'render', resolution: ['1024x1024'] }, { ratio: '9:16', category: 'render', resolution: ['768x1344'] }]
+      },
+      // 第三条也在播报 render，但它排在后头：规范 §4.3 第 1 条说"跨 abilities 按序扫，命中它的
+      // 第一条 frame"，所以回答这个场景的是上面那条，卡片不该把两边的帧拼起来（拼起来的话
+      // 就绪状态与画幅来自两个能力，卡片自己就说不通了）。
+      { name: 'other', files: { checkpoint: 'other.safetensors' }, ready: true, missing: [], frames: [{ ratio: '9:16', category: 'render', resolution: ['1440x2560'] }] }
+    ]
   };
+  const asked = [];
+  app.platform.network = {
+    // ComfyUI 自己的网页根：200 一页 HTML，不是 CHP 文档 —— 这正是"地址里没有路径"时
+    // 必须再试一次 /chp/info 的那个情形。
+    request: async (options) => { asked.push(options.url); return options.url === 'http://192.168.124.31:8189' ? { status: 200, bodyText: '<html>ComfyUI</html>' } : { status: 200, bodyText: JSON.stringify(document) }; },
+    readText: async (response) => response.bodyText
+  };
+  const service = { id: 'card', endpoint: 'http://192.168.124.31:8189' };
+  const found = await app.services.modelServices.discover('image', service, { persist: false });
+
+  assert.deepEqual(asked, ['http://192.168.124.31:8189', 'http://192.168.124.31:8189/chp/info'], '先原样试用户填的地址，再试推荐的 /chp/info');
+  assert.equal(found.models.length, 1, 'chataxi 只收 render 这一个场景');
+  const card = found.models[0];
+  assert.equal(card.id, 'render', '卡片认的必须是 category（请求体字段名），不是 checkpoint 文件名');
+  assert.deepEqual(plain(card.frames), [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344'] }], '画幅只取回答这个场景的第一条能力的帧（文档序就是菜单序）');
+  assert.equal(app.services.draw.pickSize(card), '768x1344', '发现出来的卡片要能直接喂给绘图客户端');
+  assert.equal(card.ready, false, '就绪状态挂在**能力**上：render 那一族缺 vae');
+  assert.deepEqual(plain(card.missing), ['vae'], '缺哪个角色要点名');
+  const role = (name) => card.roles.find((item) => item.role === name);
+  assert.deepEqual(plain(card.roles.map((item) => item.role).sort()), ['clip', 'unet', 'vae'], '模型挂载点来自回答它的那条能力');
+  assert.equal(role('unet').name, 'qwen.safetensors');
+  assert.equal(role('vae').ready, false, '缺的那个角色自己标成未就绪');
+  assert.equal(role('clip').ready, true);
+  assert.equal(card.promptLanguage, 'any', 'render 的提示词语言来自 rules，不来自能力');
+  assert.equal(card.defaults.ref_strength, 0.95);
+  assert.equal(card.typicalSeconds, 45);
+  assert.equal(service.chpOrigin, 'http://192.168.124.31:8189', '请求地址要按信息接口的同源根补全');
+  assert.deepEqual(Object.keys(plain(service.endpoints)), ['info', 'jobs'], '地址表原样存下来，绘图时从它读');
+
+  // 连不上 与 应答了但不是 CHP 文档 必须分开报：前者让用户查 WiFi / ComfyUI，后者让用户查插件。
+  app.platform.network = { request: async () => { throw new Error('Timeout'); }, readText: async () => '' };
+  await assert.rejects(() => app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false }), /无法连接这个地址/, '连不上要说地址不通');
+  app.platform.network = { request: async () => ({ status: 200, bodyText: '<html>ComfyUI</html>' }), readText: async (response) => response.bodyText };
+  await assert.rejects(() => app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false }), /这个地址不是 CHP 服务/, '应答了但那里没有插件');
+});
+
+// 定妆照必须真的作为参考图发到 CHP（业主 2026-09-27：「请仔细确认能够正确调用定妆照图片作为
+// 参考图一起发给 cvp」），请求体必须是 chp/2 的那套字段名，地址一律从文档的 endpoints 里读。
+// 这里跑的是真实的 generate()，断的是它真正提交的请求体与真正打的地址 —— 只看源码里有这一行不算数。
+test('a self-portrait reference really reaches the CHP request body as image_base64', async () => {
+  const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
+  const submitted = [], asked = [];
+  const model = {
+    id: 'render',
+    frames: [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344'] }],
+    defaults: { ref_strength: 0.95 },
+    typicalSeconds: 45
+  };
+  // 故意用**非推荐的**路径，而且地址里带一段路径：客户端只能照文档给的地址打 ——
+  // 自己从 endpoint 拼会拼出 …/proxy/chp/jobs，从 chpBase 拼会拼出 …/proxy/chp/jobs，
+  // 只有文档给的 /chp/api/jobs 加信息接口的同源根才是对的。
+  const profile = {
+    id: 'card', endpoint: 'http://192.168.124.31:8189/proxy/chp', chpOrigin: 'http://192.168.124.31:8189',
+    endpoints: {
+      jobs: '/chp/api/jobs', job: '/chp/api/jobs/{job_id}',
+      progress: '/chp/api/jobs/{job_id}/progress', cancel: '/chp/api/jobs/{job_id}/cancel'
+    }
+  };
+  // 只换掉环境给的那三件（目录 / 地址 / 认证）；chpUrl / chpJobUrl / chpAbsolute 走**真**实现，
+  // 否则"地址从文档里读"这件事就没有被测到。
+  const services = app.services.modelServices;
+  services.modelDefinition = () => model;
+  services.computedEndpoint = () => profile.endpoint;
+  services.authHeaders = () => ({ Authorization: 'Bearer fixture' });
   app.utils.parseHeaders = () => ({});
   app.platform.network = {
     requestJson: async (options) => {
-      if (/\/cvp\/jobs$/.test(options.url)) { submitted.push(JSON.parse(options.bodyText)); return { data: { job: { id: 'job-1' } } }; }
+      asked.push(options.method + ' ' + options.url);
+      // 提交按"方法"认，不按地址认：地址对不对由下面那条 asked 断言说话，
+      // 让桩先按地址挑分支会把"地址拼错了"变成另一条报错。
+      if (options.method === 'POST') { submitted.push(JSON.parse(options.bodyText)); return { data: { job: { id: 'job-1' } } }; }
       if (/\/progress$/.test(options.url)) return { data: { job: { state: 'completed', queue_position: 0 } } };
-      return { data: { job: { state: 'completed', outputs: [{ url: '/cvp/jobs/job-1/output/0', media_type: 'image/png' }] } } };
+      return { data: { job: { state: 'completed', outputs: [{ url: '/chp/jobs/job-1/output/0', media_type: 'image/png' }] } } };
     },
-    requestByteStream: async (options) => { options.onChunk(new Uint8Array([137, 80, 78, 71])); return { contentType: 'image/png' }; }
+    requestByteStream: async (options) => { asked.push('GET ' + options.url); options.onChunk(new Uint8Array([137, 80, 78, 71])); return { contentType: 'image/png' }; }
   };
-  const portrait = 'data:image/jpeg;base64,AAAA', produce = (extra) => app.services.draw.generate(Object.assign({ profile: { id: 'card' }, modelId: 'render', prompt: '雨夜的旧车站' }, extra));
+  const portrait = 'data:image/jpeg;base64,AAAA', produce = (extra) => app.services.draw.generate(Object.assign({ profile: profile, modelId: 'render', prompt: '雨夜的旧车站' }, extra));
 
   const produced = await produce({ referenceDataUrl: portrait });
   assert.equal(submitted.length, 1, '一次绘图只提交一个任务');
   const body = submitted[0];
+  assert.equal(body.category, 'render', 'v2 的字段名是 category（取代 v1 的 capability / task）');
+  assert.equal(body.resolution, '768x1344', '画幅取 9:16 那一档，发的就是表里的字面量');
+  assert.equal('capability' in body, false, 'v1 的 capability 不许再出现');
+  assert.equal('size' in body, false, 'v1 的 size 数组不许再出现');
+  assert.equal('steps' in body, false, '步数不在规范里：不发就是用插件自己的默认值');
   assert.equal(body.image_base64, portrait, '定妆照必须原样进 image_base64');
-  assert.equal(body.capability, 'render');
-  assert.equal(body.size[0], 1024); assert.equal(body.size[1], 1024);
-  assert.equal(body.steps, 20);
   assert.equal(body.ref_strength, 0.95, '参考强度照插件自报的默认值发');
-  assert.equal('negative_prompt' in body, false, 'ignores 里声明的字段一个都不许发');
   assert.match(body.prompt, /^参考图1仅仅作为角色身份[\s\S]*雨夜的旧车站$/, '有参考图时提示词开头必须钉上身份约束');
   assert.ok(produced.blob && produced.blob.size, '取回的字节要变成一张真图');
+  // 四个请求全部落在文档公布的地址上：提交 → 轮询 → 取状态 → 取图（取图那一条是服务端给的）。
+  assert.deepEqual(asked, [
+    'POST http://192.168.124.31:8189/chp/api/jobs',
+    'GET http://192.168.124.31:8189/chp/api/jobs/job-1/progress',
+    'GET http://192.168.124.31:8189/chp/api/jobs/job-1',
+    'GET http://192.168.124.31:8189/chp/jobs/job-1/output/0'
+  ], '请求地址一律从文档的 endpoints 里读，客户端不许自己拼路径');
 
   // 没有参考图时不许自己编一张出来：那会把"定妆照没读到"这件事掩盖掉。
-  //（插件侧 render.needs.image = true，缺它会 400 bad_image —— 该由上层给出可读原因。）
+  //（插件侧 render.needs.image = false —— 不带参考图就是纯文生图，是它明确支持的路径。）
   submitted.length = 0;
   await produce({});
   assert.equal('image_base64' in submitted[0], false, '没有参考图就不许凭空造一张');

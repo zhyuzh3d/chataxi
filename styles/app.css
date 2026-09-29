@@ -752,6 +752,8 @@ html.has-app-background .asr-transcript,
 html.has-app-background .section-tabs,
 html.has-app-background .modal-sheet { -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
 html.has-app-background .toast { border: 1px solid var(--border); background: var(--glass); color: var(--text); }
+/* 出错那条例外：玻璃态会把「红」冲淡成灰，错误提示要的正是那点红。加一级选择器压过上面这条。 */
+html.has-app-background .toast.is-danger { border-color: #7f2a26; background: #a4342f; color: #fff; }
 
 /* 到这里, 非对话页不再有任何"清掉填充"的规则了。
    曾经有过一条"分段标签条不许有底"的收窄规则, 2026-09-26 当天就被撤回 ——

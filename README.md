@@ -7,7 +7,7 @@ chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 > 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://haminn.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.44`(versionCode `123`,见 `haminn.json`)
+- 当前源码版本：`0.7.49`(versionCode `128`,见 `haminn.json`)
 - 形态：HaminnApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点

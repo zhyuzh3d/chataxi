@@ -13,11 +13,35 @@
     return list.find(function (item) { return item.id === id; }) || list.find(function (item) { return item.id === "custom"; }) || list[0] || {};
   }
 
-  // CVP 插件地址归一化：允许用户填到 /cvp 或旧名 /hamdraw 为止，客户端都退回它前面的根。
-  // 与 hamdraw/plans/cvp-spec.md 的客户端约定一致（规范承诺路径不变，这里的容错只为省心）。
-  function cvpBase(endpoint) {
-    var value = String(endpoint || "").replace(/\/+$/, ""), marker = value.search(/\/(?:cvp|hamdraw)(?:\/|$)/i);
+  // CHP 插件地址归一化：允许用户填到 /chp 或旧名 /hamdraw 为止，客户端都退回它前面的根。
+  // chp/2 起信息接口的地址就是**用户填的那个地址**（见 chpInfo），所以这里只剩两个用处：
+  // 兜第二个候选（裸源 + 推荐路径），以及给老卡片（没存过 chpOrigin）当同源根。
+  function chpBase(endpoint) {
+    var value = String(endpoint || "").replace(/\/+$/, ""), marker = value.search(/\/(?:chp|cvp|hamdraw)(?:\/|$)/i);
     return marker > 0 ? value.slice(0, marker) : value;
+  }
+
+  function chpOrigin(url) {
+    try { return new URL(String(url || "")).origin; } catch (_) { return ""; }
+  }
+
+  // 请求地址一律从文档的 endpoints 里读（规范 §1.3 的规则），客户端不许自己拼路径。
+  // 值以 / 开头 = 相对信息接口的**同源路径**，否则当绝对 URL 处理。
+  function chpAbsolute(service, value) {
+    var text = String(value == null ? "" : value).trim();
+    if (/^https?:/i.test(text)) return text;
+    var origin = String(service && service.chpOrigin || "") || chpBase(service && service.endpoint);
+    return origin + (text.charAt(0) === "/" ? text : "/" + text);
+  }
+
+  function chpUrl(service, name, fallback) {
+    var published = String(service && service.endpoints && service.endpoints[name] || "").trim();
+    return chpAbsolute(service, published || fallback);
+  }
+
+  // 路径里的 {job_id} / {index} 由客户端替换（规范 §1.3）。
+  function chpJobUrl(service, name, fallback, jobId) {
+    return chpUrl(service, name, fallback).split("{job_id}").join(encodeURIComponent(jobId));
   }
 
   function unique(items) {
@@ -617,46 +641,82 @@
     return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
   }
 
-  // 绘图（CVP）：一次 /cvp/info 就够 —— 它公开、不带密码也会返回（密码对不对由 auth.authorized 说），
-  // 而且同时给出能力清单、每项能力的输入需求 / 忽略字段 / 默认值 / 允许画幅。chataxi 把每个
-  // category 含 "render" 的能力映射成一张单模型卡片（卡片 = 能力，不是 checkpoint 文件名）。
-  // 只收 "render"：它才是"重画成品图"，与"在对话里画一张照片"这件事对得上；
-  // quick / inpaint / upscale 是画布工具，本轮不做（见 plans 的「明确不做」）。
+  // 信息接口：规范 §1.3 把客户端解析写死成一条 —— 把用户填的地址**原样**当信息接口请求，
+  // 不是 CHP 文档时再试一次推荐的 /chp/info（chpBase 顺手把「…/chp」「…/hamdraw」也归到它）。
+  // 「应答了但不是 CHP 文档」与「根本没连上」必须分开报：ComfyUI 自己的网页根会回 200 一页
+  // HTML，地址写错回 404，两种都说明地址是通的、只是那里没有插件；连不上的那次没有 status。
+  async function chpInfo(endpoint, headers) {
+    var typed = String(endpoint || "").trim().replace(/\/+$/, "");
+    var candidates = [typed, chpBase(typed) + "/chp/info"], answered = false;
+    for (var index = 0; index < candidates.length; index += 1) {
+      if (index && candidates[index] === candidates[0]) continue;
+      var response, text;
+      try {
+        response = await app.platform.network.request({ url: candidates[index], method: "GET", headers: headers, timeoutMs: 30000 });
+        text = await app.platform.network.readText(response);
+      } catch (_) { continue; }
+      answered = true;
+      if (response.status < 200 || response.status >= 300) continue;
+      var document = app.utils.safeJsonParse(text, null);
+      if (document && document.spec) return { document: document, url: candidates[index] };
+    }
+    // 两条路都不成时，用户要的是一句能照着做的事，不是 transport 的原话（Timeout / Failed to
+    // fetch 在界面上帮不了他）。所以只说这两句；两条候选各自的错误一律咽掉。
+    if (answered) throw new Error("这个地址不是 CHP 服务：请在 ComfyUI 中确认已安装 CHP 插件并重启");
+    throw new Error("无法连接这个地址，请确认 ComfyUI 与插件正在运行");
+  }
+
+  // 绘图（CHP，spec chp/2）：一次信息接口就够 —— 它公开、不带密码也会返回（密码对不对由
+  // auth.authorized 说），而且同时给出地址表、场景表（rules）与能力表（abilities）。
+  // chataxi 只做一件事：把 "render" 这个场景映射成一张单模型卡片。
+  // 只收 render：它才是"重画成品图"，与"在对话里画一张照片"这件事对得上；
+  // fast / inpaint / upscale 是画布工具，本轮不做（见 plans 的「明确不做」）。
   //
-  // 不保存原始 /cvp/info：能力里已经带上画幅 / 步数 / 默认值与模型挂载点，draw.js 从
-  // modelDefinition("image", …) 就能拿到全部要用的东西，省得再存一份可能超 63 KB 的记录。
+  // 卡片 = 场景（不是 checkpoint 文件名），所以卡片名由 chataxi 自己给 —— chp/2 的文档里
+  // 不再有 label，插件换个说法也不该改掉用户卡片上的字。画幅取该场景的**帧表**：abilities
+  // 有序、frames 有序，命中 render 的第一条能力就是回答它的那条（规范 §4.3 第 1 条）。
+  //
+  // 不保存原始文档：卡片里已经带上帧表、默认值与模型挂载点，draw.js 从 modelDefinition("image", …)
+  // 就能拿到全部要用的东西；只有地址表要另存 —— 请求地址按规范 §1.3 从文档里读，不许自己拼。
   async function discoverImage(service, definition) {
-    var base = cvpBase(service.endpoint);
-    if (!base) throw new Error("请填写 CVP 插件的地址（ComfyUI 的地址，插件装在里面）");
+    if (!String(service.endpoint || "").trim()) throw new Error("请填写 CHP 插件的地址（ComfyUI 的地址，插件装在里面）");
     var headers = authHeaders("image", service);
     Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
-    var result = await app.platform.network.requestJson({ url: base + "/cvp/info", method: "GET", headers: headers, timeoutMs: 30000 });
-    var document = result.data || {};
-    if (!document.spec) throw new Error("这个地址不是 CVP 服务：请在 ComfyUI 中确认已安装 HamDraw 插件并重启");
+    var found = await chpInfo(service.endpoint, headers), document = found.document;
     var auth = document.auth || {};
-    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 HamDraw 配置节点里核对密码");
-    var capabilities = (document.capabilities || []).filter(function (item) { return item && item.id && (item.category || []).indexOf("render") >= 0; });
-    if (!capabilities.length) throw new Error("插件没有提供成品图（category: render）能力，请升级插件");
-    service.plugin = document.plugin || {};
-    var models = capabilities.map(function (item) {
-      var label = item.label || {}, description = item.description || {};
-      return {
-        id: String(item.id),
-        name: label.zh || label.en || String(item.id),
-        description: app.i18n.pick(description.zh || description.en || "", description.en || description.zh || ""),
-        aliases: (item.aliases || []).map(String),
-        ready: item.ready !== false,
-        roles: (item.models || []).map(function (entry) { return { role: String(entry.role || ""), name: String(entry.name || ""), ready: entry.ready !== false }; }),
-        promptLanguage: (item.prompt || {}).language || "",
-        needs: item.needs || {},
-        ignores: (item.ignores || []).map(String),
-        defaults: item.defaults || {},
-        sizes: ((item.values || {}).size || []).map(function (pair) { return [Number(pair[0]), Number(pair[1])]; }),
-        steps: ((item.values || {}).steps || []).map(Number),
-        typicalSeconds: Number(item.typical_seconds || 0),
-        capabilitySource: "capability-directory"
-      };
+    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码");
+    var rule = (document.rules || []).find(function (item) { return item && String(item.category || "") === "render"; });
+    if (!rule) throw new Error("插件没有提供成品图（category: render）场景，请升级插件");
+    var ability = null, frames = [];
+    (document.abilities || []).forEach(function (item) {
+      if (ability) return;
+      var mine = [];
+      (item && item.frames || []).forEach(function (frame) {
+        if (String(frame && frame.category || "") !== "render") return;
+        var resolutions = (frame.resolution || []).map(String).filter(function (value) { return value.trim(); });
+        if (resolutions.length) mine.push({ ratio: String(frame.ratio || ""), resolution: resolutions });
+      });
+      if (mine.length) { frames = mine; ability = item; }
     });
+    if (!frames.length) throw new Error("插件的成品图场景没有公布画幅，请升级插件");
+    var files = ability && ability.files || {}, missing = ((ability && ability.missing) || []).map(String);
+    service.plugin = document.plugin || {};
+    service.endpoints = document.endpoints || {};
+    service.chpOrigin = chpOrigin(found.url) || chpBase(service.endpoint);
+    var models = [{
+      id: "render",
+      name: app.i18n.pick("重画成品图", "Redraw a finished picture"),
+      ready: ability.ready !== false,
+      missing: missing,
+      // 模型挂载点：每个模型角色一个条目，这就是"对内可替换"的接口（规范 §4.2）。
+      roles: Object.keys(files).map(function (role) { return { role: role, name: String(files[role]), ready: missing.indexOf(role) < 0 }; }),
+      needs: rule.needs || {},
+      defaults: rule.defaults || {},
+      promptLanguage: (rule.prompt || {}).language || "",
+      typicalSeconds: Number(rule.typical_seconds || 0),
+      frames: frames,
+      capabilitySource: "capability-directory"
+    }];
     return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
   }
 
@@ -757,7 +817,10 @@
     models: models,
     voices: voices,
     allVoices: allVoices,
-    cvpBase: cvpBase,
+    chpBase: chpBase,
+    chpUrl: chpUrl,
+    chpJobUrl: chpJobUrl,
+    chpAbsolute: chpAbsolute,
     voiceCompatibility: voiceCompatibility,
     recordTtsVerification: recordTtsVerification,
     serviceStatus: serviceStatus,

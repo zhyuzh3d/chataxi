@@ -145,7 +145,7 @@
         ["defaultTtsProfileId", "defaultAsrProfileId", "theme", "imageDetail", "uiLanguage", "compressionPrompt"].forEach(function (key) { next[key] = u.formValue(form, key); });
         ["compressionThresholdChars", "compressionRetainChars", "compressionTargetChars", "ttsReverbMix", "ttsAmbienceMix"].forEach(function (key) { next[key] = Number(u.formValue(form, key)); });
         if (!next.compressionPrompt) throw new Error("请填写压缩提示词");
-        await store.put("meta", "settings", next); app.applyTheme(next.theme); document.getElementById("settingsSaveStatus").textContent = "设置已保存"; ui.toast("设置已保存");
+        await store.put("meta", "settings", next); app.applyTheme(next.theme); document.getElementById("settingsSaveStatus").textContent = ""; ui.toast("设置已保存");
       } finally { button.disabled = false; }
     }));
     var liveButton = main.querySelector("[data-enable-live]"), tapCount = 0, tapTimer = 0;

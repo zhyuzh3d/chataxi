@@ -3,7 +3,7 @@
 
   var VERSION = "2026.09.15.1";
   var AGGREGATORS = { openrouter: true, siliconflow: true, together: true, fireworks: true };
-  var LOCAL = { ollama: true, lmstudio: true, vllm: true, sglang: true, llmserver: true, "vllm-omni": true, "fish-tts": true, cvp: true };
+  var LOCAL = { ollama: true, lmstudio: true, vllm: true, sglang: true, llmserver: true, "vllm-omni": true, "fish-tts": true, chp: true };
   var FIXED_LLM_FAMILIES = {
     openai: "openai", anthropic: "anthropic", gemini: "gemini", xai: "xai",
     deepseek: "deepseek", qwen: "qwen", kimi: "kimi", glm: "glm",

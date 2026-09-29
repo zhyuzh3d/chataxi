@@ -370,18 +370,19 @@
   ];
 
   // ---------------------------------------------------------------- 绘图（image）
-  // 目前只有 CVP 一种合同（hamdraw 插件那套 `cvp/1`，见 hamdraw/plans/cvp-spec.md）。
-  // 这里**不内置任何模型清单**：能画什么由 `/cvp/info` 的 capabilities 自报，chataxi 只是
-  // 把每个能力映射成一张单模型卡片（卡片 = 能力，不是模型名）。理由与规范第 0 条一致 ——
-  // 插件换模型不该让客户端改代码，所以卡片认的是 `capability` 而不是 checkpoint 文件名。
+  // 目前只有 CHP 一种合同（CHP 插件那套 `chp/2`，见 hamdraw/plans/chp-spec.md）。
+  // 这里**不内置任何模型清单**：能画什么由信息接口的 `rules`（场景）与 `abilities`（能跑的文件组）
+  // 自报，chataxi 只把 `render` 这一个场景映射成一张单模型卡片（卡片 = 场景，不是模型名）。
+  // 理由与规范第 0 条一致 —— 插件换模型不该让客户端改代码，所以卡片认的是 `category` 而不是
+  // checkpoint 文件名；画幅也来自插件手写的帧表，客户端只选不算。
   var imageFamilies = [
     {
-      id: "cvp", name: "CVP 绘图插件", description: "hamdraw 的 ComfyUI 插件协议：连接后由插件自报可用的绘图能力",
-      type: "cvp", protocol: "cvp", auth: "bearer", keyOptional: true, customEndpoint: true,
+      id: "chp", name: "CHP 插件", description: "ComfyUI Haminn Protocol：连接后由插件自报可用的绘图场景与画幅",
+      type: "chp", protocol: "chp", auth: "bearer", keyOptional: true, customEndpoint: true,
       // 插件跑在局域网里，没有可用的公共默认地址。这里保持空串：本字段代表「服务商预设」，
       // 填了它，输入框清空就会自动变回默认值，「请填写服务地址」的校验也就永远触发不了。
-      // 真正的默认地址放在 model-single-editor.js 的 CVP_DEFAULT_ENDPOINT（卡片初值那一层）。
-      endpoint: "", discovery: "cvp", models: []
+      // 真正的默认地址放在 model-single-editor.js 的 CHP_DEFAULT_ENDPOINT（卡片初值那一层）。
+      endpoint: "", discovery: "chp", models: []
     }
   ];
 

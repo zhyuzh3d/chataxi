@@ -69,10 +69,15 @@ assert.equal(document.querySelector('#modalSubmit').dataset.mode, 'save');
 assert.ok(document.querySelector('#modalForm'), 'fetching the catalog through the submit button keeps the editor open');
 assert.match(document.querySelector('[data-picker="externalModelId"] [data-picker-label]').textContent, /gpt-4\.1/);
 assert.match(document.querySelector('#catalogStatus').textContent, /请选择一个模型。/);
+// 但是「提示不写在版面里」：状态行带 visually-hidden（CSS 把它移出版面），看得见的是顶部 toast。
+assert.ok(document.querySelector('#catalogStatus').classList.contains('visually-hidden'));
+assert.ok(document.querySelector('#connectionStatus').classList.contains('visually-hidden'));
+assert.match(document.querySelector('#toastRoot .toast').textContent, /请选择一个模型。/);
 assert.equal(document.querySelector('.model-toggle'), null, 'one model card does not expose a multi-model switch list');
 click('[data-picker="externalModelId"]'); await until(() => document.querySelector('.subsheet .choice-group-label'), 'grouped model choice sheet');
 assert.match(document.querySelector('.subsheet .choice-group-label').textContent, /推荐用于对话模型/); click('.subsheet [data-choice="gpt-4.1"]'); await tick();
 click('[data-test-model]'); await until(() => /连接成功/.test(document.querySelector('#connectionStatus').textContent), 'guided model test');
+assert.match(document.querySelector('#toastRoot .toast').textContent, /连接成功/);
 field('enabled', true); submit();
 await until(() => document.querySelector('#modalForm [name="systemPrompt"]'), 'guided role form');
 assert.ok(document.querySelector('#avatarPreview .fa-user'), 'unnamed role uses the user icon fallback');
@@ -190,6 +195,8 @@ await until(() => /远处传来列车/.test(field('openingScene').value), 'gener
 assert.equal(generatedSceneRequest.moderator.name, '测试搭档'); assert.equal(generatedSceneRequest.participants.length, 1);
 assert.deepEqual(Array.from(generatedSceneRequest.modes), ['学习']); assert.equal(generatedSceneRequest.guidance, '围绕一张旧车票展开');
 assert.match(document.querySelector('[data-scene-generation-status]').textContent, /可继续编辑后保存/);
+assert.ok(document.querySelector('[data-scene-generation-status]').classList.contains('visually-hidden'));
+assert.match(document.querySelector('#toastRoot .toast').textContent, /可继续编辑后保存/);
 submit();
 await until(() => document.querySelector('.message-row.system'), 'opening scene materialized');
 let sceneMessages = await app.data.store.messages(id);
@@ -282,7 +289,7 @@ console.log('passed: enabled retry after error, stable message nodes, UI stop wi
 // ── 绘图永远独立占一条消息：超时或失败都不许并进那条原始文字消息（业主 2026-09-27） ──
 // 这一段跑的是**真实点击路径**。静态门禁只能证明写法，证明不了"点下去不炸"：曾经那个缺陷
 // 就是按钮看着正常、点下去抛 ReferenceError: id is not defined（会话 id 取了作用域里不存在的 id）。
-const drawCard = { profile: { id: 'cvp-fixture' }, modelId: 'render' };
+const drawCard = { profile: { id: 'chp-fixture' }, modelId: 'render' };
 // 重新绘制走的是另一条路：resolveCard 只认消息里记下的那张卡片（它的兜底 available 是模块内部的，桩打不到），
 // 所以这里必须把 resolveCard 也一起接管，否则"重新绘制"会以为卡片没了、直接失败。
 const originalDrawAvailable = app.services.draw.available, originalDrawResolveCard = app.services.draw.resolveCard, originalDrawGenerate = app.services.draw.generate, originalDrawMediaPut = app.data.media.put;
@@ -551,7 +558,7 @@ assert.ok(redrawnMessage, '重新生成沿用同一条图片消息');
 assert.equal(redrawnMessage.status, 'done');
 assert.equal(redrawnMessage.draw.prompt, '一只趴在窗台的橘猫', '重新生成原样沿用消息里的提示词');
 // 这条消息必须记着当初用的是哪张卡片、哪个模型，否则重新生成就只能猜（业主 2026-09-27）。
-assert.equal(redrawnMessage.draw.profileId, 'cvp-fixture', '图片消息要记下生图用的卡片');
+assert.equal(redrawnMessage.draw.profileId, 'chp-fixture', '图片消息要记下生图用的卡片');
 assert.equal(redrawnMessage.draw.modelId, 'render', '图片消息要记下生图用的模型');
 app.services.draw.available = originalDrawAvailable; app.services.draw.resolveCard = originalDrawResolveCard; app.services.draw.generate = originalDrawGenerate; app.data.media.put = originalDrawMediaPut;
 await app.features.chat.renderMessages(); await tick();
@@ -1000,6 +1007,9 @@ assert.ok(document.querySelector('#modalForm .summary-edit > .field > .prompt-ed
 assert.equal(field('summary0').value, '第一版概要');
 field('summary0', '   '); submit(); await tick(); await tick();
 assert.equal(document.querySelector('.form-error').textContent, '压缩概要不能为空');
+assert.ok(document.querySelector('.form-error').classList.contains('visually-hidden'), 'the dialog error is a record, not a layout row');
+assert.equal(document.querySelector('#toastRoot .toast').textContent, '压缩概要不能为空');
+assert.ok(document.querySelector('#toastRoot .toast').classList.contains('is-danger'), 'a rejected submit surfaces as a danger toast');
 assert.ok(document.querySelector('#modalForm'), 'an empty summary is rejected without closing the sheet');
 field('summary0', '手工修订后的概要'); submit(); await until(() => !document.querySelector('#modalForm'), 'compression summary saves and closes');
 const editedSummary = await app.data.store.get('summaries', id);

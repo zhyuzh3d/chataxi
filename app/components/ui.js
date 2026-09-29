@@ -218,18 +218,29 @@
       onCropped: onCropped
     });
   }
-  function toast(message, duration) {
+  // 提示一律浮在顶部（业主 2026-09-29）：写在版面里的状态行会把它下面的控件顶下去 ——
+  // 获取目录/连接测试的文字一出现，「具体模型」那一行就跳一次。「.toast-root」已改成顶部停靠。
+  // tone 只有两种：「info」是普通提示，「danger」是出错 —— 出错必须一眼看得出来。
+  function toast(message, duration, tone) {
     var root = document.getElementById("toastRoot");
     clearTimeout(toastTimer);
-    root.innerHTML = '<div class="toast" role="status">' + utils.escapeHtml(message) + '</div>';
+    root.innerHTML = '<div class="toast' + (tone === "danger" ? " is-danger" : "") + '" role="status">' + utils.escapeHtml(message) + '</div>';
     toastTimer = setTimeout(function () { root.innerHTML = ""; }, duration || 3200);
+  }
+  // 「记录 + 弹提示」一次写入：node 留在文档里给自检和读屏读（它的文字是判据），
+  // 但 CSS 已把它移出版面 ⇒ 写进去或清空都不会让版面动一行；给人看的是顶部那条 toast。
+  // message 为空串就只清记录、不弹提示。
+  function status(node, message, tone) {
+    var text = String(message == null ? "" : message);
+    if (node) node.textContent = text;
+    if (text) toast(text, tone === "danger" ? 5000 : 3600, tone);
   }
   function action(fn) {
     return function () {
       var result;
       try { result = fn.apply(this, arguments); }
-      catch (error) { toast(utils.cleanError(error), 5000); return; }
-      return Promise.resolve(result).catch(function (error) { toast(utils.cleanError(error), 5000); });
+      catch (error) { toast(utils.cleanError(error), 5000, "danger"); return; }
+      return Promise.resolve(result).catch(function (error) { toast(utils.cleanError(error), 5000, "danger"); });
     };
   }
   function closeSubsheet(force, submitted) {
@@ -297,10 +308,14 @@
           if (options.onSuccess) await options.onSuccess(value);
         }
       } catch (error) {
-        if (modal !== current) { toast(utils.cleanError(error), 5000); return; }
+        var message = utils.cleanError(error);
+        if (modal !== current) { toast(message, 5000, "danger"); return; }
+        // 错误仍然登记成一个 .form-error 节点（自检读它的文字），但它带 visually-hidden ⇒
+        // 不再插在字段前面把弹窗内容顶下去；给人看的入口是顶部那条 danger toast。
         var existing = form.querySelector(".form-error");
-        if (!existing) { existing = document.createElement("div"); existing.className = "error-box form-error"; existing.setAttribute("role", "alert"); existing.tabIndex = -1; form.querySelector(".modal-body").prepend(existing); }
-        existing.textContent = utils.cleanError(error); existing.focus();
+        if (!existing) { existing = document.createElement("div"); existing.className = "error-box form-error visually-hidden"; existing.setAttribute("role", "alert"); existing.tabIndex = -1; form.querySelector(".modal-body").prepend(existing); }
+        existing.textContent = message; existing.focus();
+        toast(message, 5000, "danger");
       } finally {
         current.busy = false; submit.textContent = label;
         buttons.forEach(function (button) { button.disabled = false; });
@@ -328,7 +343,7 @@
       event.preventDefault(); if (current.busy) return; current.busy = true;
       var buttons = layer.querySelectorAll("button"); buttons.forEach(function (button) { button.disabled = true; });
       try { var value = options.onSubmit ? await options.onSubmit(form) : true; if (value !== false && subsheet === current) { closeSubsheet(true, true); if (options.onSuccess) await options.onSuccess(value); } }
-      catch (error) { if (subsheet !== current) { toast(utils.cleanError(error), 5000); return; } var box = form.querySelector(".form-error"); if (!box) { box = document.createElement("div"); box.className = "error-box form-error"; box.setAttribute("role", "alert"); form.querySelector(".modal-body").prepend(box); } box.textContent = utils.cleanError(error); }
+      catch (error) { var message = utils.cleanError(error); if (subsheet !== current) { toast(message, 5000, "danger"); return; } var box = form.querySelector(".form-error"); if (!box) { box = document.createElement("div"); box.className = "error-box form-error visually-hidden"; box.setAttribute("role", "alert"); form.querySelector(".modal-body").prepend(box); } box.textContent = message; toast(message, 5000, "danger"); }
       finally { current.busy = false; buttons.forEach(function (button) { button.disabled = false; }); }
     });
     layer.querySelector(".modal-sheet").focus(); return form;
@@ -387,5 +402,5 @@
   function search(placeholder) {
     return '<label class="search-field">' + icon("magnifying-glass") + '<input type="search" id="listSearch" aria-label="' + utils.escapeHtml(placeholder) + '" placeholder="' + utils.escapeHtml(placeholder) + '"></label>';
   }
-  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropPortrait: cropPortrait, cropPicture: cropPicture, cropGeometry: cropGeometry, cropGeometryRect: cropGeometryRect, screenAspect: screenAspect, toast: toast, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
+  app.components = { icon: icon, copyUrl: copyUrl, bindCopyUrls: bindCopyUrls, avatar: avatar, roleAvatar: roleAvatar, hydrateAvatars: hydrateAvatars, pickLocalImage: pickLocalImage, cropAvatar: cropAvatar, cropPortrait: cropPortrait, cropPicture: cropPicture, cropGeometry: cropGeometry, cropGeometryRect: cropGeometryRect, screenAspect: screenAspect, toast: toast, status: status, action: action, openModal: openModal, closeModal: closeModal, openSubsheet: openSubsheet, closeSubsheet: closeSubsheet, choose: choose, picker: picker, bindPicker: bindPicker, confirm: confirm, empty: empty, pageHeader: pageHeader, search: search };
 })(window.chataxi);

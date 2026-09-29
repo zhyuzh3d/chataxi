@@ -117,8 +117,14 @@
 .modal-body .role-choice:last-child { border-bottom: 0; }
 .form-error { margin-bottom: 20px; }
 .error-box { padding: 14px; border: 1px solid var(--danger-border); border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger); }
-.toast-root { position: fixed; z-index: 70; left: 16px; right: 16px; bottom: calc(88px + var(--safe-bottom)); display: grid; justify-items: center; pointer-events: none; }
+/* 提示浮在**顶部**（业主 2026-09-29）：原来停在底部，与输入框、底部导航挤在一起，
+   弹窗一开又被压到后面。z-index 70 高于弹窗（50）与子弹窗（55）⇒ 弹窗里出错也看得见。
+   顶部固定 ⇒ 它不再属于任何一列控件，出现和消失都不会把下面的东西顶下去。 */
+.toast-root { position: fixed; z-index: 70; left: 16px; right: 16px; top: calc(var(--safe-top) + 12px); display: grid; justify-items: center; pointer-events: none; }
 .toast { max-width: 560px; padding: 13px 18px; border-radius: 14px; color: #fff; background: #2c3328; box-shadow: var(--shadow); overflow-wrap: anywhere; font-size: 14px; }
+/* 出错不跟玻璃走：实心深红 + 白字是「这是错误」唯一的信号，混进半透明里就读成普通提示了。
+   颜色写死是因为它两套主题下都要一样的对比度（主题里的 --danger 在深色下偏亮，配白字读不清）。 */
+.toast.is-danger { border: 1px solid #7f2a26; background: #a4342f; color: #fff; }
 .spinner { display: inline-block; width: 23px; height: 23px; border: 2px solid var(--border-strong); border-top-color: var(--accent-strong); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .image-preview { width: 100%; max-height: 65vh; object-fit: contain; border-radius: 14px; }

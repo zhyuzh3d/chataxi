@@ -366,6 +366,20 @@ assert.match(styles, /\.bottom-nav\s*\{[^}]*position:\s*fixed[^}]*background:\s*
 // 弹窗挂在 body 上, 不在 .app-shell 里 —— 玻璃色靠 <html> 上的开关传下来, 模糊则要单独给。
 assert.match(styles, /html\.has-app-background \.modal-sheet[\s\S]*backdrop-filter:\s*blur\(var\(--glass-blur\)\)/, "dialogs must frost the background behind them");
 assert.match(styles, /html\.has-app-background \.toast\s*\{[^}]*background:\s*var\(--glass\)/s, "the hard-coded toast colour would stay an opaque slab over the app background");
+// 提示改浮在**顶部**（业主 2026-09-29：「不要把提示显示在界面组件排列中，改为单独顶部弹出 toast 提示」）。
+// 这条 CSS 就是"顶部弹出"这个要求的唯一出口：停在底部既会被输入框、底部导航和弹窗挤住，
+// 也会让排在那条状态行下面的控件随它的出现/消失跳一行 —— 正是不许再发生的事。
+// 每条都按行首锚定（`\n\.规则名\s*{`）切出那一条规则本身再断：不锚定的话，
+// `\.toast\.is-danger` 会从 app.css 的 `html.has-app-background .toast.is-danger` 那里也命中，
+// 把 components.css 里那条被改坏也照样绿 —— 实测过一次这种假绿。
+assert.match(styles, /\n\.toast-root\s*\{[^}]*\btop:\s*calc\(var\(--safe-top\)/s, "the toast dock must be pinned to the top of the viewport");
+assert.doesNotMatch(styles, /\n\.toast-root\s*\{[^}]*\bbottom:/s, "a bottom-docked toast is exactly the behaviour the owner asked to remove");
+// z-index 70 必须高过弹窗 50 与子弹窗 55：出错最常发生在弹窗里，被盖住就等于没报。
+assert.match(styles, /\n\.toast-root\s*\{[^}]*z-index:\s*70/s, "the toast must stay above the modal (50) and subsheet (55) layers");
+// 出错提示要和普通提示长得不一样，否则"这是错误"没有任何视觉出口；玻璃态也必须给它让路,
+// 半透明会把红色冲淡成灰, 读起来就是一条普通提示。
+assert.match(styles, /\n\.toast\.is-danger\s*\{[^}]*background:\s*#a4342f/s, "a danger toast needs its own solid fill");
+assert.match(styles, /\nhtml\.has-app-background \.toast\.is-danger\s*\{[^}]*background:\s*#a4342f/s, "the glass override must not wash the danger fill out");
 assert.doesNotMatch(chatSource, /has-chat-background/, "the chat module must not keep the retired chat-scoped switch");
 assert.match(chatSource, /root\s*=\s*document\.documentElement[\s\S]*root\.classList\.toggle\('has-app-background'/, "the glass switch must sit on <html>: dialogs and toasts are mounted on body, outside the shell");
 assert.match(chatSource, /LAST_CONVERSATION_KEY\s*=\s*'last-conversation'[\s\S]*rememberConversation[\s\S]*refreshAppBackground/, "the app background must be inherited from the most recently opened conversation");
@@ -803,12 +817,12 @@ assert.match(storeSource, /if \(role\.portraitMediaId\) used\[role\.portraitMedi
 assert.match(rolesSource, /class="avatar-editor portrait-editor"><button class="avatar-picker" type="button" data-choose-portrait/, "the portrait control must reuse the avatar control's markup");
 assert.match(rolesSource, /<span data-portrait-preview><span class="avatar">[\s\S]{0,200}?<\/span><\/span><span class="avatar-edit-badge">/, "the portrait thumbnail must sit in the same .avatar box as the avatar, so the square crop comes from CSS");
 assert.match(rolesSource, /name="behaviorGuidance"[\s\S]{0,900}?portraitBlock\(\)[\s\S]{0,600}?name="enabled"/, "定妆照控件必须排在行为指导之后、启用角色之前");
-// CVP 插件地址预填默认值（用户 2026-09-26：「用户只要修改 ip 就好了」）。
+// CHP 插件地址预填默认值（用户 2026-09-26：「用户只要修改 ip 就好了」）。
 // 默认值放在编辑器初值这一层，catalog.js 的服务商预设保持空串 —— 否则清空输入框会变成
 // 「恢复默认」，validateConnection 的「请填写服务地址」守卫也就永远触发不了。
-assert.match(modelEditorSource, /var CVP_DEFAULT_ENDPOINT = "http:\/\/[^"]+";/, "the drawing card's plugin address must be prefilled from a named default");
-assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(kind\)/, "the address must resolve as saved > provider preset > CVP default");
-assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(kind\);/, "switching provider must fall back to the CVP default too");
+assert.match(modelEditorSource, /var CHP_DEFAULT_ENDPOINT = "http:\/\/[^"]+";/, "the drawing card's plugin address must be prefilled from a named default");
+assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(kind\)/, "the address must resolve as saved > provider preset > CHP default");
+assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(kind\);/, "switching provider must fall back to the CHP default too");
 assert.match(storeSource, /var collections = \[[^\]]*"image-profiles"/, "the drawing-model collection must be whitelisted in store.js");
 assert.match(storeSource, /var collections = \[[^\]]*"media"/, "the host media index must be whitelisted in store.js");
 assert.match(appSource, /app\.data\.media\.migrate\(\)/, "旧图片必须在启动时搬进宿主文件库，否则它们永远进不了备份");
@@ -919,11 +933,32 @@ assert.match(llmSource, /if \(app\.services\.draw && app\.services\.drawPrompt\)
 assert.match(llmSource, /var drawing = null;[\s\S]{0,300}var appliedRole = app\.services\.context\.applyToRole\(/, "可用性判断必须排在 applyToRole 之前：工具纪律要并进行为指导那一段");
 assert.match(llmSource, /applyToRole\(role, participantRoles, userProfile,[\s\S]{0,80}behaviorGuidance\(\) : ""\)/, "能出图时必须把工具纪律作为第 4 个参数交给 applyToRole（并进 <behavior_guidance>），不许另起一段");
 assert.match(llmSource, /if \(drawing\) appliedRole\.systemPrompt \+= "\\n\\n" \+ app\.services\.drawPrompt\.instruction\(/, "绘图格式说明仍要 append 在 systemPrompt 最后：动作块写在正文之后，规则要贴着生成点");
-// 画幅偏好与参考图前缀（业主 2026-09-27）：9:16 竖幅、约 1MP（插件原生档 768×1344）；有定妆照时
-// 提示词开头钉一句身份约束。size 仍是枚举语义（插件按 size_domain 判，越界 unsupported_size），
-// 所以只允许在能力公布的尺寸里挑最接近的一张，不许硬写。
-assert.match(drawSource, /var PREFERRED_SIZE = \[768, 1344\];/, "画幅偏好必须是 9:16 竖幅、长边 1344（插件原生档 768×1344）");
-assert.match(drawSource, /var size = pickSize\(model, defaults\.size\), steps = Number\(defaults\.steps\);/, "画幅只能从能力公布的尺寸里挑，不能硬发一个插件不认的值");
+// 画幅（业主 2026-09-27，chp/2 定稿）：9:16 竖幅。chp/2 把画幅变成插件**手写的帧表**，`ratio` 是
+// 作者定的**标签、不由数字反推**，校验是成员检查 —— 客户端**只选不算**，所以按标签取那一档，
+// 发回去的就是表里的字面量。v1 那套"在能力公布的尺寸里挑最接近的一张"整套删掉。
+assert.doesNotMatch(drawSource, /PREFERRED_SIZE|size_domain|values\.size/, "v1 的画幅偏好常量与 size 语汇必须清干净：画幅只从帧表里取");
+assert.match(drawSource, /if \(String\(frame && frame\.ratio \|\| ""\) !== "9:16"\) continue;/, "画幅必须按帧表里的 ratio 标签取，不许按数字算比例、也不许搜方形");
+assert.match(drawSource, /function pickSize\(model\) \{\n\s+var frames = model && Array\.isArray\(model\.frames\) \? model\.frames : \[\];/, "pickSize 只读帧表，没有第二个回退来源");
+assert.match(drawSource, /var defaults = model\.defaults \|\| \{\}, resolution = pickSize\(model\);/, "画幅与参数都从插件自己报的帧表 / 默认值里取");
+// 请求体（chp/2）：category + resolution 字符串 + 两个扩展通道；地址一律从文档的 endpoints 里读。
+assert.match(drawSource, /category: model\.id,/, "请求体字段名必须是 category：v1 的 capability / task 都不再认");
+assert.match(drawSource, /resolution: resolution/, "画幅以字符串原样发回，不再发 size 数组");
+assert.doesNotMatch(drawSource, /capability:|size: \[size\[0\]/, "v1 的 capability / size 数组两个字段都不许留（请求体从这里往下就是 category）");
+assert.match(drawSource, /var body = \{\n\s+category: model\.id,/, "请求体第一个字段就是 category：没有 capability / task 这类旧名的位置");
+assert.doesNotMatch(drawSource, /defaults\.steps|unsupported_steps|ext_params/, "步数不在规范里，chataxi 一个扩展参数都不发（不发就是用插件的默认值）");
+assert.doesNotMatch(drawSource, /model\.ignores|ignores\.indexOf/, "chp/2 起没有 ignores，读取路径必须删掉");
+assert.match(drawSource, /url: services\.chpUrl\(profile, "jobs", "\/chp\/jobs"\)/, "提交地址必须从文档的 endpoints 里读");
+assert.match(drawSource, /services\.chpJobUrl\(profile, "progress", "\/chp\/jobs\/\{job_id\}\/progress", jobId\)/, "轮询地址从文档读，{job_id} 由客户端替换");
+assert.doesNotMatch(drawSource, /base \+ "\/chp"|api \+ "\/jobs/, "客户端不许自己拼 /chp 路径");
+assert.match(drawSource, /url: services\.chpAbsolute\(profile, output\.url\)/, "输出图的地址也按信息接口的同源根补全，只有一处实现");
+// 发现路径：文档是两张表，卡片 = render 场景，地址表另存下来给绘图用。
+assert.match(modelServicesSource, /var found = await chpInfo\(service\.endpoint, headers\), document = found\.document;/, "发现路径必须先拿到信息文档（地址解析在 chpInfo 里，只有一处实现）");
+assert.match(modelServicesSource, /\(document\.rules \|\| \[\]\)\.find\(function \(item\) \{ return item && String\(item\.category \|\| ""\) === "render"; \}\)/, "场景从 rules 里按 category 找，v1 的 capabilities 不再读");
+assert.match(modelServicesSource, /\(document\.abilities \|\| \[\]\)\.forEach\(function \(item\) \{/, "画幅与就绪状态从 abilities 里取");
+assert.doesNotMatch(modelServicesSource, /document\.capabilities|item\.values|ignores:/, "v1 的 capabilities / values / ignores 语汇一个都不许留");
+assert.match(modelServicesSource, /function chpUrl\(service, name, fallback\) \{/, "请求地址的解析必须有单点实现");
+assert.match(modelServicesSource, /service\.endpoints = document\.endpoints \|\| \{\};/, "地址表要存进卡片：绘图时从文档读，不许自己拼");
+assert.match(modelServicesSource, /service\.chpOrigin = chpOrigin\(found\.url\) \|\| chpBase\(service\.endpoint\);/, "同源根按真正应答的那个地址算，老卡片退到 chpBase");
 assert.match(drawSource, /if \(options\.referenceDataUrl && prefix\) prompt = prefix \+ "\\n" \+ prompt;/, "有参考图时提示词开头必须加上那句身份约束（只加在发给插件的那一份上）");
 assert.match(drawPromptSource, /var REFERENCE_PREFIX = "参考图1仅仅作为角色身份, 头部姿势必须图1不同, 身体姿势和构图必须按下面描述。";/, "参考图前缀必须原样保留业主给的那一句");
 // 2d) 加进行为指导里的两条纪律（业主 2026-09-27 第八~十轮）。**断言必须打在函数体上**：同一批词在
@@ -1103,7 +1138,7 @@ assert.match(chatSessionSource, /var drawing = Boolean\(drawTasks\[id\]\);/, "�
 assert.match(chatSessionSource, /if \(status === "drawing" && drawing\) continue;/, "正在跑的绘图不许被 recover() 判成中断");
 assert.match(chatSessionSource, /if \(!\(await store\.get\("conversations", id\)\)\) \{ await store\.releaseMedia\(message\.media\); return; \}/, "绘图可能比对话活得久：落库前必须确认对话还在，否则留下孤儿记录和没人释放的字节");
 // 用户按停止时插件那边的任务也得收 —— 否则本地已经放弃，显卡还会继续烧到画完。
-assert.match(drawSource, /if \(error && error\.cancelled\) \{[\s\S]{0,420}?jobs\/" \+ encodeURIComponent\(jobId\) \+ "\/cancel"/, "用户取消绘图时要尽力通知插件取消，不能让它把这一张画完");
+assert.match(drawSource, /if \(error && error\.cancelled\) \{[\s\S]{0,200}?url: cancelUrl/, "用户取消绘图时要尽力通知插件取消，不能让它把这一张画完");
 // 8) 「停止」不许有轮廓、「看图工具箱」的底要更透（业主 2026-09-27 第三 / 第四轮）。
 //    轮廓这条要在两处各扣一半，缺一处就会原样回来：
 //      * chat.js 不能再挂 ghost —— 那是唯一给它上边框的东西（.button 自己只有 1px 透明）；
@@ -1184,9 +1219,9 @@ assert.match(viewerSource, /gesture\.axis = \(Math\.abs\(dy\) > Math\.abs\(dx\) 
 assert.match(viewerSource, /var next = swipe < 0 \? at \+ 1 : at - 1;/, "手指往上划 = 下一张（画面往上卷，和相册一致）");
 assert.match(viewerSource, /if \(Math\.abs\(swipe\) < SWIPE_MIN\) \{ bound\(\); paint\(\); return; \}/, "滑动距离不到门槛时要回位，不能一抖就翻页");
 
-// 7) 定妆照必须真的作为参考图进 CVP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
-//    字段名 `image_base64` 来自插件规范（hamdraw 的 cvp-spec.md / capabilities.py），不是自拟的。
-assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CVP 请求体");
+// 7) 定妆照必须真的作为参考图进 CHP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
+//    字段名 `image_base64` 来自插件规范（hamdraw 的 chp-spec.md / capabilities.py），不是自拟的。
+assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CHP 请求体");
 assert.match(chatSessionSource, /if \(action\.selfPortrait && role\.portraitMediaId\)[\s\S]{0,600}draw\.portraitReference\(role\.portraitMediaId\)/, "selfPortrait 为真时要把角色的定妆照顶上去当参考图");
 assert.match(chatSessionSource, /catch \(error\) \{ return fail\(new Error\("定妆照没能读出来/, "定妆照读不出来必须就地报错：静默当成没有参考图会画成另一张脸");
 assert.equal(/portraitReference\(role\.portraitMediaId\)[\s\S]{0,240}catch \(_\)/.test(chatSessionSource), false, "定妆照的读取失败不许被 catch (_) 吞掉");

@@ -30,7 +30,7 @@
         await store.put("meta", "user-profile", next);
         if (profile.avatarMediaId && profile.avatarMediaId !== avatarMediaId) await store.releaseMedia([profile.avatarMediaId]).catch(function () {});
         profile = next; stagedBlob = null; stagedDataUrl = ""; removeAvatar = false; created = null; preview();
-        form.querySelector("#userProfileSaveStatus").textContent = "个人设定已保存"; ui.toast("个人设定已保存");
+        form.querySelector("#userProfileSaveStatus").textContent = ""; ui.toast("个人设定已保存");
       } catch (error) { if (created) await app.data.media.remove(created.id).catch(function () {}); throw error; }
       finally { button.disabled = false; }
     }));
