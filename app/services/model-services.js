@@ -666,15 +666,60 @@
     throw new Error("无法连接这个地址，请确认 ComfyUI 与插件正在运行");
   }
 
+  // chataxi 收的**两条**绘制场景，它们合成**一张**卡片（业主 2026-10-01）：
+  //   render   —— 给定一张图重新生成（文档里那条规则的签名是 txt-ref-2-img）。有定妆照时走它。
+  //   generate —— 纯文字生成（签名是 txt-2-img）。**没有定妆照时走它**。
+  // 合成一张卡片，是因为"走哪条"根本不是用户能预知或该去配的事：它取决于这一轮模型有没有
+  // 要求画角色自己、以及这个角色有没有定妆照。于是由 draw.js 在提交那一刻当场决定（见 sceneFor），
+  // 用户只配一次地址与密码，卡片上也就没有"用哪个场景"这一问。
+  // fast / inpaint / upscale 是画布工具，本轮不做（见 plans 的「明确不做」）。
+  var IMAGE_SCENES = ["render", "generate"];
+
+  // 收不收参考图，看的是文档里的**签名**（`txt-ref-2-img` 里那一段 `ref`），不在客户端另立一份
+  // 名单 —— 与 PoseGi 的 providers.js 是同一条判据。签名缺失时按"收"处理：宁可多发一张图
+  // （插件那边有 needs 会拦），也不要在没有证据的情况下悄悄把参考图丢掉，那画出来是另一张脸。
+  function chpTakesReference(rule) {
+    var signature = String(rule && (rule.signature || rule.rule) || "").trim();
+    if (!signature) return true;
+    return signature.split("-").indexOf("ref") >= 0;
+  }
+
+  // 一条场景：规则（rules 里的那一条）说客户端要准备什么，能力（abilities 里**第一条**播报它的
+  // 那条）说这次要挂哪些模型、能出哪些画幅（规范 §4.3 第 1 条）。两条场景各带自己那一份 ——
+  // 卡片只是容器，不把两边的数拼起来（拼起来的话就绪状态与画幅会来自两个能力，卡片自己就说不通了）。
+  function chpScene(rule, document) {
+    var category = String(rule.category || ""), ability = null, frames = [];
+    (document.abilities || []).forEach(function (item) {
+      if (ability) return;
+      var mine = [];
+      (item && item.frames || []).forEach(function (frame) {
+        if (String(frame && frame.category || "") !== category) return;
+        var resolutions = (frame.resolution || []).map(String).filter(function (value) { return value.trim(); });
+        if (resolutions.length) mine.push({ ratio: String(frame.ratio || ""), resolution: resolutions });
+      });
+      if (mine.length) { frames = mine; ability = item; }
+    });
+    var files = (ability && ability.files) || {}, missing = ((ability && ability.missing) || []).map(String);
+    return {
+      category: category,
+      rule: String(rule.rule || ""),
+      takesReference: chpTakesReference(rule),
+      ready: Boolean(ability) && ability.ready !== false,
+      missing: missing,
+      // 模型挂载点：每个模型角色一个条目，这就是"对内可替换"的接口（规范 §4.2）。
+      roles: Object.keys(files).map(function (role) { return { role: role, name: String(files[role]), ready: missing.indexOf(role) < 0 }; }),
+      needs: rule.needs || {},
+      defaults: rule.defaults || {},
+      promptLanguage: (rule.prompt || {}).language || "",
+      typicalSeconds: Number(rule.typical_seconds || 0),
+      frames: frames
+    };
+  }
+
   // 绘图（CHP，spec chp/2）：一次信息接口就够 —— 它公开、不带密码也会返回（密码对不对由
   // auth.authorized 说），而且同时给出地址表、场景表（rules）与能力表（abilities）。
-  // chataxi 只做一件事：把 "render" 这个场景映射成一张单模型卡片。
-  // 只收 render：它才是"重画成品图"，与"在对话里画一张照片"这件事对得上；
-  // fast / inpaint / upscale 是画布工具，本轮不做（见 plans 的「明确不做」）。
-  //
-  // 卡片 = 场景（不是 checkpoint 文件名），所以卡片名由 chataxi 自己给 —— chp/2 的文档里
-  // 不再有 label，插件换个说法也不该改掉用户卡片上的字。画幅取该场景的**帧表**：abilities
-  // 有序、frames 有序，命中 render 的第一条能力就是回答它的那条（规范 §4.3 第 1 条）。
+  // 卡片名由 chataxi 自己给 —— 插件换个说法不该改掉用户卡片上的字（chp/2 起文档里其实有
+  // label，但那一栏是给**场景**用的，而这张卡片装的是两条场景）。
   //
   // 不保存原始文档：卡片里已经带上帧表、默认值与模型挂载点，draw.js 从 modelDefinition("image", …)
   // 就能拿到全部要用的东西；只有地址表要另存 —— 请求地址按规范 §1.3 从文档里读，不许自己拼。
@@ -685,38 +730,33 @@
     var found = await chpInfo(service.endpoint, headers), document = found.document;
     var auth = document.auth || {};
     if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码");
-    var rule = (document.rules || []).find(function (item) { return item && String(item.category || "") === "render"; });
-    if (!rule) throw new Error("插件没有提供成品图（category: render）场景，请升级插件");
-    var ability = null, frames = [];
-    (document.abilities || []).forEach(function (item) {
-      if (ability) return;
-      var mine = [];
-      (item && item.frames || []).forEach(function (frame) {
-        if (String(frame && frame.category || "") !== "render") return;
-        var resolutions = (frame.resolution || []).map(String).filter(function (value) { return value.trim(); });
-        if (resolutions.length) mine.push({ ratio: String(frame.ratio || ""), resolution: resolutions });
-      });
-      if (mine.length) { frames = mine; ability = item; }
+    var rules = document.rules || [], scenes = {};
+    IMAGE_SCENES.forEach(function (category) {
+      var rule = rules.find(function (item) { return item && String(item.category || "") === category; });
+      if (rule) scenes[category] = chpScene(rule, document);
     });
-    if (!frames.length) throw new Error("插件的成品图场景没有公布画幅，请升级插件");
-    var files = ability && ability.files || {}, missing = ((ability && ability.missing) || []).map(String);
+    // 主场景 = render（按图重画那条）。卡片 id 就是它的 category，旧卡片存的也是 "render"，
+    // 所以老卡片不用重配；插件还没分出 generate 那一类时，这一条就是全部（见 draw.sceneFor 的回退）。
+    var primary = scenes.render || scenes.generate;
+    if (!primary) throw new Error("插件没有提供成品图场景（render / generate），请升级插件");
+    if (!primary.frames.length) throw new Error("插件的成品图场景没有公布画幅，请升级插件");
     service.plugin = document.plugin || {};
     service.endpoints = document.endpoints || {};
     service.chpOrigin = chpOrigin(found.url) || chpBase(service.endpoint);
-    var models = [{
-      id: "render",
-      name: app.i18n.pick("重画成品图", "Redraw a finished picture"),
-      ready: ability.ready !== false,
+    // 就绪状态与缺件在卡片上是**两条场景的并集**：两条路共用这一次配置，任何一条缺模型都得
+    // 在这里说明白 —— 等用户真去画一张没有定妆照的图时才报"模型没配好"就太晚了。
+    var missing = [];
+    Object.keys(scenes).forEach(function (name) {
+      scenes[name].missing.forEach(function (role) { if (missing.indexOf(role) < 0) missing.push(role); });
+    });
+    var models = [Object.assign({}, primary, {
+      id: primary.category,
+      name: app.i18n.pick("绘图", "Drawing"),
+      ready: Object.keys(scenes).every(function (name) { return scenes[name].ready; }),
       missing: missing,
-      // 模型挂载点：每个模型角色一个条目，这就是"对内可替换"的接口（规范 §4.2）。
-      roles: Object.keys(files).map(function (role) { return { role: role, name: String(files[role]), ready: missing.indexOf(role) < 0 }; }),
-      needs: rule.needs || {},
-      defaults: rule.defaults || {},
-      promptLanguage: (rule.prompt || {}).language || "",
-      typicalSeconds: Number(rule.typical_seconds || 0),
-      frames: frames,
+      scenes: scenes,
       capabilitySource: "capability-directory"
-    }];
+    })];
     return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
   }
 

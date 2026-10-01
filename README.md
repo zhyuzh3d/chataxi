@@ -7,7 +7,7 @@ Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 > 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://haminn.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.50`(versionCode `129`,见 `haminn.json`)
+- 当前源码版本：`0.7.53`(versionCode `132`,见 `haminn.json`)
 - 形态：HaminnApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点
@@ -19,6 +19,7 @@ Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 - **可控的上下文压缩**：对话历史严格是「压缩概要 + 最近 k 条」。k 不逐对话配置——每轮从最新一条往前累加字数,刚超过设置里的「压缩保留字数」时的条数就是 k(最少 2 条),保证最新的问答始终以原文参与上下文,主持人角色在后台压缩更早的消息,不等待,不打断本轮回复。
 - **丰富的角色与场景**：27 个角色模板(全部 / 男性 / 女性 / 其他四类),人物卡展示头像,名称,职业,年龄和性别,每个对话可设「场景设定」,支持手工填写或按闲聊,思辨,学习,工作,倾诉五种模式自动生成开场白。角色有独立字段「身份性格」(`systemPrompt`)与「行为指导」(`behaviorGuidance`),互不合并。
 - **本地优先与隐私**：API Key,对话,录音,头像都留在本机 happ 的隔离数据区,密钥永远遮罩显示,只在用户明确保存后写入。外部网络请求由用户逐 Origin 授权,公网必须 HTTPS,HTTP 仅用于可信局域网。
+- **对话内生图(CHP)**：角色可以在回复里写一个绘图动作块,由 ComfyUI 的 CHP 插件出图,成图作为单独的图片消息留在对话里。模型卡只填一次插件地址与密码,**走哪条绘制场景由有没有定妆照决定**:角色有定妆照就按图重画,没有就从零画一张,不需要在卡片上选。画幅与参考强度都取插件自报的帧表与默认值,客户端只选不算;接口地址一律从插件的信息文档里读,不许自己拼。
 - **安全渲染**：默认不执行模型返回的代码,HTML,工具或链接,模型文本按纯文本安全渲染,图片只接受明确的数据 URL 或 HTTPS URL。
 - **整包备份**：系统页提供「备份软件和数据」,调用宿主 `app.backup`,把当前 happ 连同全部记录,附件和本地代码整包导出。
 - **中英双语**：界面文案随系统语言切换,新增文案必须同步补齐英文。

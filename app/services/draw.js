@@ -2,8 +2,9 @@
   "use strict";
   // 绘图客户端 —— 只实现 CHP 这一种合同（CHP 插件那套 `chp/2`）。
   // 协议细节与 hamdraw/app/services/providers.js 的 chpGenerate 同源：提交 → 轮询 → 取图，
-  // 这里的差别只有两处：chataxi 只要一张图、一个参考图，所以把参数收敛到插件自报的默认值；
-  // 而且画幅锁定插件帧表里标着 9:16 的那一档（见 pickSize）。
+  // 这里的差别只有三处：chataxi 只要一张图、一个参考图，所以把参数收敛到插件自报的默认值；
+  // 画幅锁定插件帧表里标着 9:16 的那一档（见 pickSize）；而且**一次提交走两条场景中的哪一条
+  // 由手上有没有参考图决定**（见 sceneFor）—— 有定妆照走 render、没有走 generate。
   //
   // 三条硬规矩（对应 plans/chataxi-v0.7.26-… 的三条不变量）：
   //   I1 只认调用方给的**私有 task**。app/platform/network.js 的 request() / requestByteStream()
@@ -82,6 +83,9 @@
     if (code === "unsupported_size") return new Error("插件不接受这张卡片的画幅，请在模型页重新获取一次目录");
     if (code === "bad_image") return new Error("交给绘图模型的参考图不是合法的 PNG / JPEG");
     if (code === "bad_mask") return new Error("这个绘制场景需要蒙版，chataxi 目前不提供蒙版");
+    // 定妆照是竖构图、画幅也是 9:16 时不会走到这里；真走到就是这张定妆照的宽高比差得太远，
+    // 硬缩过去会把人压变形，而**变形在成图上完全看不出来** —— 所以要在这里说清是照片的锅。
+    if (code === "stretched_reference") return new Error("这张定妆照的宽高比和画幅差得太远，按画幅缩放会把人压变形；请换一张竖构图的定妆照");
     if (code === "invalid_workflow") return new Error("插件的工作流执行失败（多半是节点或模型缺失）" + (message ? "：" + message : ""));
     if (code === "busy") return new Error("绘图插件队列已满，稍后再试");
     if (code === "not_found") return new Error("绘图任务在插件上已经不存在了（服务端可能重启过）");
@@ -135,18 +139,52 @@
     return dataUrl ? downscale(dataUrl, REFERENCE_MAX_EDGE) : "";
   }
 
-  // 取插件帧表里 `ratio` 标着 9:16 的那一档 —— 规范要求把菜单里挑中的那个**原样发回来**，
-  // 所以返回的是表里的 `"768x1344"` 字面量，不是一对数字：客户端不重新格式化它，服务端也不接受
-  // 它算出来的东西（校验是成员检查）。插件换了更近的一档，这里自动跟着换，chataxi 不改代码。
-  function pickSize(model) {
-    var frames = model && Array.isArray(model.frames) ? model.frames : [];
-    for (var index = 0; index < frames.length; index += 1) {
-      var frame = frames[index];
-      if (String(frame && frame.ratio || "") !== "9:16") continue;
-      var resolution = String((frame.resolution || [])[0] || "").trim();
-      if (resolution) return resolution;
-    }
-    return null;
+  // 插件为这个场景公布的、**比例标签就是 9:16** 的分辨率，按帧表顺序去重。
+  //
+  // 读的是 `ratio` 这个**标签**，不是把两个数字相除：`768 × 1344` 的真实比是 4:7，
+  // 那也叫 9:16（作者定的类目名，和相机的画幅档位一个道理），所以按数字反推必错。
+  // 非 9:16 的一律跳过 —— chataxi 是竖屏构图，拿一条横的回去只会把参考图压变形，
+  // 而插件的 `stretched_reference` 拦的正是这件事。
+  function sizes(model) {
+    var frames = model && Array.isArray(model.frames) ? model.frames : [], out = [];
+    frames.forEach(function (frame) {
+      if (String(frame && frame.ratio || "") !== "9:16") return;
+      (frame.resolution || []).forEach(function (value) {
+        var text = String(value || "").trim();
+        if (text && out.indexOf(text) < 0) out.push(text);
+      });
+    });
+    return out;
+  }
+
+  // 这一次真正要发出去的那条画幅。
+  //
+  // 卡上选中的那条优先（**那是用户的选择**），但它必须还在插件**当前**公布的清单里 ——
+  // 插件换过帧表之后，卡上存的旧值发出去只会换来一个 `unsupported_size`，错的却像是
+  // chataxi 自己算的。所以不在清单里就退回第一条（2026-09-30 起 9:16 一档有多条，
+  // 第一条 `768x1344` 仍是默认）。
+  //
+  // 无论走哪条路，返回的都是表里那个**字面量**，不是一对数字：客户端不重新格式化它，
+  // 服务端也不接受它算出来的东西（校验是成员检查，见 chp/2 的 frames 一节）。
+  function pickSize(model, preferred) {
+    var list = sizes(model);
+    if (!list.length) return null;
+    var wanted = String(preferred || "").trim();
+    return list.indexOf(wanted) >= 0 ? wanted : list[0];
+  }
+
+  // 这一次走哪条场景 —— 由**手上有没有参考图**决定（业主 2026-10-01），不由卡片决定：
+  //   有定妆照 ⇒ render（txt-ref-2-img：给定一张图重新生成）
+  //   没有     ⇒ generate（txt-2-img：纯文字生成）
+  // 插件还没分出 generate 那一类时退回 render —— 那是它在 chp/2 之前就明确支持的那条路
+  // （不带参考图就是纯文生图）。**有参考图时绝不退回 generate**：那条规则不收图，发过去
+  // 只会换来一个 bad_image，而错看起来像是"这张定妆照有问题"。
+  // 卡片上根本没有 scenes（旧版本存的目录）时返回 null，调用方拿卡片自己当场景 —— 与从前一致。
+  function sceneFor(model, hasReference) {
+    var scenes = model && model.scenes;
+    if (!scenes) return null;
+    if (hasReference) return scenes.render || null;
+    return scenes.generate || scenes.render || null;
   }
 
   function readBytes(result, task) {
@@ -170,31 +208,41 @@
     if (!services.computedEndpoint("image", profile)) throw new Error("绘图模型没有地址，请在模型页补上插件地址");
     var prompt = String(options.prompt || "").trim();
     if (!prompt) throw new Error("这一轮没有给出绘图提示词");
+    var reference = String(options.referenceDataUrl || "");
     // 有参考图时在开头钉一句身份约束（原文在 draw-prompt.js 的 REFERENCE_PREFIX）。
     // 只加在**发给插件的那一份**上：消息里存的、正文回显的仍是模型自己写的提示词。
     var prefix = app.services.drawPrompt && app.services.drawPrompt.referencePrefix;
-    if (options.referenceDataUrl && prefix) prompt = prefix + "\n" + prompt;
+    if (reference && prefix) prompt = prefix + "\n" + prompt;
     var headers = services.authHeaders("image", profile);
     Object.assign(headers, app.utils.parseHeaders(profile.customHeaders));
 
-    var defaults = model.defaults || {}, resolution = pickSize(model);
+    // 走哪条场景由**手上有没有参考图**定（见 sceneFor）。category、画幅表、默认值三样都跟着
+    // 这条场景走：卡片只是容器，不把两条场景的数拼起来。
+    var scene = sceneFor(model, Boolean(reference)) || model;
+    if (reference && scene.takesReference === false) throw new Error("插件公布的“" + String(scene.category || scene.id || "") + "”场景不接受参考图，请升级 CHP 插件的场景表");
+    var defaults = scene.defaults || {}, resolution = pickSize(scene, profile.resolution);
     if (!resolution) throw new Error("还没有读到插件的默认画幅，请先在模型页测试一次连接");
-    // 画幅是插件帧表里标着 9:16 的那一档，原样发回去；参考强度照插件自报的默认值发，
-    // 都不开放给用户配置（画幅在卡片上不显示）。
+    // 画幅是插件帧表里标着 9:16 的那一档，**卡上选中的那条优先**（见 pickSize），原样发回去；
+    // 参考强度照这条场景自报的默认值发，不开放给用户配置（画幅在卡片上显示、改在模型页改）。
     // **步数一个字都不发**：它不在规范里（那是插件自己的 step 扩展键），而"不发"正是
     // "用你的默认值"这件事在 chp/2 里的写法 —— 在这里再抄一份数字，就成了第二个会和插件
     // 对不上的枚举。参考强度是连续量，越界会被夹到边界，所以本地先夹一次。
     var body = {
-      category: model.id,
+      category: String(scene.category || model.id),
       prompt: prompt,
       seed: Number.isFinite(options.seed) ? Number(options.seed) : Math.floor(Math.random() * 9007199254740991),
       resolution: resolution
     };
-    if (Number.isFinite(Number(defaults.ref_strength))) body.ref_strength = Math.max(0.05, Math.min(0.95, Number(defaults.ref_strength)));
-    if (options.referenceDataUrl) body.image_base64 = options.referenceDataUrl;
+    // 参考强度只跟参考图一起发：它是"要多像这张参考图"，没有图的时候它没有意义。
+    // generate 那条场景的 defaults 本来就是空的，于是它一个字节都不发。
+    if (reference && Number.isFinite(Number(defaults.ref_strength))) body.ref_strength = Math.max(0.05, Math.min(0.95, Number(defaults.ref_strength)));
+    if (reference) body.image_base64 = reference;
 
     var report = function (text) { if (options.onProgress) options.onProgress(text); };
-    var deadline = Date.now() + Math.min(TIMEOUT_CEILING, Math.max(60000, Number(model.typicalSeconds || 45) * 4000));
+    // 等多久由**这一次那条场景**自己报的典型耗时算：两条场景差得很远（按图重画那条最慢），
+    // 拿卡片上那一份去等会在快的那条上白白多等一倍，在慢的那条上又可能不够。
+    var budget = Math.min(TIMEOUT_CEILING, Math.max(60000, Number(scene.typicalSeconds || model.typicalSeconds || 45) * 4000));
+    var deadline = Date.now() + budget;
     report("正在把绘图任务交给插件…");
     var jobId = "";
     try {
@@ -243,7 +291,7 @@
     if (state !== "completed") {
       // 超时也要尽力取消，别把插件队列占着。
       app.platform.network.requestJson({ url: cancelUrl, method: "POST", headers: headers, timeoutMs: 15000 }).catch(function () {});
-      throw new Error("等插件出图超过 " + Math.round((Math.min(TIMEOUT_CEILING, Math.max(60000, Number(model.typicalSeconds || 45) * 4000))) / 60000) + " 分钟仍未完成，任务可能还在插件队列里");
+      throw new Error("等插件出图超过 " + Math.round(budget / 60000) + " 分钟仍未完成，任务可能还在插件队列里");
     }
 
     report("正在取回图片…");
@@ -268,7 +316,9 @@
     resolveCard: resolveCard,
     refreshCatalogs: refreshCatalogs,
     generate: generate,
+    sceneFor: sceneFor,
     pickSize: pickSize,
+    sizes: sizes,
     portraitReference: portraitReference,
     downscale: downscale,
     newTask: newTask,

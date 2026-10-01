@@ -1060,7 +1060,11 @@
     "删除后对话里的绘图动作会失效，直到重新配置一张可用的绘图模型卡片。": "After deletion, drawing actions in chats stop working until you configure another usable drawing model card.",
     "卡片没有已保存的绘图场景，请先编辑并获取目录": "This card has no saved drawing scenario; edit it and fetch the directory first",
     "只改 IP 即可, 例如 http://192.168.1.50:8189": "Just change the IP, e.g. http://192.168.1.50:8189",
-    "这里只选择用插件里的哪个绘图场景；画幅锁定插件帧表里标着 9:16 的那一档, 参考强度沿用插件自报的默认值, 都不需要配置。": "Only choose which drawing scenario to use; the canvas is the frame the plugin's table labels 9:16, and reference strength comes from the plugin's default — nothing here needs configuring.",
+    "地址与密码只配这一处：有定妆照的角色按图重画, 没有就从零画一张, 走哪条不用你选。画幅锁定 9:16 竖幅, 下面挑的正是插件公布的那几档, 参考强度沿用插件自报的默认值。": "The address and password live here and only here: a role with a character sheet is redrawn from that picture, a role without one is drawn from scratch, and you never pick which. The canvas is locked to 9:16 portrait, the list below offers exactly the frames the plugin publishes, and reference strength comes from the plugin's default.",
+    // 画幅那一栏（业主 2026-09-30：绘图卡上要能挑插件公布的低档，出图更快）
+    "画幅": "Canvas",
+    "锁定 9:16 竖幅;选项来自插件为这个场景公布的帧表,获取模型列表后可选": "Locked to 9:16 portrait; the options are the frames the plugin publishes for this scenario, available once the model list is fetched",
+    "先获取模型列表": "Fetch the model list first",
     "插件的“": "The plugin's “",
     "”场景还没有配好模型，请在 ComfyUI 的 CHP 插件配置节点里设置": " scenario has no model configured yet; set it in the CHP plugin's config node in ComfyUI",
     "请填写 CHP 插件的地址（ComfyUI 的地址，插件装在里面）": "Enter the CHP plugin address (the ComfyUI address with the plugin installed)",
@@ -1151,6 +1155,9 @@
     // 设置页的清空说明与全屏看图
     "删除第三方对话、朗读、语音输入与绘图服务及密钥；保留 Android 系统服务": "Delete third-party chat, speech, speech input and drawing services plus their keys; Android system services are kept",
     "删除角色档案、模型选择、发音设置和角色头像、定妆照": "Delete role profiles, model choices, voice settings, role avatars and portraits",
+    // 绘图（0.7.52）：插件把绘制分成「按图重画」与「从零画一张」两条场景，走哪条由定妆照决定。
+    "插件没有提供成品图场景（render / generate），请升级插件": "The plugin offers no finished-picture scenario (render / generate); update the plugin",
+    "这张定妆照的宽高比和画幅差得太远，按画幅缩放会把人压变形；请换一张竖构图的定妆照": "This portrait's aspect ratio is too far from the canvas; scaling it would squash the person. Use a portrait-oriented picture instead",
   };
 
   // 带插值的整句：先做正则整体匹配，再按 $1..$9 生成英文。
@@ -1241,6 +1248,7 @@
     // ── 补充：绘图动作（0.7.26） ───────────────────────────────
     // 这几条都是「常量前缀 + 变量」拼出来的整句，字典键只覆盖常量那截，整句必须靠规则。
     [/^插件的“(.+)”场景还没有配好模型，请在 ComfyUI 的 CHP 插件配置节点里设置$/, "The plugin's “$1” scenario has no model configured yet; set it in the CHP plugin's config node in ComfyUI"],
+    [/^插件公布的“(.+)”场景不接受参考图，请升级 CHP 插件的场景表$/, "The scenario “$1” published by the plugin does not take a reference image; update the CHP plugin's scenario table"],
     [/^绘图失败：([\s\S]+)$/, "Drawing failed: $1"],
     [/^定妆照没能读出来，请重新设置一张再试：([\s\S]+)$/, "The portrait could not be read; set a new one and try again: $1"],
     [/^前面还有 (\d+) 个绘图任务…$/, "$1 drawing tasks ahead…"],

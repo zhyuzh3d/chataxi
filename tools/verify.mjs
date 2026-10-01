@@ -131,6 +131,12 @@ assert.doesNotMatch(modelEditorSource, /model-toggle/, "the active model editor 
 assert.match(modelEditorSource, /catalogVoices[\s\S]*saveModelDirectory/, "provider voice names and model directories must be cached outside the single-model card");
 assert.match(modelEditorSource, /data-paste-key[\s\S]*data-paste-headers[\s\S]*data-toggle-secret/, "saved credentials must stay editable, accept explicit clipboard paste and expose a visibility toggle");
 assert.doesNotMatch(modelEditorSource, /data-copy-key|data-copy-secret|data-copy-headers/, "credential controls must not copy secrets back to the clipboard");
+// 绘图卡片上的画幅选项也来自插件（业主 2026-09-30：「界面下拉菜单数据应该都是来自CHP的数据，
+// 不能写死在前端」）。取用点只有 draw.js 的 sizes 一处 —— 编辑器自己不拼清单，否则插件加一档
+// 界面里还是那几项，而用户选出来的那个值发出去要过服务端的成员检查（表外一律 400）。
+assert.match(modelEditorSource, /var resolutionPicker = kind === "image"/, "画幅那一栏只该出现在绘图卡片上");
+assert.match(modelEditorSource, /function resolutionItems\(\) \{[\s\S]{0,260}?draw\.sizes\(/, "画幅选项要取自 draw.sizes（插件公布的帧表），不许在编辑器里另拼一份");
+assert.doesNotMatch(modelEditorSource, /"768x1344"|'768x1344'/, "画幅清单不许写死在界面里");
 const uiComponentSource = fs.readFileSync(path.join(root, "app/components/ui.js"), "utf8");
 assert.match(uiComponentSource, /url:\s*picked\.url[\s\S]*release:\s*function[\s\S]*files\.delete/, "Haminn image picking must pass the current object URL directly to the cropper and defer temporary-file cleanup");
 assert.doesNotMatch(uiComponentSource, /fetch\(picked\.url/, "Haminn object URLs must not be fetched as ordinary network resources");
@@ -937,29 +943,52 @@ assert.match(llmSource, /if \(drawing\) appliedRole\.systemPrompt \+= "\\n\\n" \
 // 作者定的**标签、不由数字反推**，校验是成员检查 —— 客户端**只选不算**，所以按标签取那一档，
 // 发回去的就是表里的字面量。v1 那套"在能力公布的尺寸里挑最接近的一张"整套删掉。
 assert.doesNotMatch(drawSource, /PREFERRED_SIZE|size_domain|values\.size/, "v1 的画幅偏好常量与 size 语汇必须清干净：画幅只从帧表里取");
-assert.match(drawSource, /if \(String\(frame && frame\.ratio \|\| ""\) !== "9:16"\) continue;/, "画幅必须按帧表里的 ratio 标签取，不许按数字算比例、也不许搜方形");
-assert.match(drawSource, /function pickSize\(model\) \{\n\s+var frames = model && Array\.isArray\(model\.frames\) \? model\.frames : \[\];/, "pickSize 只读帧表，没有第二个回退来源");
-assert.match(drawSource, /var defaults = model\.defaults \|\| \{\}, resolution = pickSize\(model\);/, "画幅与参数都从插件自己报的帧表 / 默认值里取");
+assert.match(drawSource, /if \(String\(frame && frame\.ratio \|\| ""\) !== "9:16"\) return;/, "画幅必须按帧表里的 ratio 标签取，不许按数字算比例、也不许搜方形");
+// 清单只有一处实现（sizes），pickSize 不再自己扫帧表 —— 业主 2026-09-30 要在模型卡上挑画幅，
+// 挑的那一栏与发送那一栏必须是**同一份清单**，否则界面里能选的东西发出去会被 400 拒。
+assert.match(drawSource, /function sizes\(model\) \{[\s\S]{0,420}?frame\.ratio \|\| ""\) !== "9:16"/, "sizes 按 ratio 标签挑 9:16 那一档，去重后按插件表的顺序给出");
+assert.match(drawSource, /function pickSize\(model, preferred\) \{\n\s+var list = sizes\(model\);/, "pickSize 只从 sizes 来，没有第二个回退来源");
+assert.match(drawSource, /return list\.indexOf\(wanted\) >= 0 \? wanted : list\[0\];/, "卡上选中的那条必须在插件**当前**清单里才用它，否则退回第一条（默认画幅）");
+// 走哪条场景（业主 2026-10-01）：手上有没有参考图说了算 —— 有定妆照走 render（按图重画），
+// 没有走 generate（从零画一张）。卡片只是容器，category / 画幅表 / 默认值三样都跟着那条场景走；
+// **有参考图时绝不退回 generate**（那条规则不收图，发过去只会换来一个 bad_image）。
+assert.match(drawSource, /function sceneFor\(model, hasReference\) \{[\s\S]{0,260}?if \(hasReference\) return scenes\.render \|\| null;/, "有参考图必须走 render：不许退回那条不收图的场景");
+assert.match(drawSource, /function sceneFor\(model, hasReference\) \{[\s\S]{0,420}?return scenes\.generate \|\| scenes\.render \|\| null;/, "没有参考图时优先走 generate，插件还没分出它时才退回 render");
+assert.match(drawSource, /if \(reference && scene\.takesReference === false\) throw new Error\(/, "场景说不收参考图却又带着一张时必须当场报错：发过去只会得到一个 bad_image");
+assert.match(drawSource, /var scene = sceneFor\(model, Boolean\(reference\)\) \|\| model;/, "这一次的场景必须是算出来的，卡片不能替它决定");
+assert.match(drawSource, /var defaults = scene\.defaults \|\| \{\}, resolution = pickSize\(scene, profile\.resolution\);/, "画幅与参数都从**这一次那条场景**自己报的帧表 / 默认值里取，而且卡上选中的那条优先");
+// 等待预算同理：两条场景的典型耗时差得远（按图重画那条最慢），拿卡片上那一份去等会在快的
+// 那条上白白多等一倍、在慢的那条上又可能不够；而它**只有一处实现**（超时文案读的是同一个数）。
+assert.match(drawSource, /var budget = Math\.min\(TIMEOUT_CEILING, Math\.max\(60000, Number\(scene\.typicalSeconds \|\| model\.typicalSeconds \|\| 45\) \* 4000\)\);/, "等待预算要按这一次那条场景的典型耗时算");
+assert.doesNotMatch(drawSource, /Number\(model\.typicalSeconds/, "不许再从卡片上那份典型耗时算预算");
 // 请求体（chp/2）：category + resolution 字符串 + 两个扩展通道；地址一律从文档的 endpoints 里读。
-assert.match(drawSource, /category: model\.id,/, "请求体字段名必须是 category：v1 的 capability / task 都不再认");
+assert.match(drawSource, /category: String\(scene\.category \|\| model\.id\),/, "请求体字段名必须是 category：v1 的 capability / task 都不再认");
 assert.match(drawSource, /resolution: resolution/, "画幅以字符串原样发回，不再发 size 数组");
 assert.doesNotMatch(drawSource, /capability:|size: \[size\[0\]/, "v1 的 capability / size 数组两个字段都不许留（请求体从这里往下就是 category）");
-assert.match(drawSource, /var body = \{\n\s+category: model\.id,/, "请求体第一个字段就是 category：没有 capability / task 这类旧名的位置");
+assert.match(drawSource, /var body = \{\n\s+category: String\(scene\.category \|\| model\.id\),/, "请求体第一个字段就是 category：没有 capability / task 这类旧名的位置");
+// 参考强度只跟参考图一起发（它是「要多像这张参考图」，没有图时没有意义），而且取的是**这条场景**
+// 自己那份默认值 —— generate 的 defaults 本来就是空的，于是它一个字节都不发。
+assert.match(drawSource, /if \(reference && Number\.isFinite\(Number\(defaults\.ref_strength\)\)\) body\.ref_strength =/, "参考强度必须跟参考图绑在一起发，而且取自这一次那条场景");
+assert.match(drawSource, /if \(reference\) body\.image_base64 = reference;/, "参考图只在真有时才挂上去：不许凭空造一张，也不许把空串发出去");
 assert.doesNotMatch(drawSource, /defaults\.steps|unsupported_steps|ext_params/, "步数不在规范里，chataxi 一个扩展参数都不发（不发就是用插件的默认值）");
 assert.doesNotMatch(drawSource, /model\.ignores|ignores\.indexOf/, "chp/2 起没有 ignores，读取路径必须删掉");
 assert.match(drawSource, /url: services\.chpUrl\(profile, "jobs", "\/chp\/jobs"\)/, "提交地址必须从文档的 endpoints 里读");
 assert.match(drawSource, /services\.chpJobUrl\(profile, "progress", "\/chp\/jobs\/\{job_id\}\/progress", jobId\)/, "轮询地址从文档读，{job_id} 由客户端替换");
 assert.doesNotMatch(drawSource, /base \+ "\/chp"|api \+ "\/jobs/, "客户端不许自己拼 /chp 路径");
 assert.match(drawSource, /url: services\.chpAbsolute\(profile, output\.url\)/, "输出图的地址也按信息接口的同源根补全，只有一处实现");
-// 发现路径：文档是两张表，卡片 = render 场景，地址表另存下来给绘图用。
+// 发现路径：文档是两张表，卡片带上 render / generate **两条**场景，地址表另存下来给绘图用。
 assert.match(modelServicesSource, /var found = await chpInfo\(service\.endpoint, headers\), document = found\.document;/, "发现路径必须先拿到信息文档（地址解析在 chpInfo 里，只有一处实现）");
-assert.match(modelServicesSource, /\(document\.rules \|\| \[\]\)\.find\(function \(item\) \{ return item && String\(item\.category \|\| ""\) === "render"; \}\)/, "场景从 rules 里按 category 找，v1 的 capabilities 不再读");
+assert.match(modelServicesSource, /var rules = document\.rules \|\| \[\], scenes = \{\};/, "场景从 rules 里找，v1 的 capabilities 不再读");
+assert.match(modelServicesSource, /rules\.find\(function \(item\) \{ return item && String\(item\.category \|\| ""\) === category; \}\)/, "两条场景都按 category 在 rules 里各自找那一条");
+assert.match(modelServicesSource, /var IMAGE_SCENES = \["render", "generate"\];/, "chataxi 收的就是这两条场景：按图重画与从零画一张");
+assert.match(modelServicesSource, /scenes: scenes,/, "两条场景必须一起进卡片：走哪条是出图那一刻才知道的事，卡片上不许只留一条");
 assert.match(modelServicesSource, /\(document\.abilities \|\| \[\]\)\.forEach\(function \(item\) \{/, "画幅与就绪状态从 abilities 里取");
+assert.match(modelServicesSource, /function chpTakesReference\(rule\) \{[\s\S]{0,300}?signature\.split\("-"\)\.indexOf\("ref"\) >= 0/, "收不收参考图必须从文档里的**签名**派生，不许在客户端另立一份名单");
 assert.doesNotMatch(modelServicesSource, /document\.capabilities|item\.values|ignores:/, "v1 的 capabilities / values / ignores 语汇一个都不许留");
 assert.match(modelServicesSource, /function chpUrl\(service, name, fallback\) \{/, "请求地址的解析必须有单点实现");
 assert.match(modelServicesSource, /service\.endpoints = document\.endpoints \|\| \{\};/, "地址表要存进卡片：绘图时从文档读，不许自己拼");
 assert.match(modelServicesSource, /service\.chpOrigin = chpOrigin\(found\.url\) \|\| chpBase\(service\.endpoint\);/, "同源根按真正应答的那个地址算，老卡片退到 chpBase");
-assert.match(drawSource, /if \(options\.referenceDataUrl && prefix\) prompt = prefix \+ "\\n" \+ prompt;/, "有参考图时提示词开头必须加上那句身份约束（只加在发给插件的那一份上）");
+assert.match(drawSource, /if \(reference && prefix\) prompt = prefix \+ "\\n" \+ prompt;/, "有参考图时提示词开头必须加上那句身份约束（只加在发给插件的那一份上）");
 assert.match(drawPromptSource, /var REFERENCE_PREFIX = "参考图1仅仅作为角色身份, 头部姿势必须图1不同, 身体姿势和构图必须按下面描述。";/, "参考图前缀必须原样保留业主给的那一句");
 // 2d) 加进行为指导里的两条纪律（业主 2026-09-27 第八~十轮）。**断言必须打在函数体上**：同一批词在
 //     文件头注释里也有（注释要记录业主原话），打在整文件上会从注释里假绿 —— 把返回文本里的要求删掉、
@@ -1221,7 +1250,7 @@ assert.match(viewerSource, /if \(Math\.abs\(swipe\) < SWIPE_MIN\) \{ bound\(\); 
 
 // 7) 定妆照必须真的作为参考图进 CHP 请求体，而且读失败不许静默降级（业主 2026-09-27 要求确认）。
 //    字段名 `image_base64` 来自插件规范（hamdraw 的 chp-spec.md / capabilities.py），不是自拟的。
-assert.match(drawSource, /if \(options\.referenceDataUrl\) body\.image_base64 = options\.referenceDataUrl;/, "定妆照必须以 image_base64 进 CHP 请求体");
+assert.match(drawSource, /if \(reference\) body\.image_base64 = reference;/, "定妆照必须以 image_base64 进 CHP 请求体（而且只在真有时才挂）");
 assert.match(chatSessionSource, /if \(action\.selfPortrait && role\.portraitMediaId\)[\s\S]{0,600}draw\.portraitReference\(role\.portraitMediaId\)/, "selfPortrait 为真时要把角色的定妆照顶上去当参考图");
 assert.match(chatSessionSource, /catch \(error\) \{ return fail\(new Error\("定妆照没能读出来/, "定妆照读不出来必须就地报错：静默当成没有参考图会画成另一张脸");
 assert.equal(/portraitReference\(role\.portraitMediaId\)[\s\S]{0,240}catch \(_\)/.test(chatSessionSource), false, "定妆照的读取失败不许被 catch (_) 吞掉");

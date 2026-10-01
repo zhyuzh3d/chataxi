@@ -1543,55 +1543,87 @@ test('the drawing client takes the canvas the frame table labels 9:16 instead of
   assert.equal(pick({ frames: [{ ratio: '9:16', resolution: ['576x1024', '1152x2048'] }] }), '576x1024', '同一个 9:16 档里有多条分辨率时取第一条');
   assert.equal(pick({}), null, '没有帧表就报读不到');
   assert.equal(pick({ sizes: [[768, 1344]] }), null, 'chp/1 的 sizes 不再认：旧快照必须先重新获取一次目录');
+  // 卡上选中的那条优先（业主 2026-09-30：模型卡上要能挑画幅，挑低档图快）——
+  // 但它必须还在插件**当前**的清单里。表外的值一律退回默认，而不是原样发出去等 400：
+  // 那种错在界面上看着像"卡上明明选的是这条"，实际发的是另一条。
+  const plugin = { frames: [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344', '576x1024', '432x768'] }] };
+  assert.deepEqual(plain(app.services.draw.sizes(plugin)), ['768x1344', '576x1024', '432x768'],
+    '清单只列标着 9:16 的那几档，按插件表的顺序，别的比例一条都不进来');
+  assert.equal(pick(plugin, '576x1024'), '576x1024', '卡上选中的那条在清单里就用它');
+  assert.equal(pick(plugin, '432x768'), '432x768');
+  assert.equal(pick(plugin, '2048x2048'), '768x1344', '不在清单里（插件换过帧表）就退回第一条');
+  assert.equal(pick(plugin, ''), '768x1344', '没挑过就用默认：9:16 那一档的第一条');
+  assert.equal(pick(plugin, undefined), '768x1344', '旧卡片没有 resolution 字段时走同一条路');
   // 有参考图时钉在图像提示词开头的那句约束（业主指定原文，只加在发给插件的那一份上）。
   assert.match(app.services.drawPrompt.referencePrefix, /^参考图1仅仅作为角色身份/);
 });
 
 // 发现路径：chp/2 的文档是**两张表**（rules 说客户端要什么，abilities 说什么能回答）。
-// 卡片 = render 这一个场景；画幅按 abilities 的顺序取该场景的帧；模型挂载点与就绪状态来自
-// 回答它的那条能力。地址的解析按规范 §1.3：先原样试用户填的那个，再试推荐的 /chp/info。
+// 卡片带上 **render 与 generate 两条**场景（业主 2026-10-01：有定妆照按图重画、没有就从零画一张），
+// 画幅按 abilities 的顺序取每条场景自己的帧；模型挂载点与就绪状态来自回答它的那条能力。
+// 地址的解析按规范 §1.3：先原样试用户填的那个，再试推荐的 /chp/info。
 test('image discovery reads the two-table chp/2 document and keeps the addresses it publishes', async () => {
   const { app } = runtime(['app/services/draw.js']);
   const document = {
     spec: 'chp/2',
-    plugin: { id: 'hamdraw_chp', version: '3.0.0' },
+    plugin: { id: 'hamdraw_chp', version: '3.1.0' },
     auth: { required: true, authorized: true },
     endpoints: { info: '/chp/info', jobs: '/chp/api/jobs' },
     rules: [
-      { category: 'fast', rule: 'txt-ref-2-img', needs: { prompt: true, image: true }, prompt: { language: 'en' }, defaults: { ref_strength: 0.55 }, typical_seconds: 1.2 },
-      { category: 'render', rule: 'txt-ref-2-img', needs: { prompt: true, image: false }, prompt: { language: 'any' }, defaults: { ref_strength: 0.95 }, typical_seconds: 45 }
+      { category: 'fast', rule: 'txt-ref-2-img', signature: 'txt-ref-2-img', needs: { prompt: true, image: true }, prompt: { language: 'en' }, defaults: { ref_strength: 0.55 }, typical_seconds: 1.2 },
+      { category: 'render', rule: 'txt-ref-2-img', signature: 'txt-ref-2-img', needs: { prompt: true, image: true, mask: false }, prompt: { language: 'any' }, defaults: { ref_strength: 0.95 }, typical_seconds: 45 },
+      { category: 'generate', rule: 'txt-2-img', signature: 'txt-2-img', needs: { prompt: true, image: false, mask: false }, prompt: { language: 'any' }, defaults: {}, typical_seconds: 25 }
     ],
     abilities: [
       { name: 'DreamShaper8_LCM.safetensors', files: { checkpoint: 'DreamShaper8_LCM.safetensors' }, ready: true, missing: [], frames: [{ ratio: '1:1', category: 'fast', resolution: ['512x512'] }] },
       {
         name: 'qwen2.1', ready: false, missing: ['vae'],
         files: { unet: 'qwen.safetensors', clip: 'qwen_clip.safetensors', vae: 'qwen_vae.safetensors' },
-        frames: [{ ratio: '1:1', category: 'render', resolution: ['1024x1024'] }, { ratio: '9:16', category: 'render', resolution: ['768x1344'] }]
+        frames: [
+          { ratio: '1:1', category: 'render', resolution: ['1024x1024'] },
+          { ratio: '9:16', category: 'render', resolution: ['768x1344', '512x896', '896x1568'] }
+        ]
       },
       // 第三条也在播报 render，但它排在后头：规范 §4.3 第 1 条说"跨 abilities 按序扫，命中它的
       // 第一条 frame"，所以回答这个场景的是上面那条，卡片不该把两边的帧拼起来（拼起来的话
       // 就绪状态与画幅来自两个能力，卡片自己就说不通了）。
-      { name: 'other', files: { checkpoint: 'other.safetensors' }, ready: true, missing: [], frames: [{ ratio: '9:16', category: 'render', resolution: ['1440x2560'] }] }
+      { name: 'other', files: { checkpoint: 'other.safetensors' }, ready: true, missing: [], frames: [{ ratio: '9:16', category: 'render', resolution: ['1440x2560'] }] },
+      // 第四条只回答 generate，而且它自己缺一件。**两条场景可以来自两条不同的能力** ——
+      // 卡片上的就绪状态与缺件因此取并集：等用户真去画一张没有定妆照的图时才报"模型没配好"，
+      // 太晚了（那时他已经在等出图）。
+      {
+        name: 'qwen2.1-generate', ready: false, missing: ['clip'],
+        files: { unet: 'qwen.safetensors', clip: 'qwen_clip.safetensors', vae: 'qwen_vae.safetensors' },
+        frames: [{ ratio: '9:16', category: 'generate', resolution: ['768x1344', '512x896', '896x1568'] }]
+      }
     ]
   };
   const asked = [];
-  app.platform.network = {
-    // ComfyUI 自己的网页根：200 一页 HTML，不是 CHP 文档 —— 这正是"地址里没有路径"时
-    // 必须再试一次 /chp/info 的那个情形。
-    request: async (options) => { asked.push(options.url); return options.url === 'http://192.168.124.31:8189' ? { status: 200, bodyText: '<html>ComfyUI</html>' } : { status: 200, bodyText: JSON.stringify(document) }; },
-    readText: async (response) => response.bodyText
-  };
+  // ComfyUI 自己的网页根：200 一页 HTML，不是 CHP 文档 —— 这正是"地址里没有路径"时
+  // 必须再试一次 /chp/info 的那个情形。
+  const serving = { request: async (options) => { asked.push(options.url); return options.url === 'http://192.168.124.31:8189' ? { status: 200, bodyText: '<html>ComfyUI</html>' } : { status: 200, bodyText: JSON.stringify(document) }; }, readText: async (response) => response.bodyText };
+  app.platform.network = serving;
   const service = { id: 'card', endpoint: 'http://192.168.124.31:8189' };
   const found = await app.services.modelServices.discover('image', service, { persist: false });
 
   assert.deepEqual(asked, ['http://192.168.124.31:8189', 'http://192.168.124.31:8189/chp/info'], '先原样试用户填的地址，再试推荐的 /chp/info');
-  assert.equal(found.models.length, 1, 'chataxi 只收 render 这一个场景');
+  assert.equal(found.models.length, 1, '两条绘制场景合成**一张**卡片：走哪条是出图那一刻才知道的事');
   const card = found.models[0];
-  assert.equal(card.id, 'render', '卡片认的必须是 category（请求体字段名），不是 checkpoint 文件名');
-  assert.deepEqual(plain(card.frames), [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344'] }], '画幅只取回答这个场景的第一条能力的帧（文档序就是菜单序）');
+  assert.equal(card.id, 'render', '卡片认的必须是 category（请求体字段名），不是 checkpoint 文件名；主场景是 render，旧卡片存的也是它');
+  assert.deepEqual(plain(Object.keys(card.scenes).sort()), ['generate', 'render'], '两条场景都要在卡片上');
+  assert.deepEqual(plain(card.frames), [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344', '512x896', '896x1568'] }], '画幅只取回答这条场景的第一条能力的帧（文档序就是菜单序）');
   assert.equal(app.services.draw.pickSize(card), '768x1344', '发现出来的卡片要能直接喂给绘图客户端');
+  assert.deepEqual(plain(card.scenes.generate.frames), [{ ratio: '9:16', resolution: ['768x1344', '512x896', '896x1568'] }], '每条场景各带自己那一份帧表');
+  assert.equal(card.scenes.render.category, 'render');
+  assert.equal(card.scenes.generate.category, 'generate');
+  assert.equal(card.scenes.render.takesReference, true, '收不收参考图从签名派生：txt-ref-2-img 收');
+  assert.equal(card.scenes.generate.takesReference, false, 'txt-2-img 不收');
   assert.equal(card.ready, false, '就绪状态挂在**能力**上：render 那一族缺 vae');
-  assert.deepEqual(plain(card.missing), ['vae'], '缺哪个角色要点名');
+  // 两条场景来自**两条不同的能力**时，卡片上的缺件是并集 —— 只抄主场景那一份的话，
+  // "没有定妆照就画不出来"这件事要等用户等过一次出图才会暴露。
+  assert.deepEqual(plain(card.missing), ['vae', 'clip'], '卡片上的缺件是两条场景的并集');
+  assert.deepEqual(plain(card.scenes.render.missing), ['vae'], '每条场景各自记回答它那条能力的缺件');
+  assert.deepEqual(plain(card.scenes.generate.missing), ['clip']);
   const role = (name) => card.roles.find((item) => item.role === name);
   assert.deepEqual(plain(card.roles.map((item) => item.role).sort()), ['clip', 'unet', 'vae'], '模型挂载点来自回答它的那条能力');
   assert.equal(role('unet').name, 'qwen.safetensors');
@@ -1599,6 +1631,7 @@ test('image discovery reads the two-table chp/2 document and keeps the addresses
   assert.equal(role('clip').ready, true);
   assert.equal(card.promptLanguage, 'any', 'render 的提示词语言来自 rules，不来自能力');
   assert.equal(card.defaults.ref_strength, 0.95);
+  assert.equal(card.scenes.generate.defaults.ref_strength, undefined, 'generate 那条没有参考强度：它根本没有参考图');
   assert.equal(card.typicalSeconds, 45);
   assert.equal(service.chpOrigin, 'http://192.168.124.31:8189', '请求地址要按信息接口的同源根补全');
   assert.deepEqual(Object.keys(plain(service.endpoints)), ['info', 'jobs'], '地址表原样存下来，绘图时从它读');
@@ -1608,6 +1641,14 @@ test('image discovery reads the two-table chp/2 document and keeps the addresses
   await assert.rejects(() => app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false }), /无法连接这个地址/, '连不上要说地址不通');
   app.platform.network = { request: async () => ({ status: 200, bodyText: '<html>ComfyUI</html>' }), readText: async (response) => response.bodyText };
   await assert.rejects(() => app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false }), /这个地址不是 CHP 服务/, '应答了但那里没有插件');
+  // 两条场景**一条都没有**才是"插件太旧"：只有 generate（没有 render）也要能配出卡片来，
+  // 否则一个只提供 txt-2-img 的插件会被判成"不支持"，而它其实能画。
+  app.platform.network = serving;
+  document.rules = document.rules.filter((rule) => rule.category !== 'render');
+  const generateOnly = await app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false });
+  assert.equal(generateOnly.models[0].id, 'generate', '只剩 generate 时它就是主场景');
+  document.rules = document.rules.filter((rule) => rule.category !== 'generate' && rule.category !== 'render');
+  await assert.rejects(() => app.services.modelServices.discover('image', { id: 'c', endpoint: 'http://192.168.124.31:8189' }, { persist: false }), /插件没有提供成品图场景/, '两条都没有才报插件太旧');
 });
 
 // 定妆照必须真的作为参考图发到 CHP（业主 2026-09-27：「请仔细确认能够正确调用定妆照图片作为
@@ -1618,7 +1659,7 @@ test('a self-portrait reference really reaches the CHP request body as image_bas
   const submitted = [], asked = [];
   const model = {
     id: 'render',
-    frames: [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344'] }],
+    frames: [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344', '576x1024'] }],
     defaults: { ref_strength: 0.95 },
     typicalSeconds: 45
   };
@@ -1672,10 +1713,94 @@ test('a self-portrait reference really reaches the CHP request body as image_bas
     'GET http://192.168.124.31:8189/chp/jobs/job-1/output/0'
   ], '请求地址一律从文档的 endpoints 里读，客户端不许自己拼路径');
 
+  // 卡上挑过画幅之后，发出去的就是挑的那条 —— 而且**低档必须由插件说了算**：
+  // 插件换过帧表、卡上那条已经不在表里时退回第一条，不许原样发出去等一个 400。
+  profile.resolution = '576x1024';
+  await produce({ referenceDataUrl: portrait });
+  assert.equal(submitted[1].resolution, '576x1024', '模型卡上选中的那条就是发出去的那条');
+  profile.resolution = '1152x2048';
+  await produce({ referenceDataUrl: portrait });
+  assert.equal(submitted[2].resolution, '768x1344', '表外的旧值退回第一条，不原样发出去');
+
   // 没有参考图时不许自己编一张出来：那会把"定妆照没读到"这件事掩盖掉。
-  //（插件侧 render.needs.image = false —— 不带参考图就是纯文生图，是它明确支持的路径。）
+  // 参考强度也一起收起来 —— 它是「要多像这张参考图」，没有图的时候它没有意义。
   submitted.length = 0;
   await produce({});
   assert.equal('image_base64' in submitted[0], false, '没有参考图就不许凭空造一张');
+  assert.equal('ref_strength' in submitted[0], false, '参考强度必须跟参考图一起出现，没有图就不发');
   assert.equal(submitted[0].prompt, '雨夜的旧车站', '没有参考图时不加那句身份约束');
+  // 上面那张卡片没有 `scenes`（旧版本存下来的目录），所以走的是"退回卡片自己"那条路：
+  // category 仍是卡片 id。分场景那条路由下面那条用例专门管。
+  assert.equal(submitted[0].category, 'render', '没有分场景的旧卡片照旧发自己的 id');
+});
+
+// 一次提交走哪条场景，由**手上有没有参考图**说了算（业主 2026-10-01）：
+// 有定妆照 ⇒ render（给定一张图重新生成）；没有 ⇒ generate（纯文字生成）。
+// 卡片只是容器：category、画幅表、默认值三样都跟着**这一次那条场景**走，
+// 而且有参考图时绝不退回那条不收图的场景（不然插件只会回一个 bad_image）。
+test('the drawing client picks render with a portrait and generate without one', async () => {
+  const { app } = runtime(['app/services/draw.js', 'app/services/draw-prompt.js']);
+  const submitted = [];
+  const reference = (strength) => ({ category: 'render', rule: 'txt-ref-2-img', takesReference: true, frames: [{ ratio: '9:16', resolution: ['768x1344', '512x896'] }], defaults: { ref_strength: strength }, typicalSeconds: 45 });
+  const plain_ = () => ({ category: 'generate', rule: 'txt-2-img', takesReference: false, frames: [{ ratio: '9:16', resolution: ['896x1568', '768x1344'] }], defaults: {}, typicalSeconds: 25 });
+  // 两条场景的**帧表顺序刻意不同**（render 第一档 768x1344、generate 第一档 896x1568）：
+  // 卡上什么都没挑时，发出去的那一条必须来自**这一次真正走的**那条场景，而不是主场景那份。
+  const model = Object.assign({}, reference(0.95), { id: 'render', scenes: { render: reference(0.95), generate: plain_() } });
+  const profile = { id: 'card', endpoint: 'http://192.168.124.31:8189', chpOrigin: 'http://192.168.124.31:8189', endpoints: { jobs: '/chp/jobs' } };
+  const services = app.services.modelServices;
+  services.modelDefinition = () => model;
+  services.computedEndpoint = () => profile.endpoint;
+  services.authHeaders = () => ({});
+  app.utils.parseHeaders = () => ({});
+  app.platform.network = {
+    requestJson: async (options) => {
+      if (options.method === 'POST') { submitted.push(JSON.parse(options.bodyText)); return { data: { job: { id: 'job-1' } } }; }
+      if (/\/progress$/.test(options.url)) return { data: { job: { state: 'completed', queue_position: 0 } } };
+      return { data: { job: { state: 'completed', outputs: [{ url: '/chp/jobs/job-1/output/0' }] } } };
+    },
+    requestByteStream: async (options) => { options.onChunk(new Uint8Array([137, 80, 78, 71])); return { contentType: 'image/png' }; }
+  };
+  const portrait = 'data:image/jpeg;base64,AAAA';
+  const produce = (extra) => app.services.draw.generate(Object.assign({ profile: profile, modelId: 'render', prompt: '雨夜的旧车站' }, extra));
+
+  // ① 有定妆照 ⇒ render，参考图与参考强度都跟着走。
+  await produce({ referenceDataUrl: portrait });
+  assert.equal(submitted[0].category, 'render', '有参考图就走按图重画那条');
+  assert.equal(submitted[0].image_base64, portrait);
+  assert.equal(submitted[0].ref_strength, 0.95, '参考强度取自 render 那条场景自己的默认值');
+  assert.equal(submitted[0].resolution, '768x1344', '画幅取自 render 那条场景的帧表');
+
+  // ② 没有定妆照 ⇒ generate：**不发参考图，也不发参考强度**（那条规则的 defaults 就是空的）。
+  await produce({});
+  assert.equal(submitted[1].category, 'generate', '没有参考图就走从零画一张那条');
+  assert.equal('image_base64' in submitted[1], false, '纯文生图一个字节的参考图都不带');
+  assert.equal('ref_strength' in submitted[1], false, '纯文生图也不发参考强度');
+  assert.equal(submitted[1].resolution, '896x1568', '画幅跟着**这一次那条场景**走，不是主场景那份');
+  assert.equal(submitted[1].prompt, '雨夜的旧车站', '没有参考图时不加那句身份约束');
+
+  // ③ 卡上挑过画幅时，挑的那条要按**这一次那条场景**的清单判：render 的清单里没有 896x1568，
+  //    所以带着定妆照发出去时退回 render 的第一档，而不是把 generate 那条塞过去。
+  profile.resolution = '896x1568';
+  await produce({ referenceDataUrl: portrait });
+  assert.equal(submitted[2].resolution, '768x1344', '画幅必须在这一次那条场景的清单里，表外退回它的第一条');
+  await produce({});
+  assert.equal(submitted[3].resolution, '896x1568', '同一条画幅在 generate 的清单里，照发');
+
+  // ④ 插件还没分出 generate 那一类时退回 render —— 不带参考图也是它明确支持过的路径。
+  model.scenes = { render: reference(0.95) };
+  await produce({});
+  assert.equal(submitted[4].category, 'render', '没有 generate 时退回 render，不许报错');
+
+  // ⑤ 场景自己说不收参考图却又带着一张 ⇒ 当场报错，不把一个注定被拒的请求发出去。
+  model.scenes = { render: Object.assign(reference(0.95), { takesReference: false }) };
+  await assert.rejects(() => produce({ referenceDataUrl: portrait }), /不接受参考图/, '收不收参考图要按场景自己声明的来判');
+  assert.equal(submitted.length, 5, '被拒的那一次一个字节都不许发出去');
+
+  // ⑥ 判据本身也直接断一次（它有导出，不是藏在闭包里的）：这一次走哪条**只看手上有没有图**，
+  //    与卡片上选了什么无关；旧卡片（没有 scenes）返回 null，调用方拿卡片自己当场景。
+  const sceneFor = app.services.draw.sceneFor;
+  assert.equal(sceneFor(model, true).category, 'render', '有图就是 render');
+  assert.equal(sceneFor({ id: 'render', scenes: { render: reference(0.95), generate: plain_() } }, false).category, 'generate', '没图就是 generate');
+  assert.equal(sceneFor({ id: 'render', scenes: { generate: plain_() } }, true), null, '只有 generate 而手上又有图时返回 null：那条规则不收图，宁可交给调用方报错');
+  assert.equal(sceneFor({ id: 'render', frames: [] }, true), null, '没有 scenes 的旧卡片返回 null');
 });

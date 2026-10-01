@@ -807,6 +807,29 @@ assert.equal(document.querySelector('.error-box'), null);
 assert.equal((await app.data.store.get('llm-profiles', 'xai-untested')).validationState, 'unverified', 'saving without testing records an unverified model');
 assert.equal((await app.data.store.get('llm-profiles', 'xai-untested')).externalModelId, 'grok-fixture');
 console.log('passed: a fetched catalog saves without a connection test');
+// 绘图卡上的画幅（业主 2026-09-30：「在绘图模型设置中增加 CHP 渲染模型的分辨率选择，
+// 锁定 9:16 分辨率」）。两件事一起断：**选项来自插件公布的帧表**（不是界面里写死的一份
+// 清单，所以 1:1 那条不许出现），以及挑中的那一条真的存进卡片 —— 存不下来只是个摆设。
+{
+  const originalDiscover = app.services.modelServices.discover;
+  app.services.modelServices.discover = async (kind) => kind !== 'image' ? originalDiscover(kind)
+    : { models: [{ id: 'render', name: '重画成品图', ready: true, capabilitySource: 'capability-directory',
+        frames: [{ ratio: '1:1', resolution: ['1024x1024'] }, { ratio: '9:16', resolution: ['768x1344', '576x1024', '432x768'] }],
+        defaults: { ref_strength: 0.95 } }], voices: [], catalogState: 'fetched', warnings: [], discovered: true };
+  await app.data.store.put('image-profiles', 'chp-canvas', { id: 'chp-canvas', name: '画幅测试卡', family: 'chp', endpoint: 'http://192.168.124.31:8189', apiKey: 'fixture', models: [], enabled: true });
+  await app.navigate('models', { modelsTab: 'image' });
+  click('[data-edit-service="chp-canvas"]'); await until(() => document.querySelector('[data-picker="resolution"]'), 'drawing card canvas row');
+  assert.equal(document.querySelector('[data-picker="resolution"] [data-picker-label]').textContent, '先获取模型列表', '还没读到插件目录时，画幅那一行说清要先获取模型列表');
+  click('[data-fetch-models]'); await until(() => /重画成品图/.test(document.querySelector('[data-picker="externalModelId"] [data-picker-label]').textContent), 'drawing scenario loaded');
+  click('[data-picker="resolution"]'); await until(() => document.querySelector('.subsheet [data-choice="576x1024"]'), 'canvas choices opened');
+  assert.deepEqual(Array.from(document.querySelectorAll('.subsheet [data-choice]')).map(button => button.dataset.choice),
+    ['768x1344', '576x1024', '432x768'], '只列插件为这个场景公布的 9:16 档：1:1 那条不许进来');
+  click('.subsheet [data-choice="576x1024"]'); await until(() => document.querySelector('[data-picker="resolution"] [data-picker-label]').textContent === '576x1024', 'canvas chosen');
+  submit(); await until(() => !document.querySelector('#modalForm'), 'drawing card saved');
+  assert.equal((await app.data.store.get('image-profiles', 'chp-canvas')).resolution, '576x1024', '用户挑中的那条要存进卡片');
+  app.services.modelServices.discover = originalDiscover;
+  console.log('passed: the drawing card offers the canvases the plugin publishes and keeps the chosen one');
+}
 let savedElevenLabs;
 app.platform.network.requestJson = async options => options.url.includes('/v1/models')
   ? { data: [{ model_id: 'eleven_multilingual_v2', name: 'Eleven Multilingual v2', can_do_text_to_speech: true }] }

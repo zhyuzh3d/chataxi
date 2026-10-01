@@ -66,7 +66,7 @@
     // 地址预填一个能直接用的默认值（见 CHP_DEFAULT_ENDPOINT），用户换机器时只改 IP。
     var endpointField = field("endpoint", kind === "image" ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(kind), kind === "image" ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
     var noteHtml = kind === "image"
-      ? '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>这里只选择用插件里的哪个绘图场景；画幅锁定插件帧表里标着 9:16 的那一档, 参考强度沿用插件自报的默认值, 都不需要配置。</span></div>'
+      ? '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>地址与密码只配这一处：有定妆照的角色按图重画, 没有就从零画一张, 走哪条不用你选。画幅锁定 9:16 竖幅, 下面挑的正是插件公布的那几档, 参考强度沿用插件自报的默认值。</span></div>'
       : '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>目录只用于选择模型；角色的最大输出、采样、推理、音色与发音参数在角色设置中配置。</span></div>';
     var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + (kind === "image" ? endpointField : "") + secretField(service, initialDefinition) +
       '<div data-extra="accessKeyId">' + auxiliarySecretField("accessKeyId", "Access Key ID", service.accessKeyId || "", false) + '</div>' +
@@ -75,7 +75,8 @@
       '<div data-extra="workspaceId">' + field("workspaceId", "业务空间 ID", service.workspaceId || "", 'maxlength="160"') + '</div>' +
       '<div data-extra="resourceEndpoint">' + field("resourceEndpoint", "资源 Endpoint", service.resourceEndpoint || "", 'type="url"') + '</div>' +
       '<button class="button secondary full" type="button" data-fetch-models>' + ui.icon("cloud-arrow-down") + '获取模型列表</button><p class="connection-status visually-hidden" id="catalogStatus" role="status"></p>' +
-      '<div data-model-choice>' + ui.picker("externalModelId", "具体模型", "", "一个模型卡片只保存这里选择的一个模型") + '</div>' + familyHtml +
+      '<div data-model-choice>' + ui.picker("externalModelId", "具体模型", "", "一个模型卡片只保存这里选择的一个模型") + '</div>' +
+      (kind === "image" ? '<div data-resolution-choice>' + ui.picker("resolution", "画幅", "", "锁定 9:16 竖幅;选项来自插件为这个场景公布的帧表,获取模型列表后可选") + '</div>' : '') + familyHtml +
       '<button class="button secondary full" type="button" data-test-model>' + ui.icon("plug") + (editing ? '重新连接并测试' : '连接并测试') + '</button><p class="connection-status visually-hidden" id="connectionStatus" role="status"></p>' +
       noteHtml +
       '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + (kind === "image" ? "" : endpointField) + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
@@ -108,6 +109,12 @@
     syncSubmit();
     ui.bindPicker(form, "family", providerItems(kind), initialFamily);
     var modelPicker = ui.bindPicker(form, "externalModelId", modelItems(kind, catalogModels, service), selected, { allowEmpty: true });
+    /* 画幅:插件为**这个场景**公布的那几档,只取标着 9:16 的(见 draw.js 的 sizes)。
+       它不是前端写死的一张清单 —— 插件加一档这里就多一项、插件降级这里当场少一项。
+       新建卡片时目录还没读,清单是空的,提示行叫用户先去获取模型列表。 */
+    var resolutionPicker = kind === "image"
+      ? ui.bindPicker(form, "resolution", resolutionItems(), service.resolution || "", { allowEmpty: true, emptyLabel: "先获取模型列表" })
+      : null;
     var familyPicker = kind === "llm" ? ui.bindPicker(form, "modelFamilyId", app.services.modelRegistry.familyItems(kind), service.modelFamilyId || app.services.modelRegistry.suggestFamily(kind, selected, service), { allowEmpty: true }) : null;
     var apiStylePicker = ui.bindPicker(form, "apiStyle", app.services.catalog.apiStyles.map(function (item) { return { id: item.id, name: item.name }; }), service.apiStyle || initialDefinition.apiStyle || "", { allowEmpty: true });
 
@@ -116,10 +123,25 @@
       catalogModels = cached.models; catalogVoices = cached.voices || catalogVoices;
       catalogReady = true; syncSubmit();
       modelPicker.setItems(modelItems(kind, catalogModels, service), selected);
+      syncResolution();
       ui.status(catalogStatusNode, "已载入上次成功获取的模型目录；可以直接保存。");
     }).catch(function () {});
 
     function value(name) { var field = form.elements.namedItem(name); return field ? String(field.value || "").trim() : ""; }
+
+    /* 画幅的选项来自插件(见 draw.js 的 sizes):它读的是目录里那张卡的 `frames`,
+       按 `ratio` 这个**标签**挑出 9:16 那一档 —— 不算比例、不搜方形、不打分。 */
+    function resolutionItems() {
+      return kind === "image"
+        ? app.services.draw.sizes((catalogModels || [])[0]).map(function (item) { return { id: item, name: item }; })
+        : [];
+    }
+    /* 目录换过之后重画选项。卡上选中的那条还在清单里就留着(**那是用户的选择**),
+       不在(插件换过帧表了)就由 bindPicker 清空 —— 留着一个服务端会 400 的旧值,
+       只是把这个错推到下一次出图时才暴露。 */
+    function syncResolution() {
+      if (resolutionPicker) resolutionPicker.setItems(resolutionItems());
+    }
     function invalidateTest() {
       if (testedIdentity && identity(readDraft()) === testedIdentity) return;
       testedIdentity = ""; testPassed = false; service.validationState = "unverified"; service.validatedAt = 0; form.dataset.modelValidation = "unverified";
@@ -135,6 +157,9 @@
         endpoint: value("endpoint") || family.endpoint || "", apiKey: value("apiKey"), accessKeyId: value("accessKeyId"), sessionToken: value("sessionToken"),
         region: value("region"), workspaceId: value("workspaceId"), resourceEndpoint: value("resourceEndpoint"), customHeaders: value("customHeaders"),
         externalModelId: chosenId, modelFamilyId: kind === "llm" ? value("modelFamilyId") || app.services.modelRegistry.suggestFamily(kind, chosenId, { family: familyId }) : familyId,
+        /* 画幅是用户在这个弹窗里挑的那一档(空串 = 还没挑,由 draw.pickSize 退回插件表里的
+           第一条)。它只对绘图卡片有意义 —— 别的 kind 表单里根本没有这一格。 */
+        resolution: kind === "image" ? value("resolution") : service.resolution,
         name: value("name"), enabled: u.checked(form, "enabled"), catalogState: service.catalogState || "", validationState: service.validationState || "unverified",
         connectionRevision: service.connectionRevision || "", updatedAt: Date.now(), createdAt: service.createdAt || Date.now()
       });
@@ -177,7 +202,7 @@
         ["accessKeyId", "sessionToken", "region", "workspaceId", "resourceEndpoint", "manualModelId", "customHeaders"].forEach(function (name) { if (form.elements.namedItem(name)) form.elements.namedItem(name).value = ""; });
         form.querySelectorAll(".secret-mask").forEach(function (mask) { mask.textContent = ""; });
         apiStylePicker.setItems(app.services.catalog.apiStyles.map(function (item) { return { id: item.id, name: item.name }; }), family.apiStyle || "");
-        catalogModels = []; catalogVoices = []; selected = ""; modelPicker.setItems([], ""); if (familyPicker) familyPicker.setItems(app.services.modelRegistry.familyItems(kind), app.services.modelRegistry.suggestFamily(kind, "", { family: familyId }));
+        catalogModels = []; catalogVoices = []; selected = ""; modelPicker.setItems([], ""); syncResolution(); if (familyPicker) familyPicker.setItems(app.services.modelRegistry.familyItems(kind), app.services.modelRegistry.suggestFamily(kind, "", { family: familyId }));
         invalidateTest(); ui.status(catalogStatusNode, ""); ui.status(connectionStatusNode, "");
         catalogReady = false; syncSubmit();
       }
@@ -197,7 +222,7 @@
         if (!catalogModels.length) throw new Error("服务已响应，但没有找到可用于当前分类的模型");
         catalogReady = true; syncSubmit();
         var items = modelItems(kind, catalogModels, draft), preferred = selected && items.some(function (item) { return item.id === selected; }) ? selected : (items.find(function (item) { return item.group.indexOf("推荐") === 0; }) || items[0]).id;
-        selected = preferred; modelPicker.setItems(items, preferred); syncFamilySuggestion(true);
+        selected = preferred; modelPicker.setItems(items, preferred); syncFamilySuggestion(true); syncResolution();
         service.catalogState = result.catalogState; service.discoveryWarnings = result.warnings || [];
         await store.saveModelDirectory(kind, service.id, catalogModels, catalogVoices);
         invalidateTest(); ui.status(status, app.i18n.pick("已获取 " + catalogModels.length + " 个候选" + (catalogVoices.length ? "、" + catalogVoices.length + " 个音色" : "") + "。请选择一个模型。", "Fetched " + catalogModels.length + " candidates" + (catalogVoices.length ? " and " + catalogVoices.length + " voices" : "") + ". Pick one model.") + (result.warnings && result.warnings.length ? " " + result.warnings.join(app.i18n.pick("；", "; ")) : ""));
