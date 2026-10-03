@@ -1067,7 +1067,7 @@ const viewerAt = chatSource.indexOf("async function openImageViewer(media, image
 assert.ok(viewerAt > 0, "找不到 openImageViewer：这一条门禁本身失效了，必须修好再跑");
 const viewerEnd = chatSource.indexOf("\n  async function ", viewerAt + 1);
 const openViewerBody = chatSource.slice(viewerAt, viewerEnd < 0 ? viewerAt + 2400 : viewerEnd);
-assert.match(openViewerBody, /app\.components\.imageViewer\.open\(\{[\s\S]*?onDownload:[\s\S]*?onSetBackground:/, "点气泡里的图片必须打开全屏看图, 并把下载 / 设为背景两个动作一起交出去");
+assert.match(openViewerBody, /app\.components\.imageViewer\.open\(Object\.assign\(\{[\s\S]*?onDownload:[\s\S]*?onSetBackground:/, "点气泡里的图片必须打开全屏看图, 并把下载 / 设为背景两个动作一起交出去");
 // 这个 for 循环里 media 与 i 都是 var（函数作用域）: 不按条捕获的话所有图片按钮都会拿到最后一条。
 assert.match(chatSource, /imageButton\.addEventListener\('click', \(function \(entry\) \{/, "图片按钮的监听器必须按条捕获 media");
 assert.equal(/html: '<img class="image-preview"/.test(chatSource), false, "看图不再借用通用弹窗");
@@ -1221,7 +1221,7 @@ assert.match(galleryRule, /border-radius: 0 /, "侧栏左边两角必须是直�
 assert.match(galleryRule, /pointer-events: none;/, "侧栏关着时不许吃画面上的点击");
 assert.match(galleryRule, /visibility: hidden;/, "侧栏关着时必须彻底藏起来，否则它的投影会露在屏幕边上");
 assert.match(styles, /\.image-viewer-gallery\.is-open \{ transform: none;/, "侧栏靠 is-open 推出来（用 hidden 会连过渡一起丢掉）");
-assert.match(viewerSource, /data-gallery-index="' \+ i \+ '"/, "每一格缩略图要带自己的序号：点击定位与「当前是哪张」都靠它");
+assert.match(viewerSource, /gallery\.map\(function \(item, index\) \{[\s\S]{0,320}data-gallery-index="' \+ index \+ '"/, "每一格缩略图要带自己的序号：点击定位与「当前是哪张」都靠它");
 assert.match(viewerSource, /function show\(index\) \{/, "组件必须能换到第 index 张");
 // **换图必须连两个动作回调一起换**：不然切到第二张再按「下载」，存下来的还是第一张。
 assert.match(viewerSource, /actions\.download = next && next\.onDownload \|\| null;/, "换图时必须把「下载」换成这一张的动作回调");
@@ -1230,11 +1230,12 @@ assert.match(viewerSource, /\{ runAction\(actions\.download\); \}/, "工具栏�
 assert.match(viewerSource, /\{ runAction\(actions\.background\); \}/, "同上：设为背景也必须读当前这张");
 // chat.js 侧：把"本对话所有生成图"整理成清单 + 定位当前这张的下标，一起交给组件。
 assert.match(chatSource, /function galleryEntries\(target\) \{/, "chat.js 要把本对话所有生成图整理成清单交给看图");
-assert.match(chatSource, /if \(!message\.draw \|\| message\.status === 'drawing'\) continue;/, "清单只收已经画出来的图，正在画的那条不算");
+assert.match(storeSource, /message\.kind !== "assistant" \|\| message\.status !== "done" \|\| !\(message\.media \|\| \[\]\)\.length/, "生图归档只从已完成的角色回复补建，不包含进行中的占位消息");
+assert.match(chatSource, /async function galleryEntries\(target\) \{[\s\S]{0,180}store\.generatedImagesWithUsage\(target\.conversation\.id\)[\s\S]{0,100}return archives\.map\(/, "画廊清单必须来自持久化的生图归档");
 assert.match(chatSource, /if \(mediaKey\(gallery\[i\]\.media\) === mediaKey\(media\)\) \{ index = i; break; \}/, "打开看图时要定位到当前这张在清单里的下标，否则一打开就是第一张");
 assert.match(chatSource, /gallery: gallery, index: index,/, "清单与下标要一起交给看图组件");
-assert.match(chatSource, /source: function \(\) \{ return app\.data\.media\.displayUrl\(media\)\.catch\(function \(\) \{ return ''; \}\); \}/, "缩略图地址要惰性取：一个对话几十张图，全部赋 src 会让引擎一次解码几十张 1MP 的图");
-assert.match(viewerSource, /new IntersectionObserver\(function \(entries\) \{/, "缩略图必须进视口才要地址，不能一打开抽屉就全量拉");
+assert.match(chatSource, /source: function \(\) \{[\s\S]{0,240}if \(media\.mediaId\) return app\.data\.media\.displayUrl\(media\)\.catch\(function \(\) \{ return ''; \}\);[\s\S]{0,140}return Promise\.resolve\(media\.url && u\.isAllowedImageUrl\(media\.url\) \? media\.url : ''\);/, "缩略图地址按当前归档项惰性读取，保留直链图片的安全回退");
+assert.match(viewerSource, /thumbObserver = new IntersectionObserver\(function \(items\) \{[\s\S]{0,700}hydrate\(node, Number\(node\.dataset\.galleryIndex\)\)/, "画廊缩略图进入视口后才读取地址，不能打开时全量加载");
 // **点画面一下 = 切换控件显隐**，不再关掉看图（业主第六轮改的就是这一条）。
 assert.match(viewerSource, /function toggleUi\(\) \{[\s\S]{0,160}?classList\.toggle\("is-ui-hidden", uiHidden\)/, "点一下画面必须切换控件显隐");
 assert.match(styles, /\.image-viewer\.is-ui-hidden \.image-viewer-toolbar,[\s\S]{0,140}?\.image-viewer\.is-ui-hidden \.image-viewer-gallery \{[^}]*visibility: hidden;/, "藏控件必须同时管住底部工具栏与画廊侧栏");

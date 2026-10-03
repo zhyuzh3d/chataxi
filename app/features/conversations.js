@@ -55,7 +55,7 @@
   }
 
   async function render() {
-    var conversations = (await store.list("conversations")).sort(function (a, b) { return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt; });
+    var conversations = (await store.list("conversations")).sort(function (a, b) { return Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0); });
     var roles = await store.list("roles"), llms = await store.list("llm-profiles"), drafts = await store.list("drafts");
     if (app.state.route !== "conversations") return;
     var roleMap = {}, draftMap = {};
@@ -73,12 +73,14 @@
         }).join("") + '</div><button class="button primary full" type="button" data-create><span>' + (available.length ? "开始第一次对话" : connected ? "继续 · 创建角色" : "开始 · 连接模型") + '</span>' + ui.icon("arrow-right") + '</button><p class="privacy-note">角色、服务和对话保存在当前设备</p></div></section>';
     } else {
       main.innerHTML = '<section class="page"><div class="list-toolbar">' + ui.search("搜索对话、角色或全部消息") + '<span class="count-label list-count" id="conversationCount">共 ' + conversations.length + ' 个对话</span></div><div class="list conversation-list" id="conversationList"></div></section>';
-      var searchIndex = {}, searchIndexReady = false, searchIndexPromise = null, searchTimer = 0, searchRevision = 0;
+      var searchIndex = {}, previewIndex = {}, searchIndexReady = false, searchIndexPromise = null, searchTimer = 0, searchRevision = 0;
       function ensureSearchIndex() {
         if (!searchIndexPromise) searchIndexPromise = (async function () {
           for (var i = 0; i < conversations.length; i += 1) {
             var messages = await store.messages(conversations[i].id);
             searchIndex[conversations[i].id] = messages.map(function (message) { return message.text || ""; }).join("\n").toLowerCase();
+            var scene = await store.openingScene(conversations[i].id, messages), first = messages.find(function (message) { return (message.kind === "user" || message.kind === "assistant") && message.status !== "error"; });
+            previewIndex[conversations[i].id] = String(scene && scene.text || first && (first.text || (first.media && first.media.length ? "[图片]" : "")) || conversations[i].openingSceneDraft || "").trim();
             if (i && i % 4 === 0) await new Promise(function (resolve) { setTimeout(resolve, 0); });
           }
           searchIndexReady = true;
@@ -88,16 +90,16 @@
       var paint = function () {
         var items = conversations.filter(function (conversation) {
           var names = conversation.roleIds.map(function (id) { return roleMap[id] ? roleMap[id].name : ""; }).join(" ");
-          var haystack = (conversation.title + " " + names + " " + (conversation.lastMessage || "")).toLowerCase();
+          var haystack = (conversation.title + " " + names + " " + (previewIndex[conversation.id] || conversation.openingSceneDraft || "")).toLowerCase();
           return haystack.indexOf(query.toLowerCase()) >= 0 || Boolean(query && searchIndexReady && (searchIndex[conversation.id] || "").indexOf(query.toLowerCase()) >= 0);
         });
         document.getElementById("conversationList").innerHTML = items.length ? items.map(function (conversation) {
           var participants = conversation.roleIds.map(function (id) { return roleMap[id]; }).filter(Boolean);
           var draft = draftMap[conversation.id];
-          var preview = draft ? "草稿 · " + (draft.text || "[图片]") : conversation.lastMessage || "发出第一条消息吧";
+          var preview = previewIndex[conversation.id] || conversation.openingSceneDraft || (draft ? "草稿 · " + (draft.text || "[图片]") : "发出第一条消息吧");
           var unavailable = participants.some(function (role) { return app.services.profiles.roleStatus(role, llms); }) || participants.length !== conversation.roleIds.length;
           var participantText = (participants.length > 1 ? "群聊" : "单聊") + "\u00a0|\u00a0" + participants.map(function (role) { return role.name; }).join(" · ");
-          return '<article class="card conversation-card"><button class="card-button conversation-open" type="button" data-open="' + u.escapeHtml(conversation.id) + '"><div class="conversation-head"><div class="avatar-stack">' + participants.slice(0, 2).map(function (role) { return ui.roleAvatar(role); }).join("") + '</div><div class="list-copy"><div class="conversation-title"><strong><span class="conversation-title-text">' + (conversation.pinned ? ui.icon("thumbtack") : '') + '<span>' + u.escapeHtml(conversation.title) + '</span></span></strong><time>' + u.escapeHtml(u.formatTime(conversation.updatedAt)) + '</time></div><p class="preview ' + (draft ? 'draft-preview' : '') + '">' + u.escapeHtml(preview) + '</p></div></div><div class="meta"><span>' + u.escapeHtml(participantText) + '</span>' + (unavailable ? '<span class="badge warning">需要修复配置</span>' : '') + '</div></button><div class="conversation-action-rail" role="group" aria-label="' + u.escapeHtml(conversation.title) + ' 对话操作"><button class="conversation-action-cell conversation-action-open" type="button" data-open="' + u.escapeHtml(conversation.id) + '" aria-label="进入 ' + u.escapeHtml(conversation.title) + '">' + ui.icon("comment") + '</button><button class="conversation-action-cell" type="button" data-manage="' + u.escapeHtml(conversation.id) + '" aria-label="管理 ' + u.escapeHtml(conversation.title) + '">' + ui.icon("gear") + '</button></div></article>';
+          return '<article class="card conversation-card"><button class="card-button conversation-open" type="button" data-open="' + u.escapeHtml(conversation.id) + '"><div class="conversation-head"><div class="avatar-stack">' + participants.slice(0, 2).map(function (role) { return ui.roleAvatar(role); }).join("") + '</div><div class="list-copy"><div class="conversation-title"><strong><span class="conversation-title-text">' + (conversation.pinned ? ui.icon("thumbtack") : '') + '<span>' + u.escapeHtml(conversation.title) + '</span></span></strong><time>' + u.escapeHtml(u.formatTime(conversation.updatedAt)) + '</time></div><p class="preview ' + (draft && !previewIndex[conversation.id] && !conversation.openingSceneDraft ? 'draft-preview' : '') + '">' + u.escapeHtml(preview) + '</p></div></div><div class="meta"><span>' + u.escapeHtml(participantText) + '</span>' + (unavailable ? '<span class="badge warning">需要修复配置</span>' : '') + '</div></button><div class="conversation-action-rail" role="group" aria-label="' + u.escapeHtml(conversation.title) + ' 对话操作"><button class="conversation-action-cell conversation-action-open" type="button" data-open="' + u.escapeHtml(conversation.id) + '" aria-label="进入 ' + u.escapeHtml(conversation.title) + '">' + ui.icon("comment") + '</button><button class="conversation-action-cell" type="button" data-manage="' + u.escapeHtml(conversation.id) + '" aria-label="管理 ' + u.escapeHtml(conversation.title) + '">' + ui.icon("gear") + '</button></div></article>';
         }).join("") : ui.empty("magnifying-glass", "没有找到对话", "换个关键词试试。", '');
         main.querySelectorAll("[data-open]").forEach(function (button) { button.addEventListener("click", ui.action(function () { return app.openChat(button.dataset.open); })); });
         main.querySelectorAll("[data-manage]").forEach(function (button) { button.addEventListener("click", ui.action(function () { return manage(button.dataset.manage); })); });
@@ -111,7 +113,7 @@
         paint();
         searchTimer = setTimeout(function () { ensureSearchIndex().then(function () { if (revision !== searchRevision || app.state.route !== "conversations") return; paint(); var matches = document.querySelectorAll("#conversationList .conversation-card").length; count.textContent = "共 " + matches + " 个结果"; }).catch(function (error) { count.textContent = "搜索失败"; ui.toast(u.cleanError(error)); }); }, 160);
       });
-      paint(); if (query) input.dispatchEvent(new Event("input"));
+      paint(); ensureSearchIndex().then(function () { if (app.state.route === "conversations") { paint(); if (query) input.dispatchEvent(new Event("input")); } }).catch(function (error) { ui.toast(u.cleanError(error)); });
     }
     document.querySelectorAll("[data-create]").forEach(function (button) { button.addEventListener("click", ui.action(guidedStart)); });
     var guideButton = document.querySelector("[data-connection-guide]");
@@ -225,6 +227,7 @@
       form.querySelectorAll("[data-conversation-panel]").forEach(function (panel) { panel.classList.toggle("is-hidden", panel.dataset.conversationPanel !== name); });
     }
     form.querySelectorAll("[data-conversation-tab]").forEach(function (button) { button.addEventListener("click", function () { selectTab(button.dataset.conversationTab); }); });
+    selectTab(activeTab);
 
     function selectSceneTab(name) {
       form.querySelectorAll("[data-scene-tab]").forEach(function (button) { button.setAttribute("aria-selected", String(button.dataset.sceneTab === name)); });

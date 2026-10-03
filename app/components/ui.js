@@ -90,6 +90,29 @@
   function cropGeometry(imageWidth, imageHeight, frameSize, zoom, offsetX, offsetY) {
     return cropGeometryRect(imageWidth, imageHeight, frameSize, frameSize, zoom, offsetX, offsetY);
   }
+  function canvasBlob(canvas, mime, quality, failureText) {
+    return new Promise(function (resolve, reject) {
+      var settled = false, timer = 0;
+      function finish(blob, error) {
+        if (settled) return; settled = true; if (timer) clearTimeout(timer);
+        if (blob) resolve(blob); else reject(error || new Error(failureText));
+      }
+      function fallback() {
+        if (settled) return;
+        try {
+          var parts = utils.dataUrlToParts(canvas.toDataURL(mime, quality));
+          if (!parts) throw new Error(failureText);
+          finish(utils.base64ToBlob(parts.data, parts.mime));
+        } catch (error) { finish(null, error); }
+      }
+      if (typeof canvas.toBlob !== "function") { fallback(); return; }
+      // Some older Android WebView builds never invoke toBlob's callback. The crop canvas is
+      // deliberately small (576x1024), so use its synchronous encoder as a bounded fallback.
+      timer = setTimeout(fallback, 1500);
+      try { canvas.toBlob(function (blob) { if (blob) finish(blob); else fallback(); }, mime, quality); }
+      catch (_) { fallback(); }
+    });
+  }
   // 统一的取景弹窗，头像与对话背景共用。
   //   mode "blob"    交出裁好的 JPEG（头像）；mode "framing" 交出缩放与平移量（背景，原图不动）。
   //   keepSource     成功后保留源文件（背景要把这个 HaminnFile 直接存进对话记录）。
@@ -130,9 +153,9 @@
       // 算出来的比例会漂零点几个像素, 而定妆照要的是**确切**的 576×1024。
       var width = Math.max(1, Math.round(outputWidth)), height = Math.max(1, Math.round(outputHeight || width / (frame.width / frame.height)));
       var canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
-      var context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
+      var context = canvas.getContext("2d"); if (!context) throw new Error(labels.failed); context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
       context.drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceWidth, geometry.sourceHeight, 0, 0, width, height);
-      var output = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/jpeg", quality); }); if (!output) throw new Error(labels.failed); return output;
+      return canvasBlob(canvas, "image/jpeg", quality, labels.failed || "裁切图片生成失败");
     }, onSuccess: async function (output) { if (!settings.keepSource) release(); cleanup.forEach(function (fn) { fn(); }); released = true; await settings.onCropped(output); } });
     var stage = form.querySelector("[data-crop-stage]"), preview = form.querySelector("#cropCanvas");
     function stageFrame() {

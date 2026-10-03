@@ -140,6 +140,7 @@
     // 而它刚上传的图片字节也没有任何地方会去释放。
     if (!(await store.get("conversations", id))) { await store.releaseMedia(message.media); return; }
     await store.putMessage(message);
+    await store.archiveGeneratedImages(id, message);
     await refreshPreview(id);
     changed(id, "updated", { message: message });
   }
@@ -257,8 +258,8 @@
         if (reason) throw new Error((role ? role.name + "：" : "") + reason + "，请在角色页修复");
         return role;
       });
-      var autoSpeak = (conversation.autoSpeak == null ? Boolean(settings.autoSpeak) : Boolean(conversation.autoSpeak)) && !conversation.ttsMuted;
-      function canAutoSpeak() { return autoSpeak && !(app.services.tts.isMuted && app.services.tts.isMuted()) && app.state.activeConversationId === id; }
+      var autoSpeak = conversation.autoSpeak == null ? Boolean(settings.autoSpeak) : Boolean(conversation.autoSpeak);
+      function canAutoSpeak() { return autoSpeak && app.services.tts.conversationEnabled(id) && app.state.activeConversationId === id; }
       if (task.cancelled) throw cancelled();
       if (!retry && !resume && !userMessage) {
         var text = String(options.text || "").trim();
@@ -285,7 +286,7 @@
         changed(id, "generating", { message: pending, roleId: role.id, roleName: role.name });
         var voiceStream = null, spokenLength = 0;
         if (canAutoSpeak() && i === selected.length - 1) {
-          try { voiceStream = await app.services.tts.createStream(role, pending.id, { autoPlay: true, minBufferSeconds: 3 }); }
+          try { voiceStream = canAutoSpeak() ? await app.services.tts.createStream(role, pending.id, { autoPlay: true, minBufferSeconds: 3, conversationId: id }) : null; }
           catch (voiceError) { changed(id, "notice", { text: "流式朗读不可用，将在回复完成后处理：" + app.utils.cleanError(voiceError) }); }
         }
         task.onStreamRetry = async function () {
@@ -294,11 +295,11 @@
           pending.text = ""; spokenLength = 0;
           changed(id, "delta", { messageId: pending.id, text: "", fallback: false });
           await store.putMessage(pending);
-          if (voiceStream) await app.services.tts.stop().catch(function () {});
+          if (voiceStream) await app.services.tts.stopConversation(id).catch(function () {});
           voiceStream = null;
           changed(id, "notice", { text: "网络连接意外中断，正在自动重试一次" });
           if (canAutoSpeak() && i === selected.length - 1) {
-            try { voiceStream = await app.services.tts.createStream(role, pending.id, { autoPlay: true, minBufferSeconds: 3 }); }
+            try { voiceStream = canAutoSpeak() ? await app.services.tts.createStream(role, pending.id, { autoPlay: true, minBufferSeconds: 3, conversationId: id }) : null; }
             catch (voiceError) { changed(id, "notice", { text: "流式朗读不可用，将在回复完成后处理：" + app.utils.cleanError(voiceError) }); }
           }
         };
@@ -346,11 +347,11 @@
           if (voiceStream) voiceStream.finish(result.text).catch(function (error) {
             var fallback = !voiceStream.started;
             changed(id, "notice", { text: (fallback ? "流式朗读不可用，已改用完整音频：" : "流式朗读中断：") + app.utils.cleanError(error) });
-            if (fallback && !task.cancelled && canAutoSpeak()) app.services.tts.speak(result.text, role).catch(function (fallbackError) { changed(id, "notice", { text: "自动朗读失败：" + app.utils.cleanError(fallbackError) }); });
+            if (fallback && !task.cancelled && canAutoSpeak()) app.services.tts.speak(result.text, role, { conversationId: id }).catch(function (fallbackError) { changed(id, "notice", { text: "自动朗读失败：" + app.utils.cleanError(fallbackError) }); });
           });
           lastSuccessful = { message: pending, role: role, voiceStream: voiceStream };
         } catch (error) {
-          if (voiceStream) await app.services.tts.stop().catch(function () {});
+          if (voiceStream) await app.services.tts.stopConversation(id).catch(function () {});
           pending.status = error.cancelled ? "cancelled" : "error";
           pending.error = error.cancelled ? "本轮已停止" : app.utils.cleanError(error);
           if (error.cancelled) pending.text = "";
@@ -365,6 +366,7 @@
         var carryRaw = "";
         if (action && !completedMessage.text && completedMessage.status === "done") {
           carryRaw = String(completedMessage.rawText || "");
+          if (completedMessage.media && completedMessage.media.length) await store.archiveGeneratedImages(id, completedMessage);
           await store.removeMessage(completedMessage);
           if (!retry) {
             var index = messages.map(function (item) { return item.id; }).indexOf(completedMessage.id);
@@ -373,6 +375,7 @@
           changed(id, "removed", { messageId: completedMessage.id });
         } else {
           await store.putMessage(completedMessage);
+          if (completedMessage.status === "done" && completedMessage.media && completedMessage.media.length) await store.archiveGeneratedImages(id, completedMessage);
           if (!retry) messages.push(completedMessage);
           await refreshPreview(id);
           changed(id, "updated", { message: completedMessage });
@@ -388,7 +391,7 @@
         }
       }
       if (!task.cancelled && canAutoSpeak() && lastSuccessful && !lastSuccessful.voiceStream && lastSuccessful.message.text) {
-        app.services.tts.speak(lastSuccessful.message.text, lastSuccessful.role).catch(function (error) { changed(id, "notice", { text: "自动朗读失败：" + app.utils.cleanError(error) }); });
+        app.services.tts.speak(lastSuccessful.message.text, lastSuccessful.role, { conversationId: id }).catch(function (error) { changed(id, "notice", { text: "自动朗读失败：" + app.utils.cleanError(error) }); });
       }
     } catch (error) {
       if (pending) {

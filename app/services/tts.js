@@ -1,6 +1,6 @@
 (function (app) {
   "use strict";
-  var generation = 0, current = null, ready = {}, muted = false, lastState = { speaking: false };
+  var generation = 0, current = null, ready = {}, muted = false, conversationSwitches = {}, lastState = { speaking: false };
   var MAX_READY_ITEMS = 8, MAX_READY_PCM_BYTES = 24 * 1024 * 1024;
   var audioContext = null, playbackUnlocked = false;
   var bus = null, currentSettings = null, ambienceLevel = 0;
@@ -39,6 +39,31 @@
       source.buffer = audioContext.createBuffer(1, 1, 22050); source.connect(audioContext.destination); source.start(0);
       ensureBus(); playbackUnlocked = true; return true;
     } catch (_) { return false; }
+  }
+
+  function conversationEnabled(conversationId) { return !conversationId || conversationSwitches[conversationId] !== false; }
+
+  async function stopConversation(conversationId) {
+    if (!conversationId) return false;
+    var owner = current && current.conversationId === conversationId ? current : null;
+    var pending = backgroundResume && backgroundResume.conversationId === conversationId ? backgroundResume : null;
+    var paused = pausedPlayback && pausedPlayback.owner && pausedPlayback.owner.conversationId === conversationId ? pausedPlayback : null;
+    if (!owner && !pending && !paused) return false;
+    generation += 1;
+    if (owner) current = null;
+    if (paused) pausedPlayback = null;
+    if (pending) backgroundResume = null;
+    await stopOwner(owner || paused && paused.owner);
+    if (owner || paused) stopAmbience();
+    emit({ speaking: false, messageId: owner && owner.messageId || paused && paused.owner.messageId || "", conversationId: conversationId });
+    return true;
+  }
+
+  async function setConversationEnabled(conversationId, enabled) {
+    if (!conversationId) return false;
+    conversationSwitches[conversationId] = Boolean(enabled);
+    if (!enabled) await stopConversation(conversationId);
+    return conversationSwitches[conversationId];
   }
 
   // ==========================================================================
@@ -784,6 +809,7 @@
   }
 
   function attachPcmPlayer(owner, token, options) {
+    owner.conversationId = options && options.conversationId || owner.conversationId || "";
     owner.pcmQueue = []; owner.pcmSources = []; owner.pcmRemainder = null; owner.bufferedSeconds = 0; owner.started = false; owner.starved = false; owner.finished = false; owner.pcmActive = 0; owner.pcmNextTime = 0;
     owner.pcmCache = []; owner.pcmCacheBytes = 0; owner.pcmSampleRate = 0; owner.cacheOverflow = false;
     var resolveDone, rejectDone;
@@ -927,16 +953,20 @@
     owner.utteranceId = result.utteranceId;
   }
 
-  async function speak(text, role) {
+  async function speak(text, role, options) {
+    options = options || {};
+    var conversationId = options.conversationId || "";
+    if (conversationId && !conversationEnabled(conversationId)) return;
     var clean = cleanText(text); if (!clean) return;
     if (backgrounded) {
-      await stop(); backgroundResume = { kind: "speak", text: clean, role: role };
+      await stop(); backgroundResume = { kind: "speak", text: clean, role: role, conversationId: conversationId };
       emit({ speaking: false, suspended: true }); return;
     }
     await stop();
-    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], resumeRequest: { kind: "speak", text: clean, role: role } }; current = owner;
+    if (conversationId && !conversationEnabled(conversationId)) return;
+    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], conversationId: conversationId, resumeRequest: { kind: "speak", text: clean, role: role, conversationId: conversationId } }; current = owner;
     var resolved = await profileFor(role);
-    if (token !== generation) return;
+    if (token !== generation || conversationId && !conversationEnabled(conversationId)) return;
     emit({ speaking: true });
     // 拿到配置之后、真正出声之前就把音效就位: 混响是常驻总线上的一个参数, 环境声则提前
     // 淡入 —— 听感上"房间一直都在", 而不是每句话重新开一次。
@@ -973,7 +1003,7 @@
         } catch (streamError) {
           var recoverable = streamError.streamUnavailable || streamError.code === "E_NETWORK" && streamError.retryable === true;
           if (!recoverable || owner.started) throw streamError;
-          await stopOwner(owner); token = ++generation; owner = { cancelled: false, task: { cancelled: false }, clips: [], resumeRequest: { kind: "speak", text: clean, role: role } }; current = owner; emit({ speaking: true });
+          await stopOwner(owner); token = ++generation; owner = { cancelled: false, task: { cancelled: false }, clips: [], conversationId: conversationId, resumeRequest: { kind: "speak", text: clean, role: role, conversationId: conversationId } }; current = owner; emit({ speaking: true });
         }
       }
       var clip = await synthesize(clean, resolved.profile, owner.task, false); if (!clip || token !== generation) return;
@@ -1009,12 +1039,16 @@
     var task = { cancelled: false }, clip = await synthesize(app.i18n.pick("你好", "Hello"), profile, task, false); await disposeClip(clip); return { modelId: model, voiceId: voice };
   }
 
-  async function playReady(messageId) {
+  async function playReady(messageId, options) {
+    options = options || {};
+    var conversationId = options.conversationId || "";
+    if (conversationId && !conversationEnabled(conversationId)) return false;
     var item = ready[messageId]; if (!item) return false;
-    if (backgrounded) { backgroundResume = { kind: "ready", messageId: messageId }; emit({ speaking: false, suspended: true, messageId: messageId }); return true; }
-    if (item.clip) delete ready[messageId];
+    if (backgrounded) { backgroundResume = { kind: "ready", messageId: messageId, conversationId: conversationId }; emit({ speaking: false, suspended: true, messageId: messageId }); return true; }
     await stop();
-    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], messageId: messageId, resumeRequest: { kind: "ready", messageId: messageId, item: item } }; current = owner; emit({ speaking: true, messageId: messageId });
+    if (conversationId && !conversationEnabled(conversationId)) return false;
+    if (item.clip) delete ready[messageId];
+    var token = ++generation, owner = { cancelled: false, task: { cancelled: false }, clips: [], messageId: messageId, conversationId: conversationId, resumeRequest: { kind: "ready", messageId: messageId, item: item, conversationId: conversationId } }; current = owner; emit({ speaking: true, messageId: messageId, conversationId: conversationId });
     applyAudioFx(await app.data.store.get("meta", "settings"));
     startAmbience();
     try {
@@ -1211,8 +1245,13 @@
   }
 
   async function createStream(role, messageId, options) {
+    options = options || {};
+    if (options.conversationId && !conversationEnabled(options.conversationId)) return null;
     await stop();
-    var resolved = await profileFor(role), capabilities = app.services.modelServices.ttsCapabilities(resolved.service, resolved.profile.model);
+    if (options.conversationId && !conversationEnabled(options.conversationId)) return null;
+    var resolved = await profileFor(role);
+    if (options.conversationId && !conversationEnabled(options.conversationId)) return null;
+    var capabilities = app.services.modelServices.ttsCapabilities(resolved.service, resolved.profile.model);
     if (resolved.profile.type === "system" || !capabilities.audioStreaming || !pcmStreamProfile(resolved.profile) || !playbackUnlocked || !audioContext) return null;
     var token = ++generation, owner;
     if ((resolved.profile.protocol === "elevenlabs" || resolved.profile.type === "elevenlabs") && capabilities.textStreaming) {
@@ -1225,6 +1264,7 @@
       try { owner = await createQwenSocketOwner(resolved.profile, role, messageId, options || {}, token); }
       catch (error) { if (!error.streamUnavailable) throw error; owner = createPcmTextOwner(resolved.profile, role, messageId, options || {}, token); }
     } else owner = createPcmTextOwner(resolved.profile, role, messageId, options || {}, token);
+    if (options.conversationId && !conversationEnabled(options.conversationId)) { await stopOwner(owner); return null; }
     current = owner;
     emit({ speaking: false, buffering: true, messageId: messageId, bufferedSeconds: 0 }); return owner;
   }
@@ -1273,8 +1313,8 @@
     }
     if (audioContext && playbackUnlocked && audioContext.state === "suspended" && typeof audioContext.resume === "function") await audioContext.resume();
     var request = backgroundResume; backgroundResume = null;
-    if (!request || muted) return false;
-    var restarted = request.kind === "ready" ? playReady(request.messageId) : speak(request.text, request.role);
+    if (!request || muted || request.conversationId && !conversationEnabled(request.conversationId)) return false;
+    var restarted = request.kind === "ready" ? playReady(request.messageId, { conversationId: request.conversationId }) : speak(request.text, request.role, { conversationId: request.conversationId });
     restarted.catch(function (error) { app.events.emit("tts:error", { message: "继续朗读失败：" + app.utils.cleanError(error) }); });
     return true;
   }
@@ -1294,5 +1334,5 @@
   }
   if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", function () { queueLifecycle(Boolean(document.hidden)); });
 
-  app.services.tts = { speak: speak, stop: stop, headers: headers, requestBody: requestBody, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, applyAudioFx: applyAudioFx, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); }, pauseForBackground: pauseForBackground, resumeAfterBackground: resumeAfterBackground };
+  app.services.tts = { speak: speak, stop: stop, stopConversation: stopConversation, setConversationEnabled: setConversationEnabled, conversationEnabled: conversationEnabled, headers: headers, requestBody: requestBody, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, applyAudioFx: applyAudioFx, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); }, pauseForBackground: pauseForBackground, resumeAfterBackground: resumeAfterBackground };
 })(window.chataxi);

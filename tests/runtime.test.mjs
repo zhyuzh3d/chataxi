@@ -27,7 +27,7 @@ function runtime(files = []) {
   // tts.js 会在合成前后访问朗读缓存（app/services/tts-cache.js）。它是 tts 的服务级依赖, 所以和
   // store/catalog 一样预先装载 —— 否则每个 TTS 测试都得自己把它列进 files。
   load('app/services/tts-cache.js');
-  app.services.tts = { speak: async () => {} };
+  app.services.tts = { speak: async () => {}, conversationEnabled: () => true, stopConversation: async () => false };
   files.forEach(load);
   return { app, context, values, removedMedia, fault(fn) { fault = fn; }, load };
 }
@@ -68,6 +68,38 @@ function fakeSocket(onSend) {
     }
   };
 }
+
+test('generated images outlive message deletion and can only be deleted when unused', async () => {
+  const env = await fixture(), store = env.app.data.store;
+  const message = { id: 'generated-message', conversationId: 'c', kind: 'assistant', text: '', media: [{ mediaId: 'generated-media', mime: 'image/png', alt: '生成图' }], status: 'done', createdAt: 5 };
+  await store.putMessage(message);
+  const [archive] = await store.archiveGeneratedImages('c', message);
+  assert.ok(archive.storageKey);
+  assert.equal((await store.generatedImagesWithUsage('c'))[0].inUse, true);
+  await assert.rejects(store.deleteGeneratedImage(archive.storageKey, 'c'), /正在对话消息中使用/);
+  assert.deepEqual(env.removedMedia, [], 'a referenced original file must stay on disk');
+  await store.removeMessage(message);
+  assert.equal((await store.generatedImages('c')).length, 1, 'deleting its message must leave the archive entry');
+  assert.deepEqual(env.removedMedia, [], 'archive references must keep the original file alive');
+  assert.equal((await store.generatedImagesWithUsage('c'))[0].inUse, false);
+  const removeMedia = env.app.data.media.remove;
+  env.app.data.media.remove = async () => { throw Error('设备文件暂时不可用'); };
+  await assert.rejects(store.deleteGeneratedImage(archive.storageKey, 'c'), /设备文件暂时不可用/);
+  assert.equal((await store.generatedImages('c')).length, 1, 'a failed original-file deletion must keep its gallery record');
+  env.app.data.media.remove = removeMedia;
+  assert.equal(await store.deleteGeneratedImage(archive.storageKey, 'c'), true);
+  assert.equal((await store.generatedImages('c')).length, 0, 'gallery deletion removes its history record');
+  assert.deepEqual(env.removedMedia, ['generated-media'], 'gallery deletion releases the original file');
+});
+
+test('opening the generated-image gallery backfills images saved by older app versions', async () => {
+  const { app } = await fixture(), store = app.data.store;
+  await store.putMessage({ id: 'legacy-generated', conversationId: 'c', kind: 'assistant', text: '', media: [{ mediaId: 'old-image', mime: 'image/jpeg' }], status: 'done', createdAt: 21 });
+  const [archive] = await store.generatedImages('c');
+  assert.equal(archive.messageId, 'legacy-generated');
+  assert.equal(archive.createdAt, 21);
+  assert.equal((await store.generatedImages('c')).length, 1, 'backfill should be idempotent');
+});
 
 test('an opening scene materializes exactly once as the first ordinary system message', async () => {
   const { app } = await fixture(), store = app.data.store;
@@ -174,7 +206,7 @@ test('a retried reply resets its partial bubble and streaming readout before con
   const conversation = await app.data.store.get('conversations', 'c'); conversation.kind = 'single'; conversation.roleIds = ['a']; conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
   app.services.tts = {
     createStream: async () => { const owner = { started: false, text: '', append(delta) { this.text += delta; }, async finish(text) { this.finished = text; } }; voices.push(owner); return owner; },
-    stop: async () => { stops++; }, speak: async () => {}
+    stop: async () => { stops++; }, stopConversation: async () => { stops++; }, conversationEnabled: () => true, speak: async () => {}
   };
   app.platform.network = { requestSse: async options => {
     attempts++;
@@ -825,9 +857,10 @@ test('the compression summary stays hand-editable without moving its boundary', 
 test('conversation mute suppresses future automatic readout without affecting generation', async () => {
   const { app } = await fixture(); let spoken = 0;
   app.state.activeConversationId = 'c';
-  app.services.tts = { createStream: async () => null, prepare: async () => false, speak: async () => { spoken++; } };
+  app.services.tts = { createStream: async () => null, prepare: async () => false, speak: async () => { spoken++; }, conversationEnabled: () => true, stopConversation: async () => false };
   app.services.llm.complete = async () => result('需要朗读的回复');
   const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; conversation.ttsMuted = true; await app.data.store.put('conversations', 'c', conversation);
+  app.services.tts.conversationEnabled = () => !conversation.ttsMuted;
   await app.features.chatSession.run('c', { text: '静音轮', roleIds: ['a'] }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(spoken, 0);
   conversation.ttsMuted = false; await app.data.store.put('conversations', 'c', conversation);
@@ -838,7 +871,7 @@ test('conversation mute suppresses future automatic readout without affecting ge
 test('automatic readout always attempts the capability-driven stream before full-audio fallback', async () => {
   const { app } = await fixture(); let requested = 0, prepared = 0, spoken = 0;
   app.state.activeConversationId = 'c';
-  app.services.tts = { createStream: async () => { requested++; return null; }, prepare: async () => { prepared++; return true; }, speak: async () => { spoken++; } };
+  app.services.tts = { createStream: async () => { requested++; return null; }, prepare: async () => { prepared++; return true; }, speak: async () => { spoken++; }, conversationEnabled: () => true, stopConversation: async () => false };
   app.services.llm.complete = async () => result('完整回复后朗读');
   const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; conversation.streamTtsPlayback = false; await app.data.store.put('conversations', 'c', conversation);
   await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -848,7 +881,7 @@ test('automatic readout always attempts the capability-driven stream before full
 test('automatic readout falls back once when a stream channel fails before returning audio', async () => {
   const { app } = await fixture(); let spoken = 0;
   app.state.activeConversationId = 'c';
-  app.services.tts = { createStream: async () => ({ append() {}, finish: async () => { const error = Error('stream unavailable'); error.streamReceived = false; throw error; } }), speak: async () => { spoken++; }, stop: async () => {} };
+  app.services.tts = { createStream: async () => ({ append() {}, finish: async () => { const error = Error('stream unavailable'); error.streamReceived = false; throw error; } }), speak: async () => { spoken++; }, stop: async () => {}, conversationEnabled: () => true, stopConversation: async () => false };
   app.services.llm.complete = async () => result('仍应完整朗读');
   const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
   await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
@@ -859,7 +892,7 @@ test('automatic readout falls back once when a stream channel fails before retur
 test('automatic readout falls back when audio bytes arrived but playback never started', async () => {
   const { app } = await fixture(); let spoken = 0;
   app.state.activeConversationId = 'c';
-  app.services.tts = { createStream: async () => ({ started: false, append() {}, finish: async () => { const error = Error('Software caused connection abort'); error.streamReceived = true; throw error; } }), speak: async () => { spoken++; }, stop: async () => {} };
+  app.services.tts = { createStream: async () => ({ started: false, append() {}, finish: async () => { const error = Error('Software caused connection abort'); error.streamReceived = true; throw error; } }), speak: async () => { spoken++; }, stop: async () => {}, conversationEnabled: () => true, stopConversation: async () => false };
   app.services.llm.complete = async () => result('仍应自动朗读');
   const conversation = await app.data.store.get('conversations', 'c'); conversation.autoSpeak = true; await app.data.store.put('conversations', 'c', conversation);
   await app.features.chatSession.run('c', { text: '请回答', roleIds: ['a'] });
@@ -871,7 +904,7 @@ test('muting before a reply completes suppresses its automatic full-audio fallba
   const { app } = await fixture(); let muted = false, spoken = 0;
   app.state.activeConversationId = 'c';
   app.services.tts = {
-    isMuted: () => muted,
+    isMuted: () => muted, conversationEnabled: () => !muted, stopConversation: async () => false,
     createStream: async () => ({ started: false, append() {}, finish: async () => { throw Error('stream unavailable'); } }),
     speak: async () => { spoken++; }, stop: async () => {}
   };

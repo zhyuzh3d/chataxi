@@ -4,7 +4,7 @@
   var prefix = "chataxi.v1.";
   // `media` 是 app/data/media.js 的宿主文件索引（logicalFileId / url / 元数据），不是模型卡片，
   // 所以不进 profileCollection()。加进白名单是为了让 store.put/remove 能直接服务媒体索引。
-  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "image-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "remote-media", "model-catalog", "model-directory", "tts-cache", "media"];
+  var collections = ["meta", "credentials", "llm-profiles", "tts-profiles", "image-profiles", "asr-profiles", "roles", "conversations", "messages", "drafts", "message-text", "summaries", "generated-images", "remote-media", "model-catalog", "model-directory", "tts-cache", "media"];
   var secretFields = ["apiKey", "accessKeyId", "sessionToken", "customHeaders"];
 
   function localKey(collection, key) { return prefix + collection + "." + key; }
@@ -425,6 +425,97 @@
     return items;
   }
 
+  async function generatedImages(conversationId) {
+    // 旧版本没有独立图库记录。第一次打开图库时，从仍留在消息里的角色图片补齐历史；
+    // 已删除消息的图片只有升级前没有留下任何来源，无法凭空恢复。
+    if (conversationId) {
+      var history = await messages(conversationId), existing = await api().scan("generated-images", conversationId + ":"), known = {};
+      (existing.items || []).forEach(function (item) { if (item.key) known[item.key] = true; });
+      for (var historyIndex = 0; historyIndex < history.length; historyIndex += 1) {
+        var message = history[historyIndex];
+        if (message.kind !== "assistant" || message.status !== "done" || !(message.media || []).length) continue;
+        var missing = (message.media || []).some(function (media, index) {
+          var kind = media.kind || (String(media.mime || "").toLowerCase().indexOf("video/") === 0 ? "video" : "image");
+          var identity = media.mediaId || media.logicalFileId || media.url || String(index);
+          return kind === "image" && !known[conversationId + ":" + message.id + ":" + stableSuffix(identity)];
+        });
+        if (missing) {
+          var archived = await archiveGeneratedImages(conversationId, message, Number(message.createdAt) || Date.now());
+          archived.forEach(function (item) { known[item.storageKey] = true; });
+        }
+      }
+    }
+    var result = await api().scan("generated-images", conversationId ? conversationId + ":" : "");
+    return (result.items || []).map(function (item) { return Object.assign({ storageKey: item.key }, item.value || {}); })
+      .filter(function (item) { return !conversationId || item.conversationId === conversationId; })
+      .sort(function (left, right) { return Number(right.createdAt || 0) - Number(left.createdAt || 0) || String(right.id).localeCompare(String(left.id)); });
+  }
+
+  async function archiveGeneratedImages(conversationId, message, sortTime) {
+    var media = message && message.media || [], saved = [], now = Number(sortTime) || Date.now();
+    for (var i = 0; i < media.length; i += 1) {
+      var item = media[i], kind = item.kind || (String(item.mime || "").toLowerCase().indexOf("video/") === 0 ? "video" : "image");
+      if (kind !== "image") continue;
+      var mediaIdentity = item.mediaId || item.logicalFileId || item.url || String(i);
+      var id = String(message.id) + ":" + stableSuffix(mediaIdentity), entry = {
+        id: id, conversationId: conversationId, messageId: message.id,
+        mediaId: item.mediaId || "", logicalFileId: item.logicalFileId || "", url: item.url || "",
+        mime: item.mime || "image/*", alt: item.alt || String(message.draw && message.draw.prompt || "AI 图片"),
+        prompt: String(message.draw && message.draw.prompt || ""), createdAt: now + i, messageCreatedAt: Number(message.createdAt || now)
+      };
+      entry.storageKey = conversationId + ":" + id;
+      await put("generated-images", entry.storageKey, entry);
+      saved.push(entry);
+    }
+    return saved;
+  }
+
+  async function generatedImageInUse(entry) {
+    if (!entry || (!entry.mediaId && !entry.logicalFileId && !entry.url)) return false;
+    var records = await list("messages");
+    return records.some(function (message) {
+      return (message.media || []).some(function (item) {
+        return entry.mediaId && item.mediaId === entry.mediaId || entry.logicalFileId && item.logicalFileId === entry.logicalFileId || entry.url && item.url === entry.url;
+      });
+    });
+  }
+
+  async function generatedImagesWithUsage(conversationId) {
+    var entries = await generatedImages(conversationId), records = await list("messages"), used = {};
+    records.forEach(function (message) { (message.media || []).forEach(function (item) {
+      if (item.mediaId) used["m:" + item.mediaId] = true;
+      if (item.logicalFileId) used["f:" + item.logicalFileId] = true;
+      if (item.url) used["u:" + item.url] = true;
+    }); });
+    return entries.map(function (entry) { entry.inUse = Boolean(entry.mediaId && used["m:" + entry.mediaId] || entry.logicalFileId && used["f:" + entry.logicalFileId] || entry.url && used["u:" + entry.url]); return entry; });
+  }
+
+  async function deleteGeneratedImage(storageKey, conversationId) {
+    var entry = await get("generated-images", storageKey);
+    if (!entry || conversationId && entry.conversationId !== conversationId) return false;
+    if (await generatedImageInUse(entry)) throw new Error("这张图片正在对话消息中使用，不能删除");
+    await releaseMedia([{ mediaId: entry.mediaId, logicalFileId: entry.logicalFileId }], [storageKey]);
+    await remove("generated-images", storageKey);
+    return true;
+  }
+
+  async function deleteUnusedGeneratedImages(conversationId) {
+    var entries = await generatedImages(conversationId), used = await list("messages"), removable = entries.filter(function (entry) {
+      return !used.some(function (message) { return (message.media || []).some(function (item) {
+        return entry.mediaId && item.mediaId === entry.mediaId || entry.logicalFileId && item.logicalFileId === entry.logicalFileId || entry.url && item.url === entry.url;
+      }); });
+    });
+    var removed = [];
+    for (var i = 0; i < removable.length; i += 1) {
+      try {
+        await releaseMedia([{ mediaId: removable[i].mediaId, logicalFileId: removable[i].logicalFileId }], [removable[i].storageKey]);
+        await remove("generated-images", removable[i].storageKey);
+        removed.push(removable[i].storageKey);
+      } catch (error) { error.deletedStorageKeys = removed; throw error; }
+    }
+    return removed;
+  }
+
   async function routingRecords(conversationId) {
     return sortMessages((await list("messages", conversationId + ":")).filter(function (item) { return item.kind === "routing"; }));
   }
@@ -528,9 +619,12 @@
     return removed;
   }
 
-  async function releaseMedia(candidates) {
+  async function releaseMedia(candidates, ignoredArchiveKeys) {
     if (!candidates.length) return;
-    var references = (await list("messages")).concat(await list("drafts"));
+    var ignored = {}, archived = await list("generated-images");
+    (ignoredArchiveKeys || []).forEach(function (key) { ignored[key] = true; });
+    archived = archived.filter(function (item) { return !ignored[item.storageKey]; });
+    var references = (await list("messages")).concat(await list("drafts"), archived.map(function (item) { return { media: [item] }; }));
     var used = {}, usedLogical = {};
     references.forEach(function (item) { (item.media || []).forEach(function (media) { if (media.mediaId) used[media.mediaId] = true; if (media.logicalFileId) usedLogical[media.logicalFileId] = true; }); });
     (await list("roles")).forEach(function (role) { if (role.avatarMediaId) used[role.avatarMediaId] = true; if (role.portraitMediaId) used[role.portraitMediaId] = true; });
@@ -538,9 +632,15 @@
     var userProfile = await get("meta", "user-profile"); if (userProfile && userProfile.avatarMediaId) used[userProfile.avatarMediaId] = true;
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = typeof candidates[i] === "string" ? { mediaId: candidates[i] } : candidates[i] || {};
-      if (candidate.mediaId && !used[candidate.mediaId]) await app.data.media.remove(candidate.mediaId);
-      if (candidate.logicalFileId && !usedLogical[candidate.logicalFileId] && app.platform.haminn.available()) {
-        await app.platform.haminn.api().files.delete({ logicalFileId: candidate.logicalFileId }).catch(function () {});
+      if (candidate.mediaId) {
+        if (!used[candidate.mediaId]) await app.data.media.remove(candidate.mediaId);
+        continue;
+      }
+      if (candidate.logicalFileId && !usedLogical[candidate.logicalFileId]) {
+        if (!app.platform.haminn.available()) throw new Error("宿主文件库当前不可用，原图没有删除");
+        var files = app.platform.haminn.api().files;
+        if (!files || typeof files.delete !== "function") throw new Error("宿主文件库当前不可用，原图没有删除");
+        await files.delete({ logicalFileId: candidate.logicalFileId });
       }
     }
   }
@@ -549,7 +649,9 @@
     var records = await api().scan("messages", conversationId + ":");
     var draft = await get("drafts", conversationId);
     var conversation = await get("conversations", conversationId);
+    var archived = await generatedImages(conversationId);
     var media = (draft && draft.media || []).slice();
+    archived.forEach(function (item) { media.push({ mediaId: item.mediaId, logicalFileId: item.logicalFileId }); });
     if (conversation && conversation.userAvatarMediaId) media.push({ mediaId: conversation.userAvatarMediaId });
     if (conversation && conversation.background) {
       if (conversation.background.mediaId) media.push({ mediaId: conversation.background.mediaId });
@@ -562,6 +664,7 @@
       await removeText(value.textStorageId);
     }
     await remove("drafts", conversationId);
+    for (var archiveIndex = 0; archiveIndex < archived.length; archiveIndex += 1) await remove("generated-images", archived[archiveIndex].storageKey);
     await remove("summaries", conversationId);
     var summaries = await api().scan("summaries", conversationId + ":");
     for (var summaryIndex = 0; summaryIndex < summaries.items.length; summaryIndex += 1) await api().delete("summaries", summaries.items[summaryIndex].key);
@@ -578,6 +681,12 @@
     remove: remove,
     list: list,
     messages: messages,
+    generatedImages: generatedImages,
+    generatedImagesWithUsage: generatedImagesWithUsage,
+    archiveGeneratedImages: archiveGeneratedImages,
+    generatedImageInUse: generatedImageInUse,
+    deleteGeneratedImage: deleteGeneratedImage,
+    deleteUnusedGeneratedImages: deleteUnusedGeneratedImages,
     routingRecords: routingRecords,
     openingScene: openingScene,
     prepareOpeningScene: prepareOpeningScene,

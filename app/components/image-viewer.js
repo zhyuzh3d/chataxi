@@ -42,13 +42,8 @@
   // 1MP 的图（每张展开约 4MB），在 WebView 里够呛。缩略图自己进视口时才去要地址（见 hydrate）。
   // 每一格带一个序号，点击与"当前是哪张"都靠它对上 gallery 的下标。
   function galleryMarkup(gallery) {
-    if (gallery.length < 2) return "";
-    var html = '<div class="image-viewer-gallery" role="group" aria-label="本对话的图片"><div class="image-viewer-gallery-list">';
-    for (var i = 0; i < gallery.length; i += 1) {
-      html += '<button type="button" class="image-viewer-thumb" data-gallery-index="' + i + '" aria-label="查看这张图片">' +
-        '<img alt="" referrerpolicy="no-referrer" decoding="async"></button>';
-    }
-    return html + '</div></div>';
+    if (!gallery.length) return "";
+    return '<div class="image-viewer-gallery" role="group" aria-label="本对话的生图记录"><div class="image-viewer-gallery-list"></div><div class="image-viewer-gallery-footer"><button type="button" class="image-viewer-delete-unused" data-delete-unused>删除所有未使用图片</button></div></div>';
   }
 
   function open(options) {
@@ -90,8 +85,8 @@
     var galleryButton = toolbar.querySelector('[data-viewer-action="gallery"]');
     var downloadButton = toolbar.querySelector('[data-viewer-action="download"]');
     var backgroundButton = toolbar.querySelector('[data-viewer-action="background"]');
-    var thumbs = panel ? Array.prototype.slice.call(panel.querySelectorAll(".image-viewer-thumb")) : [];
-    if (gallery.length < 2) galleryButton.hidden = true;
+    var thumbs = [];
+    if (gallery.length < 1) galleryButton.hidden = true;
     image.alt = String(entry && entry.alt || settings.alt || "对话图片");
     image.src = src;
 
@@ -207,26 +202,62 @@
           button.dataset.thumbState = "ready";
         });
     }
-    if (panel) {
+    function paintGallery() {
+      if (!panel) return;
+      var list = panel.querySelector(".image-viewer-gallery-list");
+      list.innerHTML = gallery.map(function (item, index) {
+        return '<div class="image-viewer-gallery-item"><button type="button" class="image-viewer-thumb" data-gallery-index="' + index + '" aria-label="查看这张图片"><img alt="" referrerpolicy="no-referrer" decoding="async"></button>' +
+          (item.canDelete ? '<button type="button" class="image-viewer-thumb-delete" data-gallery-delete="' + index + '" aria-label="删除这张未使用的图片">×</button>' : '') + '</div>';
+      }).join("");
+      thumbs = Array.prototype.slice.call(panel.querySelectorAll(".image-viewer-thumb"));
+      if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
       if (typeof IntersectionObserver === "function") {
-        thumbObserver = new IntersectionObserver(function (entries) {
-          for (var i = 0; i < entries.length; i += 1) {
-            var node = entries[i].target;
+        thumbObserver = new IntersectionObserver(function (items) {
+          for (var i = 0; i < items.length; i += 1) {
+            var node = items[i].target;
             if (!node.isConnected) { thumbObserver.unobserve(node); continue; }
-            if (!entries[i].isIntersecting) continue;
-            thumbObserver.unobserve(node);
-            hydrate(node, Number(node.dataset.galleryIndex));
+            if (!items[i].isIntersecting) continue;
+            thumbObserver.unobserve(node); hydrate(node, Number(node.dataset.galleryIndex));
           }
-          // 用**视口**当根（而不是侧栏自己）：侧栏关着时整条抽屉被 transform 推出屏幕，
-          // 那些缩略图天然不相交、一张都不会去加载；推出来之后才逐格要地址。
         }, { rootMargin: "240px 0px" });
-        for (var t = 0; t < thumbs.length; t += 1) thumbObserver.observe(thumbs[t]);
-      } else {
-        // 没有观察器（老引擎）就一次全取：宁可贵一点，也不要侧栏里一片空白。
-        for (var k = 0; k < thumbs.length; k += 1) hydrate(thumbs[k], k);
+        thumbs.forEach(function (node) { thumbObserver.observe(node); });
+      } else thumbs.forEach(function (node, index) { hydrate(node, index); });
+      thumbs.forEach(function (node) { node.addEventListener("click", function (event) { show(Number(event.currentTarget.dataset.galleryIndex)); }); });
+      panel.querySelectorAll("[data-gallery-delete]").forEach(function (button) { button.addEventListener("click", function (event) {
+        event.stopPropagation(); var index = Number(event.currentTarget.dataset.galleryDelete);
+        if (!gallery[index] || !gallery[index].canDelete || typeof settings.onDeleteEntry !== "function") return;
+        Promise.resolve(settings.onDeleteEntry(gallery[index])).then(function (deleted) { if (deleted !== false) return removeEntries([index]); }).catch(function (error) { app.components.toast(app.utils.cleanError(error), 5000, "danger"); });
+      }); });
+      var bulk = panel.querySelector("[data-delete-unused]");
+      if (bulk) {
+        bulk.hidden = !gallery.some(function (item) { return item.canDelete; }) || typeof settings.onDeleteUnused !== "function";
+        bulk.onclick = function () {
+          Promise.resolve(settings.onDeleteUnused()).then(function (keys) {
+            if (!Array.isArray(keys) || !keys.length) return;
+            removeStorageKeys(keys);
+          }).catch(function (error) {
+            if (Array.isArray(error.deletedStorageKeys)) removeStorageKeys(error.deletedStorageKeys);
+            app.components.toast(app.utils.cleanError(error), 5000, "danger");
+          });
+        };
       }
-      // currentTarget 在事件回调里始终指向被点的那一格，所以这里不需要 IIFE 定住下标。
-      for (var m = 0; m < thumbs.length; m += 1) thumbs[m].addEventListener("click", function (event) { show(Number(event.currentTarget.dataset.galleryIndex)); });
+      mark();
+    }
+    function removeEntries(indexes) {
+      if (!indexes.length) return;
+      var removed = {}, oldAt = at, currentEntry = gallery[at];
+      indexes.forEach(function (index) { removed[index] = true; });
+      var currentRemoved = Boolean(removed[at]);
+      gallery = gallery.filter(function (_, index) { return !removed[index]; });
+      if (!gallery.length) { close(); return; }
+      paintGallery();
+      if (currentRemoved) { at = -1; return show(Math.min(oldAt, gallery.length - 1)); }
+      at = gallery.indexOf(currentEntry); mark();
+    }
+    function removeStorageKeys(keys) {
+      var indexes = [];
+      gallery.forEach(function (item, index) { if (keys.indexOf(item.storageKey) >= 0) indexes.push(index); });
+      removeEntries(indexes);
     }
 
     // ── 点一下画面：切换控件显隐 ────────────────────────────────────────────────
@@ -402,12 +433,17 @@
     function measure() { base = { width: image.offsetWidth || image.naturalWidth, height: image.offsetHeight || image.naturalHeight }; bound(); paint(); }
     image.addEventListener("load", measure);
     document.body.appendChild(overlay);
+    paintGallery();
     if (image.complete && image.naturalWidth) measure();
     document.body.style.overflow = "hidden";
     current = { close: close };
     syncActions();
     mark();
     paint();
+    if (settings.openGallery && panel) {
+      panel.classList.add("is-open"); galleryButton.setAttribute("aria-expanded", "true");
+      setTimeout(function () { if (!closed && thumbs[at] && thumbs[at].scrollIntoView) { try { thumbs[at].scrollIntoView({ block: "nearest" }); } catch (_) {} } }, 300);
+    }
     return promise;
   }
 

@@ -23,7 +23,8 @@
 .bottom-nav { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-icon-text); padding: 8px max(16px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(16px, var(--safe-left)); border-top: 1px solid var(--border); background: var(--glass); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); }
 .bottom-nav button { min-height: 52px; display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center; min-width: 0; overflow: hidden; border: 0; border-radius: 15px; background: transparent; color: var(--text-soft); font-size: 11px; font-weight: 650; }
 .bottom-nav button i { font-size: 19px; }
-.bottom-nav button[aria-current="page"] { color: var(--text); background: var(--accent-soft); }
+.bottom-nav button[aria-current="page"] { color: var(--text); background: transparent; }
+.bottom-nav button[aria-current="page"] i { color: var(--accent); }
 .keyboard-open .app-shell:not(.chat-open) { padding-bottom: 0; }
 .keyboard-open .bottom-nav { visibility: hidden; pointer-events: none; }
 .nav-brand { display: none; }
@@ -300,6 +301,11 @@ html[lang="en"] .section-tabs button { padding: 10px 4px; font-size: 13px; }
    玻璃本身来自 .topbar 的基础规则（顶栏恒为毛玻璃）, 这里只管定位, 不再重复声明背景。 */
 .chat-open { grid-template-rows: minmax(0, 1fr); --chat-topbar: calc(70px + var(--safe-top)); }
 .chat-open .topbar { position: absolute; z-index: 20; top: 0; left: 0; right: 0; min-height: var(--chat-topbar); }
+.chat-open #brandBlock { flex: 1 1 0; min-width: 0; overflow: hidden; }
+.chat-open #brandBlock .brand-copy { flex: 1 1 auto; min-width: 0; }
+.chat-open #pageTitle { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-open .topbar-actions { flex: 0 0 auto; min-width: 92px; max-width: none; overflow: visible; }
+.chat-open .topbar-actions .icon-button { flex: 0 0 44px; }
 .chat-main { padding: 0; overflow: hidden; }
 /* 沉浸模式：点消息列表的空白处, 把界面上的控件全收掉, 只留背景（用户 2026-09-26:
    "点击消息列表的空白位置, 可以隐藏所有控件（包括标题栏和输入框和对话列表。只显示背景）,
@@ -399,8 +405,8 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 .history-window-control .button { max-width: 100%; min-height: 40px; font-size: 12px; }
 .history-window-control .button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 0; }
-.chat-welcome-avatars { display: flex; gap: var(--space-icon-text); margin-bottom: 22px; }
-/* 头像本身就是按钮：点开标准角色编辑弹窗；内层 .avatar 不吃点击，尺寸与 .avatar.large 对齐。 */
+.chat-welcome-avatars { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-icon-text); max-width: 100%; margin-bottom: 22px; }
+/* 头像按钮分别进入角色编辑或本对话个人设定；内层 .avatar 不吃点击。 */
 .chat-welcome-avatar { width: 58px; height: 58px; flex: 0 0 58px; padding: 0; border: 0; border-radius: 20px; background: transparent; }
 .chat-welcome-avatar .avatar { pointer-events: none; }
 .chat-welcome h2 { font-size: 25px; margin-bottom: 10px; }
@@ -636,13 +642,17 @@ html.has-app-background .app-shell:not(.chat-open)::before { filter: blur(var(--
 /* 缩略图列表自己滚。Chrome 83 的 flex 不吃 gap（老 WebView 红线）⇒ 相邻兄弟用 margin-bottom 拉开。
    touch-action: pan-y 是给这一条竖滚用的：舞台那条 touch-action: none 管不到它（它不是舞台的子节点）。 */
 .image-viewer-gallery-list { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
-.image-viewer-thumb { display: block; width: 100%; margin: 0 0 8px; padding: 0; border: 1px solid #ffffff1f; border-radius: 12px; background: #ffffff14; overflow: hidden; }
+.image-viewer-gallery-item { position: relative; margin-bottom: 8px; }
+.image-viewer-thumb { display: block; width: 100%; margin: 0; padding: 0; border: 1px solid #ffffff1f; border-radius: 12px; background: #ffffff14; overflow: hidden; }
 .image-viewer-thumb img { display: block; width: 100%; height: 68px; object-fit: cover; }
 .image-viewer-thumb:active { border-color: #ffffff5c; }
 .image-viewer-thumb.is-current { border-color: #f2f2ee; box-shadow: 0 0 0 2px #f2f2ee59; }
 /* 地址取不到（旧记录 / 文件已释放）：压暗这一格，让"这张读不出来"看得出来，
    而不是留一个永远转不出来的空框。 */
 .image-viewer-thumb[data-thumb-state="missing"] { opacity: .35; }
+.image-viewer-thumb-delete { position: absolute; z-index: 1; top: 4px; right: 4px; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid #ffffff50; border-radius: 50%; background: #101210d9; color: #fff; font-size: 18px; line-height: 1; }
+.image-viewer-gallery-footer { flex: 0 0 auto; padding-top: 7px; border-top: 1px solid #ffffff29; }
+.image-viewer-delete-unused { width: 100%; padding: 6px 2px; border: 0; background: transparent; color: #ffd0d0; font-size: 10px; line-height: 1.3; }
 
 /* 点一下画面 → 这个类挂到 .image-viewer 上：底部工具栏与左侧侧栏一起淡出。
    **只藏不关** —— 抽屉的 is-open 状态保留着，再点一下画面回来时它还是打开的。

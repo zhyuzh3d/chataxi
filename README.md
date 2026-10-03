@@ -7,7 +7,7 @@ Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 > 产品网站：<https://chataxi.airen.life/> · 应用广场：<https://haminn.airen.life/pages/happs.html> · 源码仓库：<https://github.com/zhyuzh3d/chataxi> · [GitHub Releases](https://github.com/zhyuzh3d/chataxi/releases) · [MIT License](./LICENSE)
 
 - happ id：`life.airen.chataxi`
-- 当前源码版本：`0.7.53`(versionCode `132`,见 `haminn.json`)
+- 当前源码版本：`0.7.55`(versionCode `134`,见 `haminn.json`)
 - 形态：HaminnApp 的普通 happ,不能脱离宿主单独安装
 
 ## 特性亮点
@@ -23,6 +23,12 @@ Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 - **安全渲染**：默认不执行模型返回的代码,HTML,工具或链接,模型文本按纯文本安全渲染,图片只接受明确的数据 URL 或 HTTPS URL。
 - **整包备份**：系统页提供「备份软件和数据」,调用宿主 `app.backup`,把当前 happ 连同全部记录,附件和本地代码整包导出。
 - **中英双语**：界面文案随系统语言切换,新增文案必须同步补齐英文。
+
+## 对话功能视频
+
+点击封面观看 Chataxi 的多角色群聊、自然语音、对话内图片生成与背景灯光演示（YouTube Shorts）：
+
+<a href="https://www.youtube.com/shorts/7vFBZkaJjUM"><img src="docs/assets/chataxi-dialogue-short-thumbnail.jpg" alt="观看 Chataxi 对话功能视频" width="240"></a>
 
 ### 界面示意
 

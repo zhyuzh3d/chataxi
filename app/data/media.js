@@ -146,7 +146,8 @@
 
   async function deleteHostFile(record) {
     var files = hostFiles();
-    if (!files || !record || !record.logicalFileId || typeof files.delete !== "function") return;
+    if (!record || !record.logicalFileId) return;
+    if (!files || typeof files.delete !== "function") throw new Error("宿主文件库当前不可用，原图没有删除");
     await files.delete({ logicalFileId: record.logicalFileId });
   }
 
@@ -201,10 +202,10 @@
     if (!id) return;
     var indexed = await app.data.store.get(INDEX, id).catch(function () { return null; });
     if (indexed) {
-      await app.data.store.remove(INDEX, id).catch(function () {});
-      await deleteHostFile(indexed).catch(function () {});
+      await deleteHostFile(indexed);
+      await app.data.store.remove(INDEX, id);
     }
-    await blobDelete(id).catch(function () {});
+    await blobDelete(id);
     releaseObjectUrl(id);
   }
 

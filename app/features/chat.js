@@ -72,6 +72,21 @@
   }
 
   function currentBusy(target) { return Boolean(session.active(target.conversation.id)); }
+  function paintConversationSpeaker(target) {
+    var button = document.getElementById('muteTtsButton'); if (!button) return;
+    var enabled = app.services.tts.conversationEnabled(target.conversation.id);
+    button.setAttribute('aria-label', enabled ? '关闭本对话朗读' : '开启本对话朗读');
+    button.title = enabled ? '关闭本对话朗读' : '开启本对话朗读';
+    button.innerHTML = ui.icon(enabled ? 'volume-high' : 'volume-xmark');
+  }
+  async function setConversationSpeaker(target, enabled) {
+    var id = target.conversation.id;
+    await app.services.tts.setConversationEnabled(id, enabled);
+    var next = await store.get('conversations', id); if (!next) return;
+    next.ttsMuted = !enabled; next.updatedAt = Date.now();
+    await store.put('conversations', id, next); target.conversation = next;
+    paintConversationSpeaker(target);
+  }
   function shortRoleName(name) { var characters = Array.from(String(name || "")); return characters.length <= 5 ? characters.join("") : characters.slice(0, 4).join("") + "..."; }
   function moderatorRoleId(conversation) { return conversation.moderatorRoleId && conversation.roleIds.indexOf(conversation.moderatorRoleId) >= 0 ? conversation.moderatorRoleId : conversation.roleIds[0]; }
   function displayText(value) { return String(value || "").replace(/\r\n?/g, "\n").replace(/\n[ \t]*\n+/g, "\n"); }
@@ -94,7 +109,7 @@
     if ((service.family || service.type) !== 'system') return { available: Boolean(app.services.modelServices.computedEndpoint('asr', service)), service: service, message: '语音输入服务缺少有效地址' };
     var capability = await app.services.asr.systemCapability(false); return Object.assign({ service: service }, capability);
   }
-  function mediaKey(media) { return media.mediaId || media.logicalFileId || ''; }
+  function mediaKey(media) { return media.mediaId || media.logicalFileId || media.url || ''; }
 
   async function render(id) {
     if (view) await close();
@@ -120,8 +135,8 @@
     document.getElementById('bottomNav').classList.add('is-hidden');
     document.getElementById('backButton').classList.remove('is-hidden');
     document.querySelector('#brandBlock .brand-mark').classList.add('is-hidden');
-    app.services.tts.setMuted(Boolean(conversation.ttsMuted));
-    ui.pageHeader(conversation.title, participants.map(function (role) { return role.name; }).join('、'), '<button class="icon-button" type="button" id="muteTtsButton" aria-label="静音自动朗读" title="静音自动朗读">' + ui.icon(conversation.ttsMuted ? 'volume-xmark' : 'volume-high') + '</button><button class="icon-button" type="button" id="chatMenuButton" aria-label="对话管理">' + ui.icon('ellipsis') + '</button>');
+    await app.services.tts.setConversationEnabled(id, !conversation.ttsMuted);
+    ui.pageHeader(conversation.title, participants.map(function (role) { return role.name; }).join('、'), '<button class="icon-button" type="button" id="muteTtsButton" aria-label="' + (conversation.ttsMuted ? '开启本对话朗读' : '关闭本对话朗读') + '" title="' + (conversation.ttsMuted ? '开启本对话朗读' : '关闭本对话朗读') + '">' + ui.icon(conversation.ttsMuted ? 'volume-xmark' : 'volume-high') + '</button><button class="icon-button" type="button" id="chatMenuButton" aria-label="对话管理">' + ui.icon('ellipsis') + '</button>');
     var main = document.getElementById('mainContent'); main.className = 'main chat-main';
     main.innerHTML = '<section class="chat-layout"><div class="message-viewport"><div class="message-list" id="messageList" aria-label="对话消息"><div class="message-list-inner" id="messageListInner"></div></div><div class="message-fade is-top" aria-hidden="true"></div><div class="message-fade is-bottom" aria-hidden="true"></div><button type="button" class="button secondary jump-latest is-hidden" id="jumpLatest">' + ui.icon('arrow-down') + '回到最新</button></div><div class="composer"><div class="composer-inner"><div class="attachment-tray is-hidden" id="attachmentTray"></div><div class="composer-box">' + (conversation.kind === 'group' ? '<div class="composer-recipients"><span class="recipient-at" aria-label="艾特一位角色">@</span><div class="mention-strip" role="group" aria-label="选择本轮回复角色">' + participants.map(function (role) { return '<button class="chip mention-chip" type="button" data-role-toggle="' + u.escapeHtml(role.id) + '" data-moderator="' + String(role.id === moderatorRoleId(conversation)) + '" aria-pressed="' + (target.selected.indexOf(role.id) >= 0) + '" title="' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'tiny mention-avatar') + '<span class="mention-name">' + u.escapeHtml(shortRoleName(role.name)) + '</span></button>'; }).join('') + '</div><button class="auto-role-toggle" type="button" id="autoRoleToggle" role="switch" aria-checked="' + String(target.autoSelectRole) + '" aria-label="自动选择回复角色" title="自动选择回复角色">' + ui.icon('wand-magic-sparkles') + '</button></div>' : '') + '<textarea id="messageInput" rows="1" maxlength="16000" placeholder="把你的想法写在这里…" aria-label="消息内容"></textarea><div class="composer-toolbar"><div class="row composer-tools"><button class="icon-button" type="button" id="imageButton" aria-label="添加图片或视频" title="添加图片或视频">' + ui.icon('paperclip') + '</button><button class="icon-button" type="button" id="micButton" aria-label="语音输入" title="语音输入">' + ui.icon('microphone') + '</button><span class="composer-hint" id="composerHint"></span></div><button type="button" class="icon-button send-button" id="sendButton" aria-label="发送消息">' + ui.icon('arrow-up') + '</button></div></div><div class="composer-footer"><span id="composerStatus" role="status" aria-live="polite"></span><span id="draftStatus"></span></div></div></div></section>';
     ui.hydrateAvatars(main);
@@ -190,7 +205,7 @@
     document.getElementById('imageButton').addEventListener('click', ui.action(function () { return chooseMedia(target); }));
     document.getElementById('micButton').addEventListener('click', ui.action(function () { return handleSpeech(target); }));
     document.getElementById('chatMenuButton').addEventListener('click', ui.action(function () { return manageChat(target); }));
-    document.getElementById('muteTtsButton').addEventListener('click', ui.action(async function () { var nextMuted = !app.services.tts.isMuted(); app.services.tts.setMuted(nextMuted); var next = await store.get('conversations', id); next.ttsMuted = nextMuted; await store.put('conversations', id, next); target.conversation = next; status(target, nextMuted ? '已静音后续自动朗读；当前播放不会中断' : '已恢复后续自动朗读'); }));
+    document.getElementById('muteTtsButton').addEventListener('click', ui.action(async function () { var enabled = !app.services.tts.conversationEnabled(id); await setConversationSpeaker(target, enabled); status(target, enabled ? '已开启本对话朗读' : '已停止本对话朗读'); }));
     document.getElementById('jumpLatest').addEventListener('click', function () { target.follow = true; scrollBottom(target); });
     document.getElementById('messageList').addEventListener('scroll', function () { var list = document.getElementById('messageList'); target.follow = list.scrollHeight - list.scrollTop - list.clientHeight < 100; document.getElementById('jumpLatest').classList.toggle('is-hidden', target.follow); });
     main.querySelectorAll('[data-role-toggle]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
@@ -360,9 +375,10 @@
     if (!messages.length) {
       var empty = document.createElement('div'); empty.className = 'chat-welcome';
       var participants = target.conversation.roleIds.map(function (id) { return target.roleMap[id]; }).filter(Boolean);
-      // 对话还没有消息时的欢迎面板：头像本身可以点开标准角色编辑弹窗（与消息头像、角色页同一个编辑器）。
-      empty.innerHTML = '<div class="chat-welcome-avatars">' + participants.slice(0, 3).map(function (role) { return '<button class="chat-welcome-avatar" type="button" data-edit-welcome-role="' + u.escapeHtml(role.id) + '" aria-label="编辑角色 ' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'large') + '</button>'; }).join('') + '</div><h2>聊点什么？</h2><p>' + u.escapeHtml(participants.length === 1 ? '从一个问题或想法开始。' : '点选本轮回答的角色，让不同视角一起参与。') + '</p><div class="starter-list"><button class="starter" type="button">我想跟你说个有趣的事情</button><button class="starter" type="button">帮我梳理一个想法</button><button class="starter" type="button">我们一起制定一个计划</button></div>';
+      // 欢迎面板展示全部参与角色及本对话个人资料；前者进角色编辑，最后的用户头像进个人设定。
+      empty.innerHTML = '<div class="chat-welcome-avatars">' + participants.map(function (role) { return '<button class="chat-welcome-avatar" type="button" data-edit-welcome-role="' + u.escapeHtml(role.id) + '" aria-label="编辑角色 ' + u.escapeHtml(role.name) + '">' + ui.roleAvatar(role, 'large') + '</button>'; }).join('') + '<button class="chat-welcome-avatar" type="button" data-edit-welcome-profile="user" aria-label="编辑本对话个人设定">' + ui.avatar(target.userProfile.name, '', 'large', '', target.userProfile.avatarMediaId) + '</button></div><h2>聊点什么？</h2><p>' + u.escapeHtml(participants.length === 1 ? '从一个问题或想法开始。' : '点选本轮回答的角色，让不同视角一起参与。') + '</p><div class="starter-list"><button class="starter" type="button">我想跟你说个有趣的事情</button><button class="starter" type="button">帮我梳理一个想法</button><button class="starter" type="button">我们一起制定一个计划</button></div>';
       empty.querySelectorAll('[data-edit-welcome-role]').forEach(function (button) { button.addEventListener('click', ui.action(function () { return editChatRole(button.dataset.editWelcomeRole, target); })); });
+      empty.querySelector('[data-edit-welcome-profile]').addEventListener('click', ui.action(function (event) { event.preventDefault(); event.stopPropagation(); return editConversationProfile(target); }));
       empty.querySelectorAll('.starter').forEach(function (button) { button.addEventListener('click', function () { if (target.draft.text.trim()) { document.getElementById('messageInput').focus(); return; } target.draft.text = button.textContent; var input = document.getElementById('messageInput'); input.value = target.draft.text; input.dispatchEvent(new Event('input')); input.focus(); }); }); nodes.push(empty);
     }
     if (visibleStart > 0) {
@@ -498,7 +514,7 @@
     if (assistant && message.streamFallback) { var fallback = document.createElement('span'); fallback.className = 'context-badge'; fallback.textContent = '兼容输出'; fallback.title = '服务或 WebView 没有提供可读取的响应流，本次使用完整响应'; meta.appendChild(fallback); }
     if (message.text) {
       var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'icon-button'; copy.setAttribute('aria-label', '复制这条消息'); copy.innerHTML = ui.icon('copy'); copy.addEventListener('click', ui.action(async function () { await app.platform.haminn.copyText(message.text); ui.toast('已复制'); })); meta.appendChild(copy);
-      if (assistant && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id)) return; return app.services.tts.speak(message.text, role); })); meta.appendChild(speak); }
+      if (assistant && (message.status === 'done' || app.services.tts.canResume(message.id))) { var speak = document.createElement('button'); speak.type = 'button'; speak.className = 'icon-button'; speak.dataset.ttsMessage = message.id; var ready = app.services.tts.hasReady(message.id), resumable = app.services.tts.canResume(message.id); speak.setAttribute('aria-label', resumable ? '继续流式朗读' : ready ? '播放已生成的朗读音频' : '朗读这条回复'); speak.innerHTML = ui.icon(resumable || ready ? 'play' : 'volume-high'); speak.addEventListener('click', ui.action(async function () { await setConversationSpeaker(target, true); if (await app.services.tts.resume(message.id)) return; if (await app.services.tts.playReady(message.id, { conversationId: target.conversation.id })) return; return app.services.tts.speak(message.text, role, { conversationId: target.conversation.id }); })); meta.appendChild(speak); }
     }
     // 铅笔与重新生成：已经压缩进概要的消息仍然保留按钮，但按钮呈禁用态，
     // 点一下只提示去「压缩概要」改延续上下文 —— 直接把旧消息改掉会让概要与原文对不上。
@@ -536,11 +552,14 @@
       media: media,
       alt: prompt || String(media.alt || ''),
       src: '',   // 能白拿的时候由 galleryEntries 填（见 loadedSources）
-      onDownload: ui.action(function () { return exportMediaImage(media); }),
-      onSetBackground: ui.action(function () { return useMediaAsBackground(media); }),
+      onDownload: media.mediaId || media.logicalFileId ? ui.action(function () { return exportMediaImage(media); }) : null,
+      onSetBackground: media.mediaId || media.logicalFileId ? ui.action(function () { return useMediaAsBackground(media); }) : null,
       // 侧栏缩略图**进视口才要地址**（组件里那个观察器调它）。一个对话几十张图, 全部赋 src
       // 会让引擎一次解码几十张 1MP 的图（每张展开约 4MB）, 在 WebView 里够呛。
-      source: function () { return app.data.media.displayUrl(media).catch(function () { return ''; }); }
+      source: function () {
+        if (media.mediaId) return app.data.media.displayUrl(media).catch(function () { return ''; });
+        return Promise.resolve(media.url && u.isAllowedImageUrl(media.url) ? media.url : '');
+      }
     };
   }
   // 消息列表里**已经加载出来**的那些缩略图地址是白拿的: 直接搬过来, 省掉一次读库 + 一次文件往返。
@@ -553,27 +572,43 @@
     }
     return map;
   }
-  // 本对话所有生成图, 按时间顺序（messageSnapshot 本身就是排好序的）。**每条绘图消息只取第一张图**
-  //（一条绘图消息就是一张）, 没有可用图片的整条跳过 —— 侧栏里不该出现点不开的空格。
-  function galleryEntries(target) {
-    var messages = target.messageSnapshot || [], known = loadedSources(), entries = [];
-    for (var i = 0; i < messages.length; i += 1) {
-      var message = messages[i];
-      if (!message.draw || message.status === 'drawing') continue;
-      var list = message.media || [];
-      for (var j = 0; j < list.length; j += 1) {
-        var item = list[j];
-        if ((item.kind || (/^video\//i.test(item.mime || '') ? 'video' : 'image')) !== 'image') continue;
-        var entry = entryOf(item, message);
-        entry.src = known[mediaKey(item)] || '';
-        entries.push(entry);
-        break;
+  // 生图历史独立于消息生命周期保存；消息删除后，archive 条目仍能恢复原图文件。
+  async function galleryEntries(target) {
+    var archives = await store.generatedImagesWithUsage(target.conversation.id), known = loadedSources();
+    return archives.map(function (record) {
+      var media = { mediaId: record.mediaId, logicalFileId: record.logicalFileId, url: record.url, mime: record.mime, alt: record.alt };
+      var entry = entryOf(media, { draw: { prompt: record.prompt } });
+      entry.storageKey = record.storageKey; entry.archiveId = record.id; entry.canDelete = !record.inUse;
+      entry.src = known[mediaKey(media)] || (media.url && u.isAllowedImageUrl(media.url) ? media.url : '');
+      entry.onDelete = function () { return store.deleteGeneratedImage(record.storageKey, target.conversation.id); };
+      return entry;
+    });
+  }
+  function viewerDeleteActions(target) {
+    return {
+      onDeleteEntry: async function (entry) {
+        var removed = await store.deleteGeneratedImage(entry.storageKey, target.conversation.id);
+        if (removed) ui.toast('图片记录与原图已删除');
+        return removed;
+      },
+      onDeleteUnused: async function () {
+        if (!await ui.confirm({ title: '删除所有未使用图片？', message: '这些图片没有被对话消息使用，删除后会同时移除历史记录和原图文件。', confirmText: '全部删除', danger: true })) return [];
+        var removed = await store.deleteUnusedGeneratedImages(target.conversation.id);
+        if (removed.length) ui.toast('已删除 ' + removed.length + ' 张未使用图片');
+        return removed;
       }
-    }
-    return entries;
+    };
+  }
+  async function openGeneratedGallery(target) {
+    var gallery = await galleryEntries(target);
+    if (!gallery.length) { ui.toast('这个对话还没有生成图片'); return; }
+    var first = gallery[0], src = first.src || await first.source();
+    if (!src) throw new Error('最新的生成图片无法读取');
+    first.src = src;
+    return app.components.imageViewer.open(Object.assign({ src: src, alt: first.alt, gallery: gallery, index: 0, openGallery: true }, viewerDeleteActions(target)));
   }
   async function openImageViewer(media, image) {
-    var target = view, gallery = target ? galleryEntries(target) : [], index = -1;
+    var target = view, gallery = target ? await galleryEntries(target) : [], index = -1;
     for (var i = 0; i < gallery.length; i += 1) if (mediaKey(gallery[i].media) === mediaKey(media)) { index = i; break; }
     // 这张图不在清单里（旧记录、或调用方手上只有一条 media）⇒ 退化成"只有它一张": 画廊能力关掉,
     // 看图本身照常。为一个侧栏把整件事卡住是不划算的。
@@ -581,12 +616,13 @@
     var src = String(image && image.src || '');
     // 正常路径下缩略图早就加载好了、src 现成; 这里只兜住"地址还没解析出来就被点开"的边角情况。
     if (!src) src = await app.data.media.displayUrl(media).catch(function () { return ''; });
-    return app.components.imageViewer.open({
+    if (index >= 0) gallery[index].src = src;
+    return app.components.imageViewer.open(Object.assign({
       src: src, alt: String(image && image.alt || ''),
       gallery: gallery, index: index,
       onDownload: ui.action(function () { return exportMediaImage(media); }),
       onSetBackground: ui.action(function () { return useMediaAsBackground(media); })
-    });
+    }, viewerDeleteActions(target || { conversation: { id: '' } })));
   }
   // 生成图的字节在宿主文件库里, 页面手上只有 mediaId ⇒ 先把记录取回来拿 logicalFileId。
   // 旧记录（字节还在 IndexedDB 里）没有 logicalFileId, 那种就明说导不出来, 不要静默失败。
@@ -967,8 +1003,9 @@
     form.elements.namedItem('autoSpeak').addEventListener('change', syncReadout); syncReadout();
   }
   async function manageChat(target) {
-    var summaries = await app.services.context.list(target.conversation.id), conversation = await store.get('conversations', target.conversation.id);
-    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="background">' + ui.icon('image') + '<span>对话背景</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩概要' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
+    var summaries = await app.services.context.list(target.conversation.id), conversation = await store.get('conversations', target.conversation.id), generated = await store.generatedImages(target.conversation.id);
+    var generatedMenu = generated.length ? '<button class="menu-item" type="button" data-chat-menu="generated-gallery">' + ui.icon('images') + '<span>生图记录</span>' + ui.icon('chevron-right') + '</button>' : '';
+    var form = ui.openModal({ title: conversation.title, submitText: '完成', cancelText: null, html: '<div class="menu-list"><button class="menu-item" type="button" data-chat-menu="settings">' + ui.icon('gear') + '<span>常规设定</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="background">' + ui.icon('image') + '<span>对话背景</span>' + ui.icon('chevron-right') + '</button>' + generatedMenu + '<button class="menu-item" type="button" data-chat-menu="voice">' + ui.icon('microphone') + '<span>本对话语音与朗读</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="summary">' + ui.icon('compress') + '<span>压缩概要' + (summaries.length ? ' · 已生成' : ' · 尚未生成') + '</span>' + ui.icon('chevron-right') + '</button><button class="menu-item" type="button" data-chat-menu="export">' + ui.icon('file-lines') + '<span>导出对话文字</span></button><button class="menu-item" type="button" data-chat-menu="pin">' + ui.icon('thumbtack') + '<span>' + (conversation.pinned ? '取消置顶' : '置顶对话') + '</span></button><button class="menu-item danger-text" type="button" data-chat-menu="delete">' + ui.icon('trash') + '<span>删除对话</span></button></div>', onSubmit: function () {} });
     form.querySelectorAll('[data-chat-menu]').forEach(function (button) { button.addEventListener('click', ui.action(async function () {
       var command = button.dataset.chatMenu; ui.closeModal();
       if (currentBusy(target) && (command === 'settings' || command === 'delete')) { ui.toast('请先停止本轮回复'); return; }
@@ -981,6 +1018,7 @@
         await renderMessages(target, true);
       } });
       if (command === 'background') return backgroundSettings(target.conversation.id, target);
+      if (command === 'generated-gallery') return openGeneratedGallery(target);
       if (command === 'voice') return voiceSettings(target);
       if (command === 'summary') return editSummaries(target);
       if (command === 'export') return app.features.conversations.exportText(conversation.id);
@@ -1334,7 +1372,7 @@
     if (target.syncComposerInset) window.removeEventListener('resize', target.syncComposerInset);
     if (target.composerObserver) { target.composerObserver.disconnect(); target.composerObserver = null; }
     if (target.speechId || target.speechStarting) await app.services.asr.cancelSystem().catch(function () {});
-    await app.services.tts.stop().catch(function () {});
+    await app.services.tts.stopConversation(target.conversation.id).catch(function () {});
     if (target.job) await target.job.catch(function () {});
     // 背景不清: 它现在是应用级的, 回到列表页也还铺着 —— "继承最近使用的对话"就是这个意思。
     view = null; app.state.activeConversationId = null;
@@ -1343,7 +1381,7 @@
   }
   document.addEventListener('visibilitychange', function () { if (document.hidden && view) flushDraft(view).catch(showError); });
   app.events.on('tts:error', function (event) { ui.toast(event.message, 5000); });
-  app.events.on('tts:state', function (event) { if (view) { var button = document.getElementById('muteTtsButton'); if (button) { button.classList.toggle('voice-active', Boolean(event.speaking)); button.innerHTML = ui.icon(event.muted ? 'volume-xmark' : 'volume-high'); button.setAttribute('aria-label', event.muted ? '恢复自动朗读' : '静音自动朗读'); button.setAttribute('title', event.muted ? '恢复自动朗读' : '静音自动朗读'); } if (event.preparing) status(view, '正在准备完整朗读音频…'); else if (event.buffering) status(view, '正在生成朗读音频 · 已缓存约 ' + Math.floor(event.bufferedSeconds || 0) + ' 秒'); else if (event.paused) { status(view, '朗读已等待新音频，点击消息上的播放按钮继续'); ensureResumeButton(event.messageId); } else if (event.ready) { status(view, '朗读音频已准备，点击消息上的播放按钮播放'); renderMessages(view).catch(showError); } } });
+  app.events.on('tts:state', function (event) { if (view) { var button = document.getElementById('muteTtsButton'); if (button) button.classList.toggle('voice-active', Boolean(event.speaking)); paintConversationSpeaker(view); if (event.preparing) status(view, '正在准备完整朗读音频…'); else if (event.buffering) status(view, '正在生成朗读音频 · 已缓存约 ' + Math.floor(event.bufferedSeconds || 0) + ' 秒'); else if (event.paused) { status(view, '朗读已等待新音频，点击消息上的播放按钮继续'); ensureResumeButton(event.messageId); } else if (event.ready) { status(view, '朗读音频已准备，点击消息上的播放按钮播放'); renderMessages(view).catch(showError); } } });
   app.features = app.features || {};
   app.features.chat = { render: render, close: close, backgroundSettings: backgroundSettings, refreshAppBackground: refreshAppBackground, repaintAppBackground: repaintAppBackground, renderMessages: function () { if (view) view.messageSnapshot = null; return renderMessages(view); } };
 })(window.chataxi);
