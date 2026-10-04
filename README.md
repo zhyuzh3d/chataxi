@@ -34,7 +34,7 @@ Chataxi 是运行在 [Haminn](https://haminn.airen.life/) 宿主里的个人 AI 
 
 点击封面观看 Chataxi 角色配置演示（YouTube Shorts）：
 
-<a href="https://youtube.com/shorts/CiAz9Soz0V8?feature=share"><img src="docs/assets/chataxi-dialogue-short-thumbnail.jpg" alt="观看 Chataxi 角色设置视频" width="240"></a>
+<a href="https://youtube.com/shorts/CiAz9Soz0V8?feature=share"><img src="docs/assets/chataxi-role-settings-short-thumbnail.jpg" alt="观看 Chataxi 角色设置视频" width="240"></a>
 
 ### 大模型配置视频
 
