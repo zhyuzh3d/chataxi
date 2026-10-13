@@ -1061,6 +1061,8 @@
     "卡片没有已保存的绘图场景，请先编辑并获取目录": "This card has no saved drawing scenario; edit it and fetch the directory first",
     "只改 IP 即可, 例如 http://192.168.1.50:8189": "Just change the IP, e.g. http://192.168.1.50:8189",
     "地址与密码只配这一处：有定妆照的角色按图重画, 没有就从零画一张, 走哪条不用你选。画幅锁定 9:16 竖幅, 下面挑的正是插件公布的那几档, 参考强度沿用插件自报的默认值。": "The address and password live here and only here: a role with a character sheet is redrawn from that picture, a role without one is drawn from scratch, and you never pick which. The canvas is locked to 9:16 portrait, the list below offers exactly the frames the plugin publishes, and reference strength comes from the plugin's default.",
+    // 选到 CHP 时表单底部的一句去取插件的指引（链接文字是 URL 本身，不需要翻译）
+    "CHP 是 Haminn 综合入口程序：装在运行 ComfyUI 那台电脑上，把本机模型统一成一个接口。请到 Haminn 官网下载：": "CHP is the Haminn Consolidated Portal: it sits on the computer that runs ComfyUI and puts its local models behind one interface. Get it from the Haminn website: ",
     // 画幅那一栏（业主 2026-09-30：绘图卡上要能挑插件公布的低档，出图更快）
     "画幅": "Canvas",
     "锁定 9:16 竖幅;选项来自插件为这个场景公布的帧表,获取模型列表后可选": "Locked to 9:16 portrait; the options are the frames the plugin publishes for this scenario, available once the model list is fetched",

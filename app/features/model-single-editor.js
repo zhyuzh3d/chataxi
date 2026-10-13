@@ -79,6 +79,10 @@
       (kind === "image" ? '<div data-resolution-choice>' + ui.picker("resolution", "画幅", "", "锁定 9:16 竖幅;选项来自插件为这个场景公布的帧表,获取模型列表后可选") + '</div>' : '') + familyHtml +
       '<button class="button secondary full" type="button" data-test-model>' + ui.icon("plug") + (editing ? '重新连接并测试' : '连接并测试') + '</button><p class="connection-status visually-hidden" id="connectionStatus" role="status"></p>' +
       noteHtml +
+      // CHP 装在那台跑 ComfyUI 的电脑上, 这个 happ 不带它的任何字节、也不往手机上下载:
+      // 只在选到 CHP 时给一句说明加一个普通链接。必须同帧导航 —— 外域跳转由宿主交给
+      // 系统浏览器, 而 target="_blank" 在这里会静默什么都不做。
+      '<div class="automation-note" data-chp-hint>' + ui.icon("circle-info") + '<span>CHP 是 Haminn 综合入口程序：装在运行 ComfyUI 那台电脑上，把本机模型统一成一个接口。请到 Haminn 官网下载：<a href="https://haminn.airen.life/chp.html">haminn.airen.life/chp.html</a></span></div>' +
       '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + (kind === "image" ? "" : endpointField) + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
       '<label class="switch-row"><span><strong>启用模型</strong><small>停用后保留设置，但不会被角色或对话调用</small></span><input name="enabled" type="checkbox"' + (service.enabled !== false ? ' checked' : '') + '></label></div>';
     var form = ui.openModal({
@@ -196,6 +200,8 @@
       show('[data-extra="accessKeyId"]', family.accessKeyField === true); show('[data-extra="sessionToken"]', family.sessionTokenField === true);
       show('[data-extra="region"]', family.regionField === true); show('[data-extra="workspaceId"]', family.workspaceField === true); show('[data-extra="resourceEndpoint"]', family.resourceEndpointField === true);
       show('[data-extra="apiStyle"]', kind === "llm" && family.editableProtocol === true); show('[data-model-family]', kind === "llm" && mode !== "official");
+      // 那句「去哪儿取 CHP」只在选到 CHP 时出现, 与别的按家族显隐的字段同一条规矩。
+      show('[data-chp-hint]', family.protocol === "chp");
       if (reset) {
         service.credentialRef = "";
         form.elements.namedItem("endpoint").value = family.endpoint || defaultEndpoint(kind); form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
