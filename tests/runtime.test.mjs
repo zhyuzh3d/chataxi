@@ -1837,3 +1837,133 @@ test('the drawing client picks render with a portrait and generate without one',
   assert.equal(sceneFor({ id: 'render', scenes: { generate: plain_() } }, true), null, '只有 generate 而手上又有图时返回 null：那条规则不收图，宁可交给调用方报错');
   assert.equal(sceneFor({ id: 'render', frames: [] }, true), null, '没有 scenes 的旧卡片返回 null');
 });
+
+// CHP 的信息接口从本轮起**需要 key**，所以钥错时会回 401 —— 那是一个**确定的答案**：
+// 地址对、答话的是 CHP、钥匙不对。以前它落进 chpInfo 的 continue，被报成「这个地址不是 CHP 服务」，
+// 而那句话唯一指示的方向是「去重装一个本来好好的插件」。判据不能只看文案：还要证明它**当场停**。
+test('a wrong CHP key is reported as a wrong password, not as a wrong address', async () => {
+  const { app } = runtime();
+  const asked = [];
+  app.platform.network = {
+    // 401 是**响应**，不是异常：底层 request() 对任何 4xx 都照常把响应交回来（见 platform/network.js）。
+    request: async (options) => { asked.push(options.url); return { status: 401, bodyText: JSON.stringify({ error: 'unauthorized', spec: 'chp/2' }) }; },
+    readText: async (response) => response.bodyText
+  };
+  await assert.rejects(
+    () => app.services.modelServices.discover('image', { id: 'card', endpoint: 'http://192.168.124.31:8189', apiKey: 'wrong' }, { persist: false }),
+    (error) => {
+      assert.match(error.message, /访问密码不正确/, '一个 401 必须当场报「访问密码不正确」');
+      assert.equal(/不是 CHP 服务/.test(error.message), false, '401 不许说成「这个地址不是 CHP 服务」——那等于叫用户去重装一个本来好好的插件');
+      return true;
+    });
+  assert.deepEqual(asked, ['http://192.168.124.31:8189'], '401 要当场停：第二条候选一个字节都不许再发');
+});
+
+// 一把 key 有它自己被授权的场景。CHP 回 403 「forbidden_capability」不是装坏了、也不是地址写错了
+// —— 那是管理员的决定，所以要有自己那句话，而不是掉到最后那条 message 上把插件自己的话抛出来。
+test('a capability the key was not granted is reported as a key limitation', async () => {
+  const { app } = runtime(['app/services/draw.js']);
+  // 插件自己那句话刻意**不含**客户端要说的那半句 —— 稳定的一半是错误码，不是它的文案。
+  // （夹具里若也写着「这把 key 没有这个能力」，把映射整条删掉也是绿的：那句话会顺着
+  //  `readable` 最后那条 message 原样漏出来。）
+  const forbidden = Object.assign(new Error('权限不足（403）：forbidden_capability'), {
+    status: 403, category: '权限不足', payload: { error: 'forbidden_capability', message: 'forbidden' }
+  });
+  assert.match(app.services.draw.readable(forbidden).message, /这把 key 没有这个能力/, '403 必须说成「这把 key 没有这个能力」');
+  // 它**不许**借用宿主那条「能力已被拒绝」的说法：那是 App 自己的网络权限，与 CHP 的 key 授权是两件事。
+  assert.equal(/能力已被拒绝/.test(app.services.draw.readable(forbidden).message), false, 'CHP 的 key 授权不许和宿主的能力授权混成一句');
+  // 别的错误码照旧走各自的句子（改这一条不许把码表改软）。
+  assert.match(app.services.draw.readable(Object.assign(new Error('x'), { payload: { error: 'unauthorized' } })).message, /访问密码不正确/, 'unauthorized 那一句照旧');
+  assert.match(app.services.draw.readable(Object.assign(new Error('x'), { payload: { error: 'no_model' } })).message, /没有为这个绘制场景配好模型/, 'no_model 那一句照旧');
+});
+
+// CHP 的朗读（`speech` 段）：与绘图同一个信息接口、同一个地址、同一把密码。卡片上每一样东西
+// 都从文档里读 —— 引擎名、音色表、输出规格（采样率/格式），一个都不许客户端自己写死。
+// 断的是**真正会发出去的那份请求体与那个地址**，不是源码里有没有那一行。
+test('the CHP speech card and its request come out of the document', async () => {
+  const { app } = runtime(['app/services/tts.js']);
+  const document = {
+    spec: 'chp/2',
+    plugin: { id: 'hamdraw_chp', version: '3.2.0' },
+    auth: { required: true, authorized: true },
+    endpoints: { info: '/chp/info', jobs: '/chp/api/jobs', speech: '/chp/speech' },
+    rules: [],
+    abilities: [],
+    speech: {
+      rules: [{ category: 'speak', rule: 'txt-2-sph', needs: { text: true } }],
+      abilities: [{
+        name: 'qwen3-tts-0.6b', ready: true, missing: [],
+        files: { engine: 'qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf' },
+        // 采样率刻意用 22050 —— 不是任何一个会被写死的常数（24000 / 44100 / 16000）。
+        // 用它才验得出「采样率来自文档」：拿 24000 当夹具的话，把代码改成写死 24000 也是绿的。
+        audio: { sample_rate: 22050, channels: 1, formats: ['pcm', 'wav'], streaming: true },
+        voices: [
+          { id: 'vivian', label: 'Vivian', languages: ['zh', 'en'] },
+          { id: 'serena', label: 'Serena', languages: ['zh'] }
+        ]
+      }]
+    }
+  };
+  app.platform.network = {
+    request: async () => ({ status: 200, bodyText: JSON.stringify(document) }),
+    readText: async (response) => response.bodyText
+  };
+  const service = { id: 'speech', family: 'chp-speech', type: 'chp-speech', endpoint: 'http://192.168.124.31:8189/chp', apiKey: 'k' };
+  const found = await app.services.modelServices.discover('tts', service, { persist: false });
+
+  // 音色表**只能**来自文档（引擎的 /v1/voices 是空的），顺序即规范：第一个就是默认音色。
+  assert.deepEqual(plain(found.voices.map((item) => item.id)), ['vivian', 'serena'], '音色表来自文档的 speech.abilities[].voices');
+  assert.equal(found.voices[0].name, 'Vivian', '音色的显示名取 label');
+  assert.equal(found.models.length, 1, '引擎在服务端加载：一条能力就是一张卡');
+  assert.equal(found.models[0].id, 'qwen3-tts-0.6b', '卡片认的是能力的名字');
+  assert.equal(found.models[0].engine, 'qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf', '引擎文件名来自 files.engine');
+  assert.equal(found.models[0].audioStreaming, true, '能不能流式由 audio.streaming 说了算');
+  assert.equal(service.chpAudio.sampleRate, 22050, '输出规格原样存下来');
+  assert.deepEqual(plain(service.chpAudio.formats), ['pcm', 'wav']);
+
+  const profile = app.services.modelServices.resolveTts(service, {}, {});
+  // 地址**只能**从文档的 endpoints 里读（规范 §1.3）。`speech` 是第八个键，拼不出来：
+  // 用户填的那个地址带着 `/chp` 这一段，而服务根是 chpOrigin —— 自己拼会拼出 …/chp/chp/speech。
+  assert.equal(profile.endpoint, 'http://192.168.124.31:8189/chp/speech', '朗读地址来自文档的 endpoints.speech，不是自己拼的');
+  assert.equal(profile.streamEndpoint, profile.endpoint, '一条路由就是一次请求：没有 SSE / 流式两条入口');
+  assert.equal(profile.sampleRate, 22050, '采样率来自文档的 audio.sample_rate，不是写死的常数');
+  assert.equal(profile.voice, 'vivian', '没挑过音色时取表里的第一个');
+  assert.equal(profile.streaming, true, '卡片自己能流式');
+
+  // 这两行就是 streamPcm 真正做的事（见 tts.js 的 streamPcm）：配置来自 pcmStreamProfile，
+  // 请求体来自 requestBody。pcmStreamProfile 对 chp-speech 返回 null 的话，流式那条路会直接
+  // 抛「没有可用的流式音频通道」—— 所以断它非空是有意义的，而不是断个形状好看。
+  const stream = app.services.tts.pcmStreamProfile(profile);
+  assert.ok(stream, 'chp-speech 必须有一条流式通道');
+  assert.equal(stream.kind, 'raw', '引擎回的就是连续 PCM 字节，外面没有 SSE 包装');
+  assert.equal(stream.sampleRate, 22050, '播放用的采样率就是文档里那个数');
+  const body = app.services.tts.requestBody(profile, '你好，这是一次测试。', stream.format);
+  assert.deepEqual(plain(body), {
+    text: '你好，这是一次测试。',
+    voice: 'vivian',
+    language: '',
+    response_format: 'pcm',
+    stream: true
+  }, '朗读的请求体就是这五个字段：文本叫 text（`prompt` 在 CHP 里会触发翻译），密码走头不走 body');
+  // 整包那条路（stream:false）只换响应类型，字段名一个都不变。
+  const whole = app.services.tts.requestBody(profile, '你好', 'wav');
+  assert.equal(whole.stream, false, '要整包 wav 时不带 stream');
+  assert.equal(whole.response_format, 'wav');
+  assert.equal('prompt' in whole, false, 'prompt 这个字段名在朗读里永远不许出现');
+});
+
+// 文档里没有 `speech` 那一段（插件是 3.2.0 之前的老版）时要**当场说清**，不是静默不出声。
+// 「没有这个场景」与「有场景但没有引擎」是两句不同的话，指向的排查方向也不同。
+test('an old CHP document without a speech section says so instead of going silent', async () => {
+  const { app } = runtime();
+  const old = { spec: 'chp/2', plugin: { id: 'hamdraw_chp', version: '3.1.1' }, auth: { required: true, authorized: true }, endpoints: { info: '/chp/info' }, rules: [], abilities: [] };
+  const serving = (doc) => { app.platform.network = { request: async () => ({ status: 200, bodyText: JSON.stringify(doc) }), readText: async (response) => response.bodyText }; };
+  serving(old);
+  await assert.rejects(
+    () => app.services.modelServices.discover('tts', { id: 'speech', family: 'chp-speech', endpoint: 'http://192.168.124.31:8189' }, { persist: false }),
+    /没有提供朗读能力/, '没有 speech 那一段要报「没有提供朗读能力」，不是静默不出声');
+  serving(Object.assign({}, plain(old), { speech: { rules: [{ category: 'speak', rule: 'txt-2-sph' }], abilities: [] } }));
+  await assert.rejects(
+    () => app.services.modelServices.discover('tts', { id: 'speech', family: 'chp-speech', endpoint: 'http://192.168.124.31:8189' }, { persist: false }),
+    /还没有公布朗读引擎/, '有场景但没引擎是另一句话：那是本机还没配语音服务，不是插件太旧');
+});

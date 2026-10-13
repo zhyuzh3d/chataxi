@@ -1050,7 +1050,7 @@
     // ── 补充：绘图动作、绘图模型与定妆照（0.7.26） ─────────────
     "绘图模型": "Drawing model",
     "CHP 插件": "CHP plugin",
-    "ComfyUI Haminn Protocol：连接后由插件自报可用的绘图场景与画幅": "ComfyUI Haminn Protocol: after connecting, the plugin reports the drawing scenarios and canvases it offers",
+    "CHP（Haminn 综合入口程序）：连接后由插件自报可用的绘图场景与画幅": "CHP (Consolidated Haminn Portal): after connecting, the plugin reports the drawing scenarios and canvases it offers",
     "插件地址": "Plugin address",
     "访问密码": "Access password",
     "插件提供的场景": "Scenarios provided by the plugin",
@@ -1075,6 +1075,12 @@
     "访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码": "Wrong password; check it in the CHP plugin's config node in ComfyUI",
     "插件没有提供成品图（category: render）场景，请升级插件": "The plugin offers no finished-image (category: render) scenario; upgrade the plugin",
     "插件的成品图场景没有公布画幅，请升级插件": "The plugin's finished-image scenario publishes no canvas; upgrade the plugin",
+    // ── CHP 的朗读（speech 段）：与绘图同一台机器、同一把访问密码（0.7.29） ─────────────
+    "CHP 语音": "CHP speech",
+    "Haminn 综合入口程序（CHP）的朗读接口：连接后由 CHP 自报可用的引擎、音色与采样率": "The Haminn Consolidated Portal (CHP) speech endpoint: once connected, CHP reports the engine, voices and sample rate it offers",
+    "请填写 CHP 的地址（运行 CHP 的那台电脑）": "Enter the CHP address (the computer that runs CHP)",
+    "CHP 没有提供朗读能力（speak），请升级 CHP 或在控制台里为这个场景授权": "CHP offers no speech capability (speak); upgrade CHP, or grant this scenario to the key in the console",
+    "CHP 还没有公布朗读引擎，请先在 CHP 配置里填好语音服务地址": "CHP publishes no speech engine yet; fill in the speech service address in the CHP configuration first",
     // 绘图客户端（app/services/draw.js）的错误与进度
     "绘图失败：": "Drawing failed: ",
     "绘图任务结束时状态是": "The drawing job ended in state ",
@@ -1088,6 +1094,7 @@
     "插件正在绘制…": "The plugin is drawing…",
     "绘图插件没有返回任务编号，请确认插件版本与地址": "The drawing plugin returned no job id; check the plugin version and address",
     "绘图插件的访问密码不正确，请在模型页核对密码": "The drawing plugin rejected the password; check it on the Models page",
+    "这把 key 没有这个能力，请让管理员在 CHP 控制台里为这个场景授权": "This key is not allowed this capability; ask the administrator to grant this scenario in the CHP console",
     "绘图插件队列已满，稍后再试": "The drawing plugin queue is full, try again later",
     "绘图任务在插件上已经不存在了（服务端可能重启过）": "The drawing job no longer exists on the plugin (the server may have restarted)",
     "绘图任务已被插件取消": "The plugin cancelled the drawing job",

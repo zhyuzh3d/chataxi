@@ -76,6 +76,10 @@
   function readable(error) {
     var payload = error && error.payload, code = payload && (payload.error || payload.code), message = payload && payload.message;
     if (code === "unauthorized") return new Error("绘图插件的访问密码不正确，请在模型页核对密码");
+    // 一把 key 有它自己被授权的场景。CHP 回 403 「forbidden_capability」不是装坏了、也不是地址
+    // 写错了 —— 那是管理员的决定，所以要说清找谁、去哪儿授权，而不是让它掉到最后那条 message
+    // 上，把插件自己的话原样抛出来。两个仓用的是同一句话（见 PoseGi / hamdraw 的同名映射）。
+    if (code === "forbidden_capability") return new Error("这把 key 没有这个能力，请让管理员在 CHP 控制台里为这个场景授权");
     if (code === "no_model") return new Error("插件还没有为这个绘制场景配好模型，请在 ComfyUI 的 CHP 插件配置节点里设置");
     if (code === "unsupported_category") return new Error("插件不认识这个绘制场景，请升级插件");
     // 步数不在这里的码表里：chataxi 一个 step 都不发（见 generate），所以永远收不到那个码。

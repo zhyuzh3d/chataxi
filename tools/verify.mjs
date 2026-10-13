@@ -828,15 +828,15 @@ assert.match(rolesSource, /name="behaviorGuidance"[\s\S]{0,900}?portraitBlock\(\
 // 默认值放在编辑器初值这一层，catalog.js 的服务商预设保持空串 —— 否则清空输入框会变成
 // 「恢复默认」，validateConnection 的「请填写服务地址」守卫也就永远触发不了。
 assert.match(modelEditorSource, /var CHP_DEFAULT_ENDPOINT = "http:\/\/[^"]+";/, "the drawing card's plugin address must be prefilled from a named default");
-assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(kind\)/, "the address must resolve as saved > provider preset > CHP default");
-assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(kind\);/, "switching provider must fall back to the CHP default too");
+assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(initialDefinition\)/, "the address must resolve as saved > provider preset > CHP default");
+assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(family\);/, "switching provider must fall back to the CHP default too");
 // CHP 插件不再随 happ 分发（业主 2026-10-13）：插件装在那台跑 ComfyUI 的电脑上，
 // happ 只欠用户一句说明加一个链接。三条判据：
 //   ① 链接必须是**同帧导航** —— 宿主把外域跳转交给系统浏览器，target="_blank" 会静默无效；
 //   ② URL 里**不许带版本号** —— 它被编译进三个 happ，带版本号就是插件升版即过时；
 //   ③ 只在选到 CHP 时出现，且中文那句必须同时进 i18n-en.js（本仓硬规矩）。
 assert.match(modelEditorSource, /<a href="https:\/\/haminn\.airen\.life\/chp\.html">/, "the CHP card must link to the page that explains and serves the plugin, as a plain same-frame anchor");
-assert.match(modelEditorSource, /show\('\[data-chp-hint\]', family\.protocol === "chp"\)/, "the CHP hint must appear only while the CHP family is selected");
+assert.match(modelEditorSource, /show\('\[data-chp-hint\]', isChp\(family\)\)/, "the CHP hint must appear only while a CHP family is selected");
 assert.match(i18nEnSource, /"CHP 是 Haminn 综合入口程序：[^"]*Haminn 官网下载：": "/, "the CHP hint needs its English line in the shared table, like every other new sentence");
 assert.match(i18nEnSource, /CHP is the Haminn Consolidated Portal/, "the English CHP hint must name the portal in full");
 assert.match(storeSource, /var collections = \[[^\]]*"image-profiles"/, "the drawing-model collection must be whitelisted in store.js");

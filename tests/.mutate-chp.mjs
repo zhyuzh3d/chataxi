@@ -221,6 +221,67 @@ const mutations = [
     '    if (answered) throw new Error("这个地址不是 CHP 服务',
     '    if (true) throw new Error("这个地址不是 CHP 服务',
     "连不上要说地址不通"],
+
+  // ── CHP 的 401：一个**确定的答案**，不是「地址可能填错」──────────────────────────
+  // 信息接口从本轮起需要 key，所以钥错时回 401。以前它落进 `continue`，最后被报成
+  // 「这个地址不是 CHP 服务」—— 那句话唯一指向的下一步是「去重装一个本来好好的插件」。
+  ["a 401 is swallowed and reported as a wrong address",
+    "app/services/model-services.js",
+    '      if (response.status === 401) throw new Error("访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码");',
+    "      ;",
+    "一个 401 必须当场报「访问密码不正确」"],
+  // 一把 key 有它自己被授权的场景（403 forbidden_capability）。掉到最后那条 message 上的话，
+  // 用户看到的是插件自己的原话 —— 既没说清是授权问题，也没说该找谁。
+  ["a capability the key was not granted is reported as a generic failure",
+    "app/services/draw.js",
+    '    if (code === "forbidden_capability") return new Error("这把 key 没有这个能力，请让管理员在 CHP 控制台里为这个场景授权");',
+    '    if (false) return new Error("");',
+    "403 必须说成「这把 key 没有这个能力」"],
+
+  // ── CHP 的朗读（speech 段，§5.3）──────────────────────────────────────────────
+  // 家族没登记成 CHP 的话，discover 会把它当成普通 TTS 走通用那条路：音色表变成空、
+  // 采样率无从谈起，而界面上看起来完全正常（只是"没有音色可选"）。
+  ["the speech family stops being a CHP family",
+    "app/services/catalog.js",
+    '      endpoint: "", discovery: "chp",\n      // 引擎在服务端加载',
+    '      endpoint: "", discovery: "none",\n      // 引擎在服务端加载',
+    "音色表来自文档的 speech.abilities[].voices"],
+  ["the speech card is discovered through the generic TTS path",
+    "app/services/model-services.js",
+    '    else if (kind === "tts" && definition.discovery === "chp") result = await discoverChpSpeech(service, definition);',
+    '    else if (false) result = await discoverChpSpeech(service, definition);',
+    "音色表来自文档的 speech.abilities[].voices"],
+  // 地址只从文档的 endpoints 里读。用户填的那个地址可能带着一段路径（…/chp），自己拼会拼出
+  // …/chp/chp/speech —— 那是用户看不见、服务端也只回 404 的一种坏。
+  ["the speech address is assembled instead of read",
+    "app/services/model-services.js",
+    "    var speechUrl = chpSpeech ? chpAbsolute(service, service.endpoints && service.endpoints.speech) : \"\";",
+    '    var speechUrl = chpSpeech ? String(service.endpoint || "") + "/chp/speech" : "";',
+    "朗读地址来自文档的 endpoints.speech"],
+  // 采样率是**这台机器上引擎**的输出规格，写在文档里。写死一个常数会把声音放快或放慢，
+  // 而播放链路本身一切正常 —— 这是最难被发现的一类坏。
+  ["the speech sample rate is a hardcoded constant",
+    "app/services/model-services.js",
+    "      sampleRate: chpSpeech ? Number(chpAudio.sampleRate || 24000) : Number(service.sampleRate || 24000),",
+    "      sampleRate: chpSpeech ? 24000 : Number(service.sampleRate || 24000),",
+    "采样率来自文档的 audio.sample_rate"],
+  // 朗读的文本字段叫 text，**不许**叫 prompt：`prompt` 在 CHP 里带翻译副作用
+  // （图片侧那条规则的 prompt.language 会让服务端先把中文译成英文），而朗读的文本永不翻译。
+  ["the speech request names the text with the translating field",
+    "app/services/tts.js",
+    '    if (profile.protocol === "chp-speech") return {\n      text: text,',
+    '    if (profile.protocol === "chp-speech") return {\n      prompt: text,',
+    "朗读的请求体就是这五个字段"],
+  ["the speech request drops the streaming flag",
+    "app/services/tts.js",
+    '      response_format: formatOverride || profile.format || "pcm",\n      stream: formatOverride === "pcm"\n    };',
+    '      response_format: formatOverride || profile.format || "pcm",\n      stream: false\n    };',
+    "朗读的请求体就是这五个字段"],
+  ["chp-speech has no raw streaming channel",
+    "app/services/tts.js",
+    '    if (profile.protocol === "chp-speech") return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };',
+    '    if (false) return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };',
+    "chp-speech 必须有一条流式通道"],
 ];
 
 const escaped = [];
@@ -262,6 +323,12 @@ try {
       console.log("SKIP  " + name);
       continue;
     }
+    // 每一条变异都从**干净的树**上开始。少了这一步，上一条变异留在**另一个文件**里的
+    // 改动不会被任何人覆盖（每轮只重写自己要改的那个文件），于是：
+    // 它引起的那次失败会被算到当前这条头上（假 CAUGHT），
+    // 而当前这条自己的失败又可能被它挡在更早的地方（假 ESCAPED）——
+    // 两种都实测过：speech 那五条在整轮里报 ESCAPED、单跑同样一条却报 CAUGHT。
+    for (const [rel, source] of sources) fs.writeFileSync(path.join(root, rel), source);
     fs.writeFileSync(target, original.replace(find, replace));
     // 写盘之后再报一次：被硬杀时，日志里最后一条 RUN 就是仓库此刻带着的那处变异。
     say("RUN   " + name + " (" + file + ")\n");

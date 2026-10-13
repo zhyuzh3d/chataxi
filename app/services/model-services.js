@@ -244,11 +244,20 @@
     var modelInfo = modelDefinition("tts", service, modelId);
     var voiceId = role && role.ttsVoice || service.defaultVoiceId || service.voice || (voices(service, modelId)[0] || {}).id || "";
     var compatibility = voiceCompatibility(service, modelId, voiceId);
+    // CHP 的朗读走**一条**路由，而且地址只能从文档的 `endpoints` 里读（规范 §1.3：客户端不许自己拼
+    // 路径）。`speech` 是第八个键，读不到就说明那是一份 3.2.0 之前的文档 —— 那种文档本来也没有朗读
+    // 能力，discover 已经当场报过「没有提供朗读能力」，所以这里不另造一条兜底路径。
+    // 它与绘图是**同一个形态**：一次请求边合成边回字节，没有「先合成再取件」那一步 ⇒
+    // streamEndpoint 与 endpoint 是同一个地址（别的家族要分开是因为它们有 SSE / 流式两条入口）。
+    // 采样率与格式同样来自文档的 `audio`：换引擎、换机器都只改服务端配置，客户端不猜。
+    var chpSpeech = definition.id === "chp-speech";
+    var speechUrl = chpSpeech ? chpAbsolute(service, service.endpoints && service.endpoints.speech) : "";
+    var chpAudio = service.chpAudio || {};
     return Object.assign({}, service, {
       family: definition.id,
       type: service.type || definition.type,
-      endpoint: computedEndpoint("tts", service),
-      streamEndpoint: service.streamEndpoint || definition.streamEndpoint || computedEndpoint("tts", service),
+      endpoint: chpSpeech ? speechUrl : computedEndpoint("tts", service),
+      streamEndpoint: chpSpeech ? speechUrl : service.streamEndpoint || definition.streamEndpoint || computedEndpoint("tts", service),
       protocol: service.protocol || definition.protocol || service.type || definition.type,
       model: modelId,
       modelInfo: modelInfo,
@@ -262,8 +271,8 @@
       speechRate: modelInfo.speechRate && role && role.ttsSpeechRate != null ? Number(role.ttsSpeechRate) : Number(service.speechRate || 0),
       pitchRate: modelInfo.pitchRate && role && role.ttsPitchRate != null ? Number(role.ttsPitchRate) : Number(service.pitchRate || 0),
       loudnessRate: modelInfo.loudnessRate && role && role.ttsLoudnessRate != null ? Number(role.ttsLoudnessRate) : Number(service.loudnessRate || 0),
-      sampleRate: Number(service.sampleRate || 24000),
-      format: service.format || (modelInfo.formats || [])[0] || "mp3",
+      sampleRate: chpSpeech ? Number(chpAudio.sampleRate || 24000) : Number(service.sampleRate || 24000),
+      format: chpSpeech ? service.format || (chpAudio.formats || [])[0] || "pcm" : service.format || (modelInfo.formats || [])[0] || "mp3",
       streaming: modelInfo.audioStreaming === true
     });
   }
@@ -655,6 +664,11 @@
         response = await app.platform.network.request({ url: candidates[index], method: "GET", headers: headers, timeoutMs: 30000 });
         text = await app.platform.network.readText(response);
       } catch (_) { continue; }
+      // 401 是一个**确定的答案**，而且是这里唯一不需要再猜的那个：地址对、答话的是
+      // CHP、钥匙不对。以前它落进下面那句 `continue`，最后被报成「这个地址不是 CHP
+      // 服务」—— 那句话等于叫用户去重装一个本来好好的插件，是它唯一不许指的方向。
+      //（更早的插件里信息接口不要 key 也照答，所以那时没有这个状态码可读。）
+      if (response.status === 401) throw new Error("访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码");
       answered = true;
       if (response.status < 200 || response.status >= 300) continue;
       var document = app.utils.safeJsonParse(text, null);
@@ -760,6 +774,70 @@
     return { models: models, voices: [], catalogState: "fetched", warnings: [], discovered: true };
   }
 
+  // chataxi 只走**一条**朗读场景：`speak`（签名 `txt-2-sph`）。与绘图那两条不同，这一条不是
+  // 「选哪条路」的问题 —— 引擎在服务端加载，客户端报文本、音色与格式，合成边回字节。
+  var SPEECH_CATEGORY = "speak";
+
+  // 语音（CHP，spec chp/2 的 `speech` 段）：与绘图**共用同一个信息接口、同一个地址、同一把密码**。
+  // 卡片上的每一样东西都从文档里读，一个都不猜：
+  //   rules    —— 客户端要准备什么（这里只要 text）
+  //   abilities—— 谁回答它、引擎文件名、就绪与缺件
+  //   audio    —— 输出规格（采样率 / 声道 / 格式 / 能不能流式）⇒ 播放链路的采样率就取自它
+  //   voices   —— 手写的音色表，顺序即规范（第一个是默认音色）
+  // 客户端**不内置任何一套音色或采样率**：换引擎、换机器都只改服务端配置，客户端一行不动。
+  async function discoverChpSpeech(service, definition) {
+    if (!String(service.endpoint || "").trim()) throw new Error("请填写 CHP 的地址（运行 CHP 的那台电脑）");
+    var headers = authHeaders("tts", service);
+    Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
+    var found = await chpInfo(service.endpoint, headers), document = found.document;
+    var auth = document.auth || {};
+    if (auth.required && auth.authorized === false) throw new Error("访问密码不正确，请在 ComfyUI 的 CHP 插件配置节点里核对密码");
+    var speech = document.speech || null;
+    var rules = speech && speech.rules || [], abilities = speech && speech.abilities || [];
+    var rule = rules.find(function (item) { return item && String(item.category || "") === SPEECH_CATEGORY; });
+    // 「文档里没有这个场景」与「有场景但没有回答它的引擎」是两句不同的话 —— 前者要升级 CHP
+    // （或让管理员为这把 key 授权），后者是本机还没配语音服务。照绘图那边 chpScene 的同一条分法。
+    if (!rule) throw new Error("CHP 没有提供朗读能力（speak），请升级 CHP 或在控制台里为这个场景授权");
+    var ability = abilities[0] || null;
+    if (!ability) throw new Error("CHP 还没有公布朗读引擎，请先在 CHP 配置里填好语音服务地址");
+    var audio = ability.audio || {}, missing = (ability.missing || []).map(String);
+    var voices = (ability.voices || []).map(function (item) {
+      var id = String(item && item.id || "").trim();
+      return {
+        id: id,
+        name: String(item && (item.label || item.name) || id),
+        languages: (item && item.languages || []).map(String),
+        capabilitySource: "capability-directory"
+      };
+    }).filter(function (item) { return item.id; });
+    service.plugin = document.plugin || {};
+    service.endpoints = document.endpoints || {};
+    service.chpOrigin = chpOrigin(found.url) || chpBase(service.endpoint);
+    // `audio` 是这份能力自己的输出规格。存成服务上的一个字段而不是卡片上的一串散值：
+    // 采样率要同时给「流式播放」与「重播缓存」两处用（见 tts.js 的 pcmStreamProfile / rememberPcm），
+    // 而它们拿到的是 resolveTts 之后的 profile —— 一份、且只有一份。
+    service.chpAudio = {
+      sampleRate: Number(audio.sample_rate || 0) || 24000,
+      channels: Number(audio.channels || 0) || 1,
+      formats: (audio.formats || []).map(String),
+      streaming: audio.streaming !== false
+    };
+    var engine = String(ability.files && ability.files.engine || "");
+    service.models = [{
+      id: String(ability.name || SPEECH_CATEGORY), name: String(ability.name || "CHP 语音"),
+      kind: "tts", description: "", engine: engine,
+      // 就绪与缺件跟着**能力**走，与绘图那张卡同一条：一条能力是一组能跑起来的文件。
+      ready: ability.ready !== false, missing: missing,
+      streaming: service.chpAudio.streaming, audioStreaming: service.chpAudio.streaming, textStreaming: false,
+      formats: service.chpAudio.formats.slice(),
+      capabilitySource: "capability-directory"
+    }];
+    service.voices = voices;
+    service.modelsDiscovered = true;
+    service.voicesDiscovered = true;
+    return { models: service.models, voices: voices, catalogState: "fetched", warnings: [], discovered: true };
+  }
+
   function settle(value) {
     if (!value) return Promise.resolve({ status: "skipped", value: null });
     return Promise.resolve(value).then(function (result) { return { status: "fulfilled", value: result }; }, function (reason) { return { status: "rejected", reason: reason }; });
@@ -781,6 +859,7 @@
     var urls = discoveryUrls(kind, service), headers = authHeaders(kind, service), result;
     Object.assign(headers, app.utils.parseHeaders(service.customHeaders));
     if (kind === "image") result = await discoverImage(service, definition);
+    else if (kind === "tts" && definition.discovery === "chp") result = await discoverChpSpeech(service, definition);
     else if (kind === "tts") result = await discoverTts(service, definition, urls, headers);
     else if (kind === "asr") result = await discoverAsr(service, definition, urls, headers);
     else result = await discoverLlm(service, definition, urls, headers);

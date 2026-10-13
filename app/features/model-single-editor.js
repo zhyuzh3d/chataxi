@@ -5,15 +5,20 @@
   // 新建卡片时预选的服务商：绘图只有 CHP 一家，其余沿用 openai。
   var defaultFamilies = { llm: "openai", tts: "openai", asr: "openai", image: "chp" };
 
-  // CHP 插件的默认地址：插件装在 ComfyUI 里，所以主机就是跑 ComfyUI 的那台机器（A1X 掌机）。
+  // CHP 的默认地址：CHP 装在跑 ComfyUI 的那台机器上（A1X 掌机），所以主机就是它。
   // 只写到「主机 : 端口」这一层 —— 换机器时用户只改 IP，端口与 /chp 路径都不用碰
   //（model-services.js 的 chpBase 会把 /chp 或 /hamdraw 后缀吃掉，写不写都对）。
   //
-  // 默认值放在这里，而不是 catalog.js 的 imageFamilies.endpoint：那个字段代表「服务商预设」，
+  // 默认值放在这里，而不是 catalog.js 那两个家族的 endpoint：那个字段代表「服务商预设」，
   // 填了它输入框清空就会自动变回默认值，validateConnection 的「请填写服务地址」守卫也就
   // 永远触发不了。默认值只放在卡片初值这一层，唯一权威、可清空、可校验。
   var CHP_DEFAULT_ENDPOINT = "http://192.168.124.31:8189";
-  function defaultEndpoint(kind) { return kind === "image" ? CHP_DEFAULT_ENDPOINT : ""; }
+
+  // 哪些家族读的是 CHP。**判据是 `discovery`**，不是家族名也不是 kind：绘图与朗读是两个
+  // 家族、两个 kind，但它们读的是同一份信息文档、同一个地址、同一把密码。凡「地址要预填」
+  // 「那句话要出现」「密码那一栏该叫访问密码」的地方都问它 —— 一处判据，四处同源。
+  function isChp(family) { return Boolean(family) && family.discovery === "chp"; }
+  function defaultEndpoint(family) { return isChp(family) ? CHP_DEFAULT_ENDPOINT : ""; }
 
   function collection(kind) { return kind + "-profiles"; }
   function definition(kind, profile) { return app.services.modelServices.family(kind, profile.family || profile.type); }
@@ -27,7 +32,7 @@
     return '<label class="field"><span>' + u.escapeHtml(label) + '</span><input name="' + name + '" value="' + u.escapeHtml(value || "") + '" ' + (attrs || "") + '></label>';
   }
   function secretField(service, family) {
-    var label = family.protocol === "chp" ? "访问密码" : family.auth === "aws-sigv4" ? "Secret Access Key" : family.auth === "azure" ? "Speech Key" : "API Key", value = service.apiKey || "";
+    var label = isChp(family) ? "访问密码" : family.auth === "aws-sigv4" ? "Secret Access Key" : family.auth === "azure" ? "Speech Key" : "API Key", value = service.apiKey || "";
     return '<div class="field"><span data-main-secret-label>' + label + ' <em>' + (value ? '已保存在当前设备，可直接编辑' : family.keyOptional ? '选填' : '保存在当前设备') + '</em></span><div class="secret-editor"><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" value="' + u.escapeHtml(value) + '" placeholder="粘贴' + label + '"><span class="secret-mask" aria-hidden="true">' + u.escapeHtml(value ? u.maskSecret(value) : "") + '</span><button class="button secondary compact secret-paste" type="button" data-paste-key aria-label="从剪贴板粘贴' + label + '">' + ui.icon("paste") + '<span>粘贴</span></button><button class="icon-button secret-visibility" type="button" data-toggle-secret aria-label="显示' + label + '" aria-pressed="false">' + ui.icon("eye") + '</button></div></div>';
   }
   function auxiliarySecretField(name, label, value, optional) {
@@ -64,7 +69,7 @@
     // CHP 跑在局域网里 ⇒ 地址必须放在主区域。塞进折叠的「更多设置」里的话，
     // 用户打开卡片只会看到一个「获取模型列表」按钮，不知道该去哪儿填地址。
     // 地址预填一个能直接用的默认值（见 CHP_DEFAULT_ENDPOINT），用户换机器时只改 IP。
-    var endpointField = field("endpoint", kind === "image" ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(kind), kind === "image" ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
+    var endpointField = field("endpoint", kind === "image" ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(initialDefinition), kind === "image" ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
     var noteHtml = kind === "image"
       ? '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>地址与密码只配这一处：有定妆照的角色按图重画, 没有就从零画一张, 走哪条不用你选。画幅锁定 9:16 竖幅, 下面挑的正是插件公布的那几档, 参考强度沿用插件自报的默认值。</span></div>'
       : '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>目录只用于选择模型；角色的最大输出、采样、推理、音色与发音参数在角色设置中配置。</span></div>';
@@ -196,15 +201,16 @@
     function syncProvider(reset) {
       var familyId = value("family"), family = app.services.modelServices.family(kind, familyId), mode = app.services.modelRegistry.sourceMode({ family: familyId });
       form.querySelector("#providerDescription").textContent = family.description || "";
-      var mainSecretLabel = form.querySelector("[data-main-secret-label]"); if (mainSecretLabel && mainSecretLabel.firstChild) mainSecretLabel.firstChild.textContent = family.protocol === "chp" ? "访问密码 " : family.auth === "aws-sigv4" ? "Secret Access Key " : family.auth === "azure" ? "Speech Key " : "API Key ";
+      var mainSecretLabel = form.querySelector("[data-main-secret-label]"); if (mainSecretLabel && mainSecretLabel.firstChild) mainSecretLabel.firstChild.textContent = isChp(family) ? "访问密码 " : family.auth === "aws-sigv4" ? "Secret Access Key " : family.auth === "azure" ? "Speech Key " : "API Key ";
       show('[data-extra="accessKeyId"]', family.accessKeyField === true); show('[data-extra="sessionToken"]', family.sessionTokenField === true);
       show('[data-extra="region"]', family.regionField === true); show('[data-extra="workspaceId"]', family.workspaceField === true); show('[data-extra="resourceEndpoint"]', family.resourceEndpointField === true);
       show('[data-extra="apiStyle"]', kind === "llm" && family.editableProtocol === true); show('[data-model-family]', kind === "llm" && mode !== "official");
       // 那句「去哪儿取 CHP」只在选到 CHP 时出现, 与别的按家族显隐的字段同一条规矩。
-      show('[data-chp-hint]', family.protocol === "chp");
+      // 判据是 discovery（见 isChp），所以绘图与朗读两个 CHP 家族都会出现 —— 它们是同一台机器。
+      show('[data-chp-hint]', isChp(family));
       if (reset) {
         service.credentialRef = "";
-        form.elements.namedItem("endpoint").value = family.endpoint || defaultEndpoint(kind); form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
+        form.elements.namedItem("endpoint").value = family.endpoint || defaultEndpoint(family); form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
         ["accessKeyId", "sessionToken", "region", "workspaceId", "resourceEndpoint", "manualModelId", "customHeaders"].forEach(function (name) { if (form.elements.namedItem(name)) form.elements.namedItem(name).value = ""; });
         form.querySelectorAll(".secret-mask").forEach(function (mask) { mask.textContent = ""; });
         apiStylePicker.setItems(app.services.catalog.apiStyles.map(function (item) { return { id: item.id, name: item.name }; }), family.apiStyle || "");

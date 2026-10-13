@@ -445,6 +445,18 @@
       Text: text, TextType: "text", VoiceId: profile.voice
     };
     if (profile.protocol === "fish-tts") return { text: text, reference_id: profile.voice || undefined, format: formatOverride || profile.format || "pcm", streaming: true };
+    // CHP 的朗读（规范 §3.5）：**一条路由，`stream` 决定内容类型**（true ⇒ 分块 PCM，false ⇒ 整个 wav）。
+    // 字段名是 `text` 而不是 `prompt` —— 这一点是承重的：`prompt` 在 CHP 里带**翻译**副作用
+    // （图片侧那条规则的 `prompt.language: "en"` 会让服务端先把中文译成英文再送去打图），
+    // 而朗读的文本**永远不许被翻译**。协议里因此给它换了一个字段名，客户端照发。
+    // 密码不进 body：这条请求体里没有 `chp_params` 那一格，key 只走 `Authorization` 头（见 headers）。
+    if (profile.protocol === "chp-speech") return {
+      text: text,
+      voice: profile.voice,
+      language: profile.language || "",
+      response_format: formatOverride || profile.format || "pcm",
+      stream: formatOverride === "pcm"
+    };
     var body = { model: profile.model, input: text, voice: canonical.voiceId, response_format: formatOverride || canonical.responseFormat || "mp3" };
     if (profile.protocol === "vllm-omni") body.stream = true;
     if (profile.family === "siliconflow-tts") body.stream = true;
@@ -464,6 +476,10 @@
     if (eleven) return { kind: "raw", format: "pcm_24000", sampleRate: 24000 };
     if (doubao) return { kind: "sse", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };
     if (openai) return { kind: "raw", format: "pcm", sampleRate: 24000 };
+    // CHP 的朗读是一条**裸 PCM 通道**（请求带 `stream: true`，响应体就是连续字节，外面没有 SSE
+    // 包装）。采样率是文档里 `speech.abilities[].audio.sample_rate` 那个数（resolveTts 存进
+    // profile.sampleRate），**不是一个写死的常数** —— 换引擎采样率就跟着变，写死会把声音放快或放慢。
+    if (profile.protocol === "chp-speech") return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };
     if (profile.protocol === "xai-tts" || profile.protocol === "azure-speech" || profile.protocol === "aws-polly" || profile.protocol === "vllm-omni" || profile.protocol === "fish-tts") return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };
     if (profile.protocol === "qwen-tts" || profile.protocol === "minimax-tts" || profile.protocol === "gemini-tts") return { kind: "sse", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };
     return null;
@@ -1334,5 +1350,5 @@
   }
   if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", function () { queueLifecycle(Boolean(document.hidden)); });
 
-  app.services.tts = { speak: speak, stop: stop, stopConversation: stopConversation, setConversationEnabled: setConversationEnabled, conversationEnabled: conversationEnabled, headers: headers, requestBody: requestBody, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, applyAudioFx: applyAudioFx, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); }, pauseForBackground: pauseForBackground, resumeAfterBackground: resumeAfterBackground };
+  app.services.tts = { speak: speak, stop: stop, stopConversation: stopConversation, setConversationEnabled: setConversationEnabled, conversationEnabled: conversationEnabled, headers: headers, requestBody: requestBody, pcmStreamProfile: pcmStreamProfile, parseDoubaoSse: parseDoubaoSse, prepare: prepare, testService: testService, playReady: playReady, hasReady: hasReady, invalidate: invalidate, invalidateMany: invalidateMany, invalidateRole: invalidateRole, invalidateAll: invalidateAll, createStream: createStream, resume: resume, canResume: canResume, unlockPlayback: unlockPlayback, setMuted: setMuted, applyAudioFx: applyAudioFx, isMuted: function () { return muted; }, isPlaying: function () { return Boolean(lastState.speaking); }, pauseForBackground: pauseForBackground, resumeAfterBackground: resumeAfterBackground };
 })(window.chataxi);

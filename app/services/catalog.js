@@ -334,6 +334,16 @@
       models: [ttsModel("server-model", "服务端已加载模型", { formats: ["pcm", "wav", "mp3"] })], voices: []
     },
     {
+      id: "chp-speech", name: "CHP 语音", description: "Haminn 综合入口程序（CHP）的朗读接口：连接后由 CHP 自报可用的引擎、音色与采样率",
+      type: "chp-speech", protocol: "chp-speech", auth: "bearer", keyOptional: true, customEndpoint: true,
+      // 与上面那张绘图卡同理：CHP 跑在局域网里，没有可用的公共默认地址，所以这一栏保持空串 ——
+      // 真正的默认地址在 model-single-editor.js 的 CHP_DEFAULT_ENDPOINT（卡片初值那一层）。
+      endpoint: "", discovery: "chp",
+      // 引擎在服务端加载，客户端没有第二级模型可选（与 fish-tts 同一形状）；
+      // 音色表与采样率都由文档的 speech 段播报，这里**不内置任何一套** —— 换引擎不该让客户端改代码。
+      modelSelection: false, streaming: true, models: [], voices: []
+    },
+    {
       id: "custom", name: "自定义 TTS", description: "OpenAI Speech 兼容接口；能力由用户或网关声明",
       type: "custom", protocol: "openai-speech", auth: "bearer-optional", keyOptional: true,
       endpoint: "", discovery: "none", customEndpoint: true, streaming: false, models: [], voices: []
@@ -377,7 +387,7 @@
   // checkpoint 文件名；画幅也来自插件手写的帧表，客户端只选不算。
   var imageFamilies = [
     {
-      id: "chp", name: "CHP 插件", description: "ComfyUI Haminn Protocol：连接后由插件自报可用的绘图场景与画幅",
+      id: "chp", name: "CHP 插件", description: "CHP（Haminn 综合入口程序）：连接后由插件自报可用的绘图场景与画幅",
       type: "chp", protocol: "chp", auth: "bearer", keyOptional: true, customEndpoint: true,
       // 插件跑在局域网里，没有可用的公共默认地址。这里保持空串：本字段代表「服务商预设」，
       // 填了它，输入框清空就会自动变回默认值，「请填写服务地址」的校验也就永远触发不了。
