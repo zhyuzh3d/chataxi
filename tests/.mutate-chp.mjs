@@ -255,7 +255,7 @@ const mutations = [
   // …/chp/chp/speech —— 那是用户看不见、服务端也只回 404 的一种坏。
   ["the speech address is assembled instead of read",
     "app/services/model-services.js",
-    "    var speechUrl = chpSpeech ? chpAbsolute(service, service.endpoints && service.endpoints.speech) : \"\";",
+    "    var speechUrl = chpSpeech ? chpAbsolute(service, speechPath) : \"\";",
     '    var speechUrl = chpSpeech ? String(service.endpoint || "") + "/chp/speech" : "";',
     "朗读地址来自文档的 endpoints.speech"],
   // 采样率是**这台机器上引擎**的输出规格，写在文档里。写死一个常数会把声音放快或放慢，
@@ -342,6 +342,35 @@ const mutations = [
     `endpointLabel.textContent = chpEndpoint ? "插件地址" : "完整请求地址";`,
     `endpointLabel.textContent = "完整请求地址";`,
     "地址的标签要跟着落点走", VERIFY],
+
+  // ── 文档公布的地址必须落到**卡片**上（真机 405 的根因，2026-10-15 业主报）──────────
+  // 编辑器递给 discover 的是 readDraft() 的一份拷贝，不搬回来卡片就什么都没存下：
+  // 朗读地址退化成根路径 `http://…:8189/`，服务端对 `/` 只认 GET ⇒ 405。
+  ["the discovered address table stays on the discarded draft",
+    "app/services/model-services.js",
+    `    if (options && options.into && options.into !== service) adoptDiscovered(options.into, service);`,
+    `    if (false) adoptDiscovered(options.into, service);`,
+    "文档公布的地址表必须落到", RUNTIME],
+  ["the card never learns the engine's output spec",
+    "app/services/model-services.js",
+    `  var DISCOVERED_ON_CARD = ["endpoints", "plugin", "chpOrigin", "chpAudio"];`,
+    `  var DISCOVERED_ON_CARD = ["endpoints", "plugin", "chpOrigin"];`,
+    "输出规格同理", RUNTIME],
+  ["the reading of the catalog forgets to land on the card",
+    "app/features/model-single-editor.js",
+    `discover(kind, draft, { persist: false, into: service })`,
+    `discover(kind, draft, { persist: false })`,
+    "读目录时要把文档公布的东西落到卡片上", VERIFY],
+  ["the drawing card's connection test forgets to land on the card",
+    "app/features/model-single-editor.js",
+    `discover("image", profile, { persist: false, into: service })`,
+    `discover("image", profile, { persist: false })`,
+    "绘图卡的连接测试同样要把那一次 discover 落到卡片上", VERIFY],
+  ["a missing speech address silently becomes the site root",
+    "app/services/model-services.js",
+    `    if (chpSpeech && !speechPath) throw new Error("这张卡片还没有读到插件公布的朗读地址，请重新点一次「获取模型列表」");`,
+    `    if (false) throw new Error("这张卡片还没有读到插件公布的朗读地址");`,
+    "卡片上读不到朗读地址时要报", RUNTIME],
 ];
 
 const escaped = [];

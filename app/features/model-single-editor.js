@@ -252,7 +252,7 @@
       var button = form.querySelector("[data-fetch-models]"), status = form.querySelector("#catalogStatus"), draft = readDraft(); validateConnection(draft); button.disabled = true; ui.status(status, "正在读取当前账号可用的模型目录…");
       try {
         delete draft.singleModelVersion; delete draft.externalModelId; draft.models = []; draft.enabledModelIds = [];
-        var result = await app.services.modelServices.discover(kind, draft, { persist: false });
+        var result = await app.services.modelServices.discover(kind, draft, { persist: false, into: service });
         catalogModels = result.models || []; catalogVoices = result.voices || [];
         if (!catalogModels.length) throw new Error("服务已响应，但没有找到可用于当前分类的模型");
         catalogReady = true; syncSubmit();
@@ -286,7 +286,7 @@
           // 绘图场景的测试就是再读一次信息接口：它同时回答"地址通不通""密码对不对""场景在不在"
           // "插件为这个场景选好模型没有"。比另造一个测试请求更准，也不需要插件加接口。
           if (chosen.ready === false) throw new Error("插件的“" + (chosen.name || chosen.id) + "”场景还没有配好模型，请在 ComfyUI 的 CHP 插件配置节点里设置");
-          await app.services.modelServices.discover("image", profile, { persist: false });
+          await app.services.modelServices.discover("image", profile, { persist: false, into: service });
           profile.validationState = "verified"; profile.validatedAt = Date.now(); profile.validationBaseline = baseline;
           service = Object.assign(service, profile);
           await new Promise(function (resolve) { setTimeout(resolve, 0); });

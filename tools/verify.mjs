@@ -858,6 +858,18 @@ assert.match(modelEditorSource, /endpointSlot\.appendChild\(endpointOwner\)/, "�
 // 所以再钉上这一条守卫本身：动之前先看它是不是**已经在**那个落点里，否则每轮都会追加一份。
 assert.match(modelEditorSource, /endpointOwner\.parentNode !== endpointSlot/, "搬之前必须先看它是不是已经在那个落点里 —— 少了这一条就不是「搬」，而是每轮往落点里再塞一份");
 assert.match(modelEditorSource, /endpointLabel\.textContent = chpEndpoint \? "插件地址" : "完整请求地址";/, "地址的标签要跟着落点走：局域网那一栏填的是「主机:端口」，叫「完整请求地址」是句假话");
+// 读目录那一次 discover 必须把**文档公布的东西**落到卡片上（`into`）：编辑器递给它的是
+// readDraft() 的一份拷贝，搬不回来卡片就什么都没存下 —— 朗读地址于是退化成根路径
+// （`http://…:8189/`），而服务端对 `/` 只认 GET ⇒ 真机报 **405**（POST / 是 405，POST /chp/speech 是 200）。
+// 这两条钉的是**调用点**（编辑器要 DOM 才跑得起来）；"搬哪几样东西"由下面那两条钉。
+assert.match(modelEditorSource, /discover\(kind, draft, \{ persist: false, into: service \}\)/, "读目录时要把文档公布的东西落到卡片上（into: service）：少了它，朗读地址会退化成根路径，服务端回 405");
+assert.match(modelEditorSource, /discover\("image", profile, \{ persist: false, into: service \}\)/, "绘图卡的连接测试同样要把那一次 discover 落到卡片上");
+// 一处清单、一处搬：四样东西必须一起搬。少一样就是那类"看起来没坏"的坏 ——
+// 采样率不在卡片的 chpAudio 上，播放就会用错的速率去放正确的声音。
+assert.match(modelServicesSource, /var DISCOVERED_ON_CARD = \["endpoints", "plugin", "chpOrigin", "chpAudio"\];/, "文档里读到的四样东西要在一张清单里（地址表 / 插件标识 / 同源根 / 输出规格）");
+assert.match(modelServicesSource, /if \(options && options\.into && options\.into !== service\) adoptDiscovered\(options\.into, service\);/, "discover 要负责把那张清单搬到卡片上");
+// 读不到朗读地址时**不许**静默拼出一个看起来像地址、其实是网站根的东西 —— 那正是 405 的现场。
+assert.match(modelServicesSource, /if \(chpSpeech && !speechPath\) throw new Error\("这张卡片还没有读到插件公布的朗读地址，请重新点一次「获取模型列表」"\);/, "朗读地址读不到时要当场说清该点哪一下，而不是拼出根路径去打一个必然 405 的地址");
 // CHP 插件不再随 happ 分发（业主 2026-10-13）：插件装在那台跑 ComfyUI 的电脑上，
 // happ 只欠用户一句说明加一个链接。三条判据：
 //   ① 链接必须是**同帧导航** —— 宿主把外域跳转交给系统浏览器，target="_blank" 会静默无效；

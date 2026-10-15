@@ -251,7 +251,13 @@
     // streamEndpoint 与 endpoint 是同一个地址（别的家族要分开是因为它们有 SSE / 流式两条入口）。
     // 采样率与格式同样来自文档的 `audio`：换引擎、换机器都只改服务端配置，客户端不猜。
     var chpSpeech = definition.id === "chp-speech";
-    var speechUrl = chpSpeech ? chpAbsolute(service, service.endpoints && service.endpoints.speech) : "";
+    // 地址只能从文档的 endpoints 里读（规范 §1.3），这条路**故意不给兜底路径**。
+    // 但"读不到"也不许静默退化成一个看起来像地址、其实是网站根的东西 —— 那正是 405 的现场：
+    // `http://…:8189/` 对 `/` 只认 GET（实测 POST / = 405，POST /chp/speech = 200）。
+    // 读不到就当场说清，用户知道该点哪一下；否则他看到的是一句无从下手的「请求失败（405）」。
+    var speechPath = String(service && service.endpoints && service.endpoints.speech || "").trim();
+    if (chpSpeech && !speechPath) throw new Error("这张卡片还没有读到插件公布的朗读地址，请重新点一次「获取模型列表」");
+    var speechUrl = chpSpeech ? chpAbsolute(service, speechPath) : "";
     var chpAudio = service.chpAudio || {};
     return Object.assign({}, service, {
       family: definition.id,
@@ -737,6 +743,23 @@
   //
   // 不保存原始文档：卡片里已经带上帧表、默认值与模型挂载点，draw.js 从 modelDefinition("image", …)
   // 就能拿到全部要用的东西；只有地址表要另存 —— 请求地址按规范 §1.3 从文档里读，不许自己拼。
+  // 信息接口读到的四样东西是**卡片自己要留着**的：地址表（`endpoints`）、插件标识（`plugin`）、
+  // 同源根（`chpOrigin`）、输出规格（`chpAudio`）。它们由两个 discover* 写在「它们收到的那个
+  // 对象」上，而调用方手里递给它的常常是 `readDraft()` 的**一份拷贝**（编辑器就是这样）——
+  // 不搬回来的话，卡片什么都没存下：
+  //   · 朗读地址是从 `endpoints.speech` 读的，读不到就退化成**根路径**（`http://…:8189/`），
+  //     服务端对 `/` 只认 GET ⇒ 真机报 **405**（实测：POST / 是 405，POST /chp/speech 是 200）；
+  //   · 采样率不在 `chpAudio` 上，播放就会用错的速率去放正确的声音（最难被发现的那一类坏）。
+  // 绘图那张卡侥幸没露馅，是因为它的每条地址都带硬编码兜底路径；朗读这条路按规范 §1.3
+  // **故意没有兜底**（地址只能从文档读，不许自己拼）⇒ 少一个字段就现形。
+  // 一处清单、一处搬：谁再往服务对象上加"文档里的东西"，就加进这张表。
+  var DISCOVERED_ON_CARD = ["endpoints", "plugin", "chpOrigin", "chpAudio"];
+  function adoptDiscovered(target, source) {
+    if (!target || !source) return target;
+    DISCOVERED_ON_CARD.forEach(function (name) { if (source[name] !== undefined) target[name] = source[name]; });
+    return target;
+  }
+
   async function discoverImage(service, definition) {
     if (!String(service.endpoint || "").trim()) throw new Error("请填写 CHP 插件的地址（ComfyUI 的地址，插件装在里面）");
     var headers = authHeaders("image", service);
@@ -871,6 +894,9 @@
     service.registryVersion = catalog.registryVersion;
     service.discoveredAt = Date.now();
     service.discoveryWarnings = result.warnings || [];
+    // 文档里读到的地址表 / 插件标识 / 同源根 / 输出规格同时落到**卡片**上（见 adoptDiscovered）。
+    // `into` 是"这张卡片"，`service` 是"这次读目录用的那份草稿" —— 两者常常不是同一个对象。
+    if (options && options.into && options.into !== service) adoptDiscovered(options.into, service);
     if (!options || options.persist !== false) await app.data.store.put(kind + "-profiles", service.id, service);
     return {
       models: allModels(kind, service),

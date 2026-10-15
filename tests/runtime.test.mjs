@@ -1952,6 +1952,46 @@ test('the CHP speech card and its request come out of the document', async () =>
   assert.equal('prompt' in whole, false, 'prompt 这个字段名在朗读里永远不许出现');
 });
 
+// 编辑器读目录时递给 discover 的是 `readDraft()` 的一份**拷贝**，而文档公布的东西（地址表、
+// 插件标识、同源根、输出规格）是 discover 写在「它收到的那个对象」上的。少了 `into`，
+// 那些字段就落在被丢掉的那一份上 ⇒ 卡片什么都没存下 ⇒ 朗读地址退化成根路径 ⇒ **服务端回 405**
+// （真机实测：POST 到 / 就是 405，GET /chp/speech 是 404，POST /chp/speech 才是 200）。
+// 绘图那张卡侥幸没露馅：它的每条地址都带硬编码兜底；朗读这条路按规范 §1.3 **故意没有兜底**
+// （地址只能从文档读，不许自己拼）⇒ 少一个字段就现形。
+test('what the catalog published about addresses lands on the card, not on a discarded draft', async () => {
+  const { app } = runtime();
+  const document = {
+    spec: 'chp/2', plugin: { id: 'hamdraw_chp', version: '3.2.0' }, auth: { required: true, authorized: true },
+    endpoints: { info: '/chp/info', jobs: '/chp/jobs', speech: '/chp/speech' },
+    rules: [], abilities: [],
+    speech: {
+      rules: [{ category: 'speak', rule: 'txt-2-sph' }],
+      abilities: [{
+        name: 'qwen3-tts-0.6b', ready: true, missing: [],
+        files: { engine: 'qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf' },
+        audio: { sample_rate: 22050, channels: 1, formats: ['pcm', 'wav'], streaming: true },
+        voices: [{ id: 'vivian', label: 'Vivian', languages: ['zh', 'en'] }]
+      }]
+    }
+  };
+  app.platform.network = { request: async () => ({ status: 200, bodyText: JSON.stringify(document) }), readText: (response) => response.bodyText };
+  // 编辑器里那张卡片与它递给 discover 的草稿是**两个对象**（readDraft 是拷贝）。
+  const card = { id: 'speech', family: 'chp-speech', type: 'chp-speech', endpoint: 'http://192.168.124.31:8189' };
+  const draft = Object.assign({}, card, { apiKey: 'k' });
+  await app.services.modelServices.discover('tts', draft, { persist: false, into: card });
+
+  assert.equal(card.endpoints && card.endpoints.speech, '/chp/speech', '文档公布的地址表必须落到**卡片**上，不是落在被丢掉的草稿上');
+  assert.equal(card.chpAudio && card.chpAudio.sampleRate, 22050, '输出规格同理：采样率不在卡片上，播放就会用错的速率');
+  const profile = app.services.modelServices.resolveTts(card, {}, {});
+  assert.equal(profile.endpoint, 'http://192.168.124.31:8189/chp/speech', '朗读地址最后必须拼成文档里那一条，而不是根路径');
+  // 根路径是这次 405 的现场：服务端对 `/` 只认 GET。地址读不到时必须**当场说清**，
+  // 不许静默退化成一个看起来像地址、其实是网站根的东西。
+  assert.throws(
+    () => app.services.modelServices.resolveTts({ id: 'stale', family: 'chp-speech', type: 'chp-speech', endpoint: 'http://192.168.124.31:8189' }, {}, {}),
+    /朗读地址/,
+    '卡片上读不到朗读地址时要报「朗读地址」，不许拼出根路径去打一个必然 405 的地址');
+});
+
 // 文档里没有 `speech` 那一段（插件是 3.2.0 之前的老版）时要**当场说清**，不是静默不出声。
 // 「没有这个场景」与「有场景但没有引擎」是两句不同的话，指向的排查方向也不同。
 test('an old CHP document without a speech section says so instead of going silent', async () => {
