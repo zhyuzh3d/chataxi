@@ -830,6 +830,34 @@ assert.match(rolesSource, /name="behaviorGuidance"[\s\S]{0,900}?portraitBlock\(\
 assert.match(modelEditorSource, /var CHP_DEFAULT_ENDPOINT = "http:\/\/[^"]+";/, "the drawing card's plugin address must be prefilled from a named default");
 assert.match(modelEditorSource, /service\.endpoint \|\| initialDefinition\.endpoint \|\| defaultEndpoint\(initialDefinition\)/, "the address must resolve as saved > provider preset > CHP default");
 assert.match(modelEditorSource, /form\.elements\.namedItem\("endpoint"\)\.value = family\.endpoint \|\| defaultEndpoint\(family\);/, "switching provider must fall back to the CHP default too");
+// CHP 的地址必须在**外面**：和访问密码同一层，而且排在「获取模型列表」之前 ——
+// 顺序就是用户的动作顺序：先填地址与端口，再填访问密码，然后才读得到目录（业主 2026-10-15）。
+// 之前它只对绘图卡在外，朗读卡被折进了「更多设置」⇒ 打开朗读卡只看到一个「获取模型列表」按钮。
+// 判据钉在**装配次序**（下面这几个标记在源里出现的先后）与**装配次数**上，不钉缩进或引号写法。
+const endpointGridAt = modelEditorSource.indexOf('var html = \'<div class="form-grid single-model-editor">\'');
+const endpointSlotMainAt = modelEditorSource.indexOf('data-endpoint-slot="main"');
+const endpointSlotAdvancedAt = modelEditorSource.indexOf('data-endpoint-slot="advanced"');
+const secretFieldAt = modelEditorSource.indexOf("secretField(service, initialDefinition)", endpointGridAt);
+const fetchCatalogAt = modelEditorSource.indexOf("data-fetch-models", endpointGridAt);
+assert.ok(endpointGridAt > 0 && endpointSlotMainAt > 0 && endpointSlotAdvancedAt > 0 && secretFieldAt > 0 && fetchCatalogAt > 0, "地址块、两个落点、访问密码与「获取模型列表」按钮必须都还在：这段门禁本身失效了，必须修好再跑");
+// 装配**只有一处**、落点有两个。两个落点各装一个同名输入框的话，读到的是折叠里那一个 ——
+// 正是这一版要修掉的那类坏，所以次数也断。
+assert.equal((modelEditorSource.match(/endpointBlock/g) || []).length, 2, "地址块只许装配一次（一处定义 + 一处落入主区域）：两个落点各装一份就会出现两个同名输入框");
+// 两条次序判据分开写、且「先于获取模型」在前：这样"搬到密码之后（但仍在按钮之前）"与
+// "搬到按钮之后"这两种坏各由自己那句抓住，不会一条把另一条挡在后面（变异实测过）。
+assert.ok(endpointSlotMainAt < fetchCatalogAt, "CHP 的地址必须排在「获取模型列表」之前 —— 地址还没填就让人点获取，那一步只会报错");
+assert.ok(endpointGridAt < endpointSlotMainAt && endpointSlotMainAt < secretFieldAt, "CHP 的地址必须排在访问密码之前：先填地址与端口，再填 key");
+assert.doesNotMatch(modelEditorSource, /kind === "image" \? "" : endpointField/, "地址不许再写死在折叠的「更多设置」里 —— 朗读卡上看不到地址就是这个原因");
+assert.match(modelEditorSource, /'<div data-endpoint-slot="main">' \+ endpointBlock/, "装配时那个块必须落在主区域，由 syncProvider 决定要不要搬走");
+assert.match(modelEditorSource, /'<div data-endpoint-slot="advanced"><\/div>'/, "折叠区里必须留着它自己的落点，非 CHP 家族仍要把地址放在那里");
+// 落点与标签问同一个判据 isChp；搬的是**同一个节点**，不许重新渲染一份。
+assert.match(modelEditorSource, /var chpEndpoint = isChp\(family\) \|\| kind === "image";/, "地址该不该在外面，要问 isChp —— 绘图与朗读是同一个插件，一条判据");
+assert.match(modelEditorSource, /var endpointSlot = form\.querySelector\(chpEndpoint \? '\[data-endpoint-slot="main"\]' : '\[data-endpoint-slot="advanced"\]'\);/, "搬到哪个落点必须由那条判据决定");
+assert.match(modelEditorSource, /endpointSlot\.appendChild\(endpointOwner\)/, "搬的必须是同一个节点（appendChild），不许重新渲染第二个地址输入框");
+// 子串式断言分不出「真的搬了」与「搬了一份拷贝」，也分不出「搬」与「条件永远为假的搬」——
+// 所以再钉上这一条守卫本身：动之前先看它是不是**已经在**那个落点里，否则每轮都会追加一份。
+assert.match(modelEditorSource, /endpointOwner\.parentNode !== endpointSlot/, "搬之前必须先看它是不是已经在那个落点里 —— 少了这一条就不是「搬」，而是每轮往落点里再塞一份");
+assert.match(modelEditorSource, /endpointLabel\.textContent = chpEndpoint \? "插件地址" : "完整请求地址";/, "地址的标签要跟着落点走：局域网那一栏填的是「主机:端口」，叫「完整请求地址」是句假话");
 // CHP 插件不再随 happ 分发（业主 2026-10-13）：插件装在那台跑 ComfyUI 的电脑上，
 // happ 只欠用户一句说明加一个链接。三条判据：
 //   ① 链接必须是**同帧导航** —— 宿主把外域跳转交给系统浏览器，target="_blank" 会静默无效；

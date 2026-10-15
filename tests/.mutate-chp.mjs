@@ -282,6 +282,66 @@ const mutations = [
     '    if (profile.protocol === "chp-speech") return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };',
     '    if (false) return { kind: "raw", format: "pcm", sampleRate: Number(profile.sampleRate || 24000) };',
     "chp-speech 必须有一条流式通道"],
+
+  // ── 地址栏的落点与次序（业主 2026-10-15）────────────────────────────────────────
+  // 三条规则一起守：CHP 的地址在**外面**（与访问密码同层）、在**获取模型列表之前**，
+  // 而且顺序是「地址 → 密码 → 获取模型」。下面七条各自命中自己那句话。
+  ["the address stays folded inside more-settings",
+    "app/features/model-single-editor.js",
+    `'<div data-endpoint-slot="advanced"></div>'`,
+    `'<div data-endpoint-slot="advanced">' + endpointBlock + '</div>'`,
+    "地址块只许装配一次", VERIFY],
+  ["the address is assembled after the access password",
+    "app/features/model-single-editor.js",
+    `'<p class="helper" id="providerDescription"></p>' + '<div data-endpoint-slot="main">' + endpointBlock + '</div>' + secretField(service, initialDefinition) +`,
+    `'<p class="helper" id="providerDescription"></p>' + secretField(service, initialDefinition) + '<div data-endpoint-slot="main">' + endpointBlock + '</div>' +`,
+    "CHP 的地址必须排在访问密码之前", VERIFY],
+  ["the address is assembled after the catalog button",
+    "app/features/model-single-editor.js",
+    `'<p class="helper" id="providerDescription"></p>' + '<div data-endpoint-slot="main">' + endpointBlock + '</div>' + secretField(service, initialDefinition) +
+      '<div data-extra="accessKeyId">' + auxiliarySecretField("accessKeyId", "Access Key ID", service.accessKeyId || "", false) + '</div>' +
+      '<div data-extra="sessionToken">' + auxiliarySecretField("sessionToken", "Session Token", service.sessionToken || "", true) + '</div>' +
+      '<div data-extra="region">' + field("region", "区域", service.region || "", 'maxlength="80"') + '</div>' +
+      '<div data-extra="workspaceId">' + field("workspaceId", "业务空间 ID", service.workspaceId || "", 'maxlength="160"') + '</div>' +
+      '<div data-extra="resourceEndpoint">' + field("resourceEndpoint", "资源 Endpoint", service.resourceEndpoint || "", 'type="url"') + '</div>' +
+      '<button class="button secondary full" type="button" data-fetch-models>' + ui.icon("cloud-arrow-down") + '获取模型列表</button><p class="connection-status visually-hidden" id="catalogStatus" role="status"></p>' +`,
+    `'<p class="helper" id="providerDescription"></p>' + secretField(service, initialDefinition) +
+      '<div data-extra="accessKeyId">' + auxiliarySecretField("accessKeyId", "Access Key ID", service.accessKeyId || "", false) + '</div>' +
+      '<div data-extra="sessionToken">' + auxiliarySecretField("sessionToken", "Session Token", service.sessionToken || "", true) + '</div>' +
+      '<div data-extra="region">' + field("region", "区域", service.region || "", 'maxlength="80"') + '</div>' +
+      '<div data-extra="workspaceId">' + field("workspaceId", "业务空间 ID", service.workspaceId || "", 'maxlength="160"') + '</div>' +
+      '<div data-extra="resourceEndpoint">' + field("resourceEndpoint", "资源 Endpoint", service.resourceEndpoint || "", 'type="url"') + '</div>' +
+      '<button class="button secondary full" type="button" data-fetch-models>' + ui.icon("cloud-arrow-down") + '获取模型列表</button><p class="connection-status visually-hidden" id="catalogStatus" role="status"></p>' +
+      '<div data-endpoint-slot="main">' + endpointBlock + '</div>' +`,
+    "CHP 的地址必须排在「获取模型列表」之前", VERIFY],
+  ["the address is only pulled out for the drawing card",
+    "app/features/model-single-editor.js",
+    `var chpEndpoint = isChp(family) || kind === "image";`,
+    `var chpEndpoint = kind === "image";`,
+    "地址该不该在外面，要问 isChp", VERIFY],
+  ["the address is moved to the folded slot for every family",
+    "app/features/model-single-editor.js",
+    `var endpointSlot = form.querySelector(chpEndpoint ? '[data-endpoint-slot="main"]' : '[data-endpoint-slot="advanced"]');`,
+    `var endpointSlot = form.querySelector('[data-endpoint-slot="advanced"]');`,
+    "搬到哪个落点必须由那条判据决定", VERIFY],
+  // 「搬」与「搬一份拷贝」是两回事：拷贝会造出第二个同名输入框，而 form 读到的是第一个 ——
+  // 用户改了看得见的那一个，存下去的是看不见的那一个。
+  ["the address is cloned into the slot instead of moved",
+    "app/features/model-single-editor.js",
+    `if (endpointOwner && endpointSlot && endpointOwner.parentNode !== endpointSlot) endpointSlot.appendChild(endpointOwner);`,
+    `if (endpointOwner && endpointSlot) endpointSlot.appendChild(endpointOwner.cloneNode(true));`,
+    "搬的必须是同一个节点", VERIFY],
+  // 守卫被改成永假（或漏掉"已经在里面"那一半）时，子串式断言照样绿 —— 所以那条守卫本身也要被变异证明。
+  ["the move never happens because its guard went dead",
+    "app/features/model-single-editor.js",
+    `if (endpointOwner && endpointSlot && endpointOwner.parentNode !== endpointSlot) endpointSlot.appendChild(endpointOwner);`,
+    `if (false) endpointSlot.appendChild(endpointOwner);`,
+    "搬之前必须先看它是不是已经在那个落点里", VERIFY],
+  ["the address label stays a full request URL",
+    "app/features/model-single-editor.js",
+    `endpointLabel.textContent = chpEndpoint ? "插件地址" : "完整请求地址";`,
+    `endpointLabel.textContent = "完整请求地址";`,
+    "地址的标签要跟着落点走", VERIFY],
 ];
 
 const escaped = [];

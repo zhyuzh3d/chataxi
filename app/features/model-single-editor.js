@@ -66,14 +66,22 @@
     var catalogReady = catalogModels.length > 0;
     var selected = modelId, testedIdentity = service.validationState === "verified" ? identity(Object.assign({}, service, { externalModelId: modelId })) : "", testPassed = service.validationState === "verified";
     var familyHtml = kind === "llm" ? '<div data-model-family>' + ui.picker("modelFamilyId", "模型系列", "", "聚合与本地模型会自动推荐；如识别错误可以修改") + '</div>' : '';
-    // CHP 跑在局域网里 ⇒ 地址必须放在主区域。塞进折叠的「更多设置」里的话，
-    // 用户打开卡片只会看到一个「获取模型列表」按钮，不知道该去哪儿填地址。
+    // CHP 跑在局域网里 ⇒ 地址必须和访问密码排在同一层，而且必须在「获取模型列表」之前：
+    // 用户的动作顺序就是**先填地址与端口，再填访问密码，然后才读得到目录**（业主 2026-10-15）。
+    // 塞进折叠的「更多设置」里的话，打开卡片只看到一个「获取模型列表」按钮，谁也找不到地址。
+    //
+    // 只有**一个**输入框、两个落点，搬的是同一个节点（搬动在 syncProvider 里）——
+    // 所以折叠区里不会多出一个同名输入框，用户也不会有两处可以改。
+    // 非 CHP 家族的服务商预设已经给了地址，那一栏只是覆盖项，继续留在折叠区。
+    // 落点、标签与那句 placeholder 三件事问同一个判据 isChp：绘图与朗读是同一个插件。
     // 地址预填一个能直接用的默认值（见 CHP_DEFAULT_ENDPOINT），用户换机器时只改 IP。
-    var endpointField = field("endpoint", kind === "image" ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(initialDefinition), kind === "image" ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
+    var chpAtOpen = isChp(initialDefinition) || kind === "image";
+    var endpointField = field("endpoint", chpAtOpen ? "插件地址" : "完整请求地址", service.endpoint || initialDefinition.endpoint || defaultEndpoint(initialDefinition), chpAtOpen ? 'type="url" placeholder="只改 IP 即可, 例如 http://192.168.1.50:8189"' : 'type="url"');
+    var endpointBlock = '<div data-endpoint-field>' + endpointField + '</div>';
     var noteHtml = kind === "image"
       ? '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>地址与密码只配这一处：有定妆照的角色按图重画, 没有就从零画一张, 走哪条不用你选。画幅锁定 9:16 竖幅, 下面挑的正是插件公布的那几档, 参考强度沿用插件自报的默认值。</span></div>'
       : '<div class="automation-note">' + ui.icon("wand-magic-sparkles") + '<span>目录只用于选择模型；角色的最大输出、采样、推理、音色与发音参数在角色设置中配置。</span></div>';
-    var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + (kind === "image" ? endpointField : "") + secretField(service, initialDefinition) +
+    var html = '<div class="form-grid single-model-editor">' + ui.picker("family", "服务商或运行环境", "") + '<p class="helper" id="providerDescription"></p>' + '<div data-endpoint-slot="main">' + endpointBlock + '</div>' + secretField(service, initialDefinition) +
       '<div data-extra="accessKeyId">' + auxiliarySecretField("accessKeyId", "Access Key ID", service.accessKeyId || "", false) + '</div>' +
       '<div data-extra="sessionToken">' + auxiliarySecretField("sessionToken", "Session Token", service.sessionToken || "", true) + '</div>' +
       '<div data-extra="region">' + field("region", "区域", service.region || "", 'maxlength="80"') + '</div>' +
@@ -88,7 +96,7 @@
       // 只在选到 CHP 时给一句说明加一个普通链接。必须同帧导航 —— 外域跳转由宿主交给
       // 系统浏览器, 而 target="_blank" 在这里会静默什么都不做。
       '<div class="automation-note" data-chp-hint>' + ui.icon("circle-info") + '<span>CHP 是 Haminn 综合入口程序：装在运行 ComfyUI 那台电脑上，把本机模型统一成一个接口。请到 Haminn 官网下载：<a href="https://haminn.airen.life/chp.html">haminn.airen.life/chp.html</a></span></div>' +
-      '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + (kind === "image" ? "" : endpointField) + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
+      '<details class="advanced"><summary>更多设置</summary><div class="form-grid">' + field("name", "卡片名称", service.name || "", 'maxlength="80" placeholder="留空使用模型名称"') + '<div data-endpoint-slot="advanced"></div>' + '<div data-extra="apiStyle">' + ui.picker("apiStyle", "接口协议", "") + '</div>' + field("manualModelId", "手工模型 ID", "", 'placeholder="仅在目录不可读取时使用"') + customHeadersField(service) + '</div></details>' +
       '<label class="switch-row"><span><strong>启用模型</strong><small>停用后保留设置，但不会被角色或对话调用</small></span><input name="enabled" type="checkbox"' + (service.enabled !== false ? ' checked' : '') + '></label></div>';
     var form = ui.openModal({
       title: (editing ? "编辑" : "添加") + labels[kind], submitText: catalogReady ? "保存设置" : "获取模型列表", html: html,
@@ -208,6 +216,21 @@
       // 那句「去哪儿取 CHP」只在选到 CHP 时出现, 与别的按家族显隐的字段同一条规矩。
       // 判据是 discovery（见 isChp），所以绘图与朗读两个 CHP 家族都会出现 —— 它们是同一台机器。
       show('[data-chp-hint]', isChp(family));
+      // 地址栏的落点：CHP 落在主区域（就在访问密码之前、在「获取模型列表」之前），
+      // 别的家族落在折叠的「更多设置」里。**搬的是同一个节点**，所以两个落点里
+      // 绝不会各留一个同名输入框 —— 那正是「读了一处、存了另一处」的来源。
+      // 标签与 placeholder 跟着落点一起走：局域网里那一栏填的是「主机:端口」，
+      // 叫「完整请求地址」是句假话，而「插件地址」这句译文早就在表里了。
+      var chpEndpoint = isChp(family) || kind === "image";
+      var endpointOwner = form.querySelector("[data-endpoint-field]");
+      var endpointSlot = form.querySelector(chpEndpoint ? '[data-endpoint-slot="main"]' : '[data-endpoint-slot="advanced"]');
+      if (endpointOwner && endpointSlot && endpointOwner.parentNode !== endpointSlot) endpointSlot.appendChild(endpointOwner);
+      if (endpointOwner) {
+        var endpointLabel = endpointOwner.querySelector("label.field > span");
+        if (endpointLabel) endpointLabel.textContent = chpEndpoint ? "插件地址" : "完整请求地址";
+        var endpointBox = endpointOwner.querySelector('input[name="endpoint"]');
+        if (endpointBox) endpointBox.placeholder = chpEndpoint ? "只改 IP 即可, 例如 http://192.168.1.50:8189" : "";
+      }
       if (reset) {
         service.credentialRef = "";
         form.elements.namedItem("endpoint").value = family.endpoint || defaultEndpoint(family); form.elements.namedItem("name").value = ""; form.elements.namedItem("apiKey").value = "";
